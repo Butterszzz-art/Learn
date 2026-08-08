@@ -1,8 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // better-sqlite3 is a native module — keep it external to the server bundle
+  // @libsql/client's local-file mode uses a native addon (libsql) — keep it
+  // external to the server bundle, same reason better-sqlite3 needed this
+  // in Phase 1. On Vercel with TURSO_DATABASE_URL set, the native addon
+  // isn't loaded at all (HTTP-based remote client instead), but this is
+  // harmless to leave in either way.
   experimental: {
-    serverComponentsExternalPackages: ["better-sqlite3"],
+    serverComponentsExternalPackages: ["@libsql/client", "libsql"],
   },
 };
 

@@ -139,7 +139,13 @@ export async function generateDeepDive(
       .join("\n\n")
       .trim();
 
-    if (!fullText) return null;
+    if (!fullText) {
+      console.error(
+        `[deepDive] Empty response text for "${interestName}" (stop_reason: ${response.stop_reason}, ` +
+          `block types: ${response.content.map((b) => b.type).join(", ")}).`
+      );
+      return null;
+    }
 
     return parseDeepDiveResponse(fullText, response.content);
   } catch (err) {
@@ -155,8 +161,15 @@ function parseDeepDiveResponse(
   const topicMatch = fullText.match(/^TOPIC:\s*(.+)$/m);
   const topic = topicMatch?.[1]?.trim() || "Untitled topic";
 
-  // Strip the TOPIC line from the body.
-  let body = topicMatch ? fullText.replace(topicMatch[0], "").trim() : fullText;
+  // Discard everything up to and including the TOPIC line — the model
+  // sometimes writes a line or two of "thinking out loud" preamble before
+  // it (e.g. "Good, I have enough material — let me write the entry.").
+  // A plain .replace() of just the matched line would leave that preamble
+  // sitting at the top of the stored body; slicing from the match's end
+  // drops it along with the TOPIC line itself.
+  let body = topicMatch
+    ? fullText.slice((topicMatch.index ?? 0) + topicMatch[0].length).trim()
+    : fullText;
 
   // Split off the "## Sources" section (case-insensitive, last occurrence —
   // the model was asked to put it at the very end).

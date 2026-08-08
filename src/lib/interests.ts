@@ -43,6 +43,12 @@ export async function getEnabledInterests(): Promise<InterestWithConfig[]> {
   return all.filter((i) => i.enabled);
 }
 
+/** Single interest by id, with config — used by the granular per-step refresh endpoints. */
+export async function getInterestById(id: number): Promise<InterestWithConfig | null> {
+  const all = await getAllInterests();
+  return all.find((i) => i.id === id) ?? null;
+}
+
 /** True once the user has saved at least one interest config — gates onboarding. */
 export async function hasCompletedOnboarding(): Promise<boolean> {
   const rows = await db.select({ interestId: userInterests.interestId }).from(userInterests).limit(1);

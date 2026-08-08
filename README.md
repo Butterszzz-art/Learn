@@ -53,8 +53,9 @@ No hosting, no email, no account required.
 ```bash
 cd neuro-digest
 npm install
-npm run db:migrate   # creates/updates the SQLite schema in ./data/neuro-digest.db
-npm run db:seed      # loads the curated brain-fact bank (Neuroscience only)
+npm run db:migrate         # creates/updates the SQLite schema in ./data/neuro-digest.db
+npm run db:seed-interests  # loads the 9 seed interests
+npm run db:seed            # loads the curated brain-fact bank
 npm run dev
 ```
 
@@ -76,6 +77,102 @@ Anthropic API key — curated News still works without one.
 3. Optionally set `ANTHROPIC_MODEL` to a different model ID — defaults to
    `claude-sonnet-5`.
 4. Restart `npm run dev`.
+
+---
+
+## Deploying it as a website (Vercel + Turso)
+
+The app runs great purely locally (see **Setup** above) — this section is
+only for making it a real URL you can open from your phone, with your own
+data persisted in the cloud instead of a local file.
+
+Two accounts are needed, both free to start, and you have to create/link
+them yourself (they require your own login/OAuth consent — no assistant can
+do this step for you):
+
+1. **[Turso](https://turso.tech)** — hosted SQLite. Replaces the local
+   `./data/neuro-digest.db` file, since Vercel's serverless filesystem is
+   read-only/ephemeral and can't hold a local SQLite file between requests.
+2. **[Vercel](https://vercel.com)** — hosting, connected directly to this
+   GitHub repo so every push to `main` auto-deploys.
+
+### 1. Create the Turso database
+
+Install the Turso CLI and create a database (see
+[docs.turso.tech](https://docs.turso.tech/quickstart) if `curl | sh` isn't
+your thing):
+
+```bash
+turso db create digest
+turso db show digest --url          # -> TURSO_DATABASE_URL
+turso auth token create digest      # -> TURSO_AUTH_TOKEN
+```
+
+(Command names have shifted a bit across Turso CLI versions — `turso db
+tokens create digest` is the older form. Either way you're after a URL
+starting `libsql://...` and a JWT-looking auth token.)
+
+Apply the schema to the new hosted database once, from your machine:
+
+```bash
+TURSO_DATABASE_URL="libsql://..." TURSO_AUTH_TOKEN="..." npm run db:migrate
+TURSO_DATABASE_URL="libsql://..." TURSO_AUTH_TOKEN="..." npm run db:seed-interests
+TURSO_DATABASE_URL="libsql://..." TURSO_AUTH_TOKEN="..." npm run db:seed
+```
+
+That gives the hosted DB the same clean, pre-onboarding state (9 seed
+interests, curated brain-fact bank, no user data) that a fresh local
+install starts from.
+
+### 2. Import the repo into Vercel
+
+In the Vercel dashboard: **Add New… → Project → Import Git Repository**,
+pick `Butterszzz-art/Learn`, and set the **Root Directory** to
+`neuro-digest` (the Next.js app lives in that subfolder, not the repo
+root). Framework preset auto-detects as Next.js — leave build/output
+settings default.
+
+### 3. Set environment variables
+
+In the Vercel project's **Settings → Environment Variables**, add (all as
+plain values, not secrets-file uploads — set them directly in Vercel's own
+dashboard, never by handing the values to an assistant to write into a
+file):
+
+| Variable | Value |
+|---|---|
+| `ANTHROPIC_API_KEY` | your key from [platform.claude.com](https://platform.claude.com) — required for deep dives, applied insights, and News for any interest without a curated RSS source |
+| `ANTHROPIC_MODEL` | `claude-sonnet-5` (or omit — that's the default) |
+| `TURSO_DATABASE_URL` | from step 1 |
+| `TURSO_AUTH_TOKEN` | from step 1 |
+| `SITE_PASSWORD` | any password of your choosing — gates the whole site behind a login page. Omit this var entirely to leave the site open to anyone with the URL. |
+
+Redeploy after adding/changing env vars (Vercel does this automatically on
+the next push, or trigger one manually from the dashboard).
+
+### 4. Open it on your phone
+
+The deployed URL works fully on mobile — onboarding, settings, refresh, and
+the feed are all responsive. Add it to your home screen from the mobile
+browser's share menu for an app-like shortcut.
+
+### Notes on the deployed refresh flow
+
+- The **Refresh now** button calls one small API route per interest per
+  step (News, Deep Dive, Applied Insight) rather than one big call, so that
+  a slow Claude generation for one interest can't block or time out the
+  others. This matters because of Vercel's function time limits:
+  **Hobby tier hard-caps every function at 60 seconds**, no matter what
+  `maxDuration` is configured to — Pro tier allows up to 300s. Deep-dive
+  generation (`web_search` + a long-form write-up) can occasionally run
+  close to or past 60s on Hobby for a research-level entry or a
+  source-heavy interest.
+- Every step is **idempotent** — it checks what already exists for the
+  current cycle before generating anything. So if a step times out on
+  Hobby, clicking **Refresh now** again simply picks up where it left off
+  instead of duplicating or losing progress.
+- If you hit timeouts often on Hobby, either upgrade that Vercel project to
+  Pro, or just get in the habit of clicking Refresh twice.
 
 ---
 

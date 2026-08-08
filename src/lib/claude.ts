@@ -42,20 +42,22 @@ export async function classifyAndSummarizeBatch(
   const results = new Map<number, ClassifiedItem>();
   if (!anthropic || items.length === 0) return results;
 
-  const chunks: RawItem[][] = [];
-  for (let i = 0; i < items.length; i += BATCH_SIZE) {
-    chunks.push(items.slice(i, i + BATCH_SIZE));
-  }
+  const chunkStarts: number[] = [];
+  for (let i = 0; i < items.length; i += BATCH_SIZE) chunkStarts.push(i);
 
-  for (const chunk of chunks) {
-    const offset = items.indexOf(chunk[0]);
-    try {
-      const classified = await classifyChunk(anthropic, chunk);
-      classified.forEach((value, idx) => results.set(offset + idx, value));
-    } catch (err) {
-      console.error("[claude] classifyChunk failed, will fall back for this batch:", err);
-    }
-  }
+  // Chunks run concurrently — each is an independent API call, so there's
+  // no reason to wait for one before starting the next.
+  await Promise.all(
+    chunkStarts.map(async (offset) => {
+      const chunk = items.slice(offset, offset + BATCH_SIZE);
+      try {
+        const classified = await classifyChunk(anthropic, chunk);
+        classified.forEach((value, idx) => results.set(offset + idx, value));
+      } catch (err) {
+        console.error("[claude] classifyChunk failed, will fall back for this batch:", err);
+      }
+    })
+  );
 
   return results;
 }
@@ -143,20 +145,20 @@ export async function summarizeBatch(items: RawItem[]): Promise<Map<number, stri
   const results = new Map<number, string>();
   if (!anthropic || items.length === 0) return results;
 
-  const chunks: RawItem[][] = [];
-  for (let i = 0; i < items.length; i += BATCH_SIZE) {
-    chunks.push(items.slice(i, i + BATCH_SIZE));
-  }
+  const chunkStarts: number[] = [];
+  for (let i = 0; i < items.length; i += BATCH_SIZE) chunkStarts.push(i);
 
-  for (const chunk of chunks) {
-    const offset = items.indexOf(chunk[0]);
-    try {
-      const summarized = await summarizeChunk(anthropic, chunk);
-      summarized.forEach((value, idx) => results.set(offset + idx, value));
-    } catch (err) {
-      console.error("[claude] summarizeChunk failed, will fall back for this batch:", err);
-    }
-  }
+  await Promise.all(
+    chunkStarts.map(async (offset) => {
+      const chunk = items.slice(offset, offset + BATCH_SIZE);
+      try {
+        const summarized = await summarizeChunk(anthropic, chunk);
+        summarized.forEach((value, idx) => results.set(offset + idx, value));
+      } catch (err) {
+        console.error("[claude] summarizeChunk failed, will fall back for this batch:", err);
+      }
+    })
+  );
 
   return results;
 }

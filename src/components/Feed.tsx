@@ -39,7 +39,7 @@ function InterestSection({ section }: { section: InterestFeedSection }) {
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-brain-muted">
             💡 Applied Insight
           </h3>
-          <AppliedInsightCard entry={section.appliedInsight} />
+          <AppliedInsightCard entry={section.appliedInsight} showLabel={false} />
         </div>
       )}
     </section>

@@ -11,6 +11,7 @@ const LINKS = [
 
 export function Nav() {
   const pathname = usePathname();
+  if (pathname === "/login") return null;
   return (
     <header className="border-b border-brain-border">
       <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-4">
