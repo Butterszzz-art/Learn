@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-brain-bg text-brain-text antialiased;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-brain-surface border border-brain-border rounded-xl p-5;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1 rounded-full border border-brain-border px-3 py-1 text-xs text-brain-muted;
+  }
+  .btn-primary {
+    @apply inline-flex items-center gap-2 rounded-lg bg-brain-accent px-4 py-2 text-sm font-medium text-brain-bg transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center gap-2 rounded-lg border border-brain-border bg-brain-surface2 px-4 py-2 text-sm font-medium text-brain-text transition hover:bg-brain-surface disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .nav-link {
+    @apply text-sm text-brain-muted transition hover:text-brain-text;
+  }
+  .nav-link-active {
+    @apply text-sm text-brain-text font-medium;
+  }
+}
