@@ -11,8 +11,16 @@ export interface InterestConfig {
   name: string;
   description: string | null;
   hasCuratedSource: boolean;
+  isCustom: boolean;
+  generatesAppliedInsights: boolean;
   level: Level;
   enabled: boolean;
+}
+
+interface RowConfig {
+  level: Level;
+  enabled: boolean;
+  generatesAppliedInsights: boolean;
 }
 
 export function InterestPicker({
@@ -25,16 +33,24 @@ export function InterestPicker({
   onSaved?: () => void;
 }) {
   const router = useRouter();
-  const [config, setConfig] = useState<Map<number, { level: Level; enabled: boolean }>>(
-    new Map(initial.map((i) => [i.id, { level: i.level, enabled: i.enabled }]))
+  const [interestList, setInterestList] = useState<InterestConfig[]>(initial);
+  const [config, setConfig] = useState<Map<number, RowConfig>>(
+    new Map(
+      initial.map((i) => [
+        i.id,
+        { level: i.level, enabled: i.enabled, generatesAppliedInsights: i.generatesAppliedInsights },
+      ])
+    )
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [customName, setCustomName] = useState("");
+  const [addingCustom, setAddingCustom] = useState(false);
 
   function toggle(id: number) {
     setConfig((prev) => {
       const next = new Map(prev);
-      const current = next.get(id) ?? { level: "some_background" as Level, enabled: false };
+      const current = next.get(id) ?? { level: "some_background" as Level, enabled: false, generatesAppliedInsights: true };
       next.set(id, { ...current, enabled: !current.enabled });
       return next;
     });
@@ -43,10 +59,52 @@ export function InterestPicker({
   function setLevel(id: number, level: Level) {
     setConfig((prev) => {
       const next = new Map(prev);
-      const current = next.get(id) ?? { level: "some_background" as Level, enabled: true };
+      const current = next.get(id) ?? { level: "some_background" as Level, enabled: true, generatesAppliedInsights: true };
       next.set(id, { ...current, level });
       return next;
     });
+  }
+
+  function toggleAppliedInsights(id: number) {
+    setConfig((prev) => {
+      const next = new Map(prev);
+      const current = next.get(id) ?? { level: "some_background" as Level, enabled: true, generatesAppliedInsights: true };
+      next.set(id, { ...current, generatesAppliedInsights: !current.generatesAppliedInsights });
+      return next;
+    });
+  }
+
+  async function addCustomInterest() {
+    const name = customName.trim();
+    if (!name) return;
+    setAddingCustom(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/interests/custom", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "Failed to add interest");
+
+      const newInterest: InterestConfig = { ...data, level: "some_background", enabled: true };
+      setInterestList((prev) => [...prev, newInterest]);
+      setConfig((prev) => {
+        const next = new Map(prev);
+        next.set(newInterest.id, {
+          level: "some_background",
+          enabled: true,
+          generatesAppliedInsights: newInterest.generatesAppliedInsights,
+        });
+        return next;
+      });
+      setCustomName("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setAddingCustom(false);
+    }
   }
 
   const enabledCount = Array.from(config.values()).filter((c) => c.enabled).length;
@@ -56,9 +114,14 @@ export function InterestPicker({
     setError(null);
     try {
       const payload = {
-        interests: initial.map((i) => {
+        interests: interestList.map((i) => {
           const c = config.get(i.id)!;
-          return { interestId: i.id, level: c.level, enabled: c.enabled };
+          return {
+            interestId: i.id,
+            level: c.level,
+            enabled: c.enabled,
+            generatesAppliedInsights: c.generatesAppliedInsights,
+          };
         }),
       };
       const res = await fetch("/api/interests", {
@@ -85,8 +148,12 @@ export function InterestPicker({
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2">
-        {initial.map((interest) => {
-          const c = config.get(interest.id) ?? { level: "some_background" as Level, enabled: false };
+        {interestList.map((interest) => {
+          const c = config.get(interest.id) ?? {
+            level: "some_background" as Level,
+            enabled: false,
+            generatesAppliedInsights: interest.generatesAppliedInsights,
+          };
           return (
             <div
               key={interest.id}
@@ -100,11 +167,10 @@ export function InterestPicker({
                   className="mt-1 h-4 w-4 rounded border-brain-border bg-brain-surface2 accent-brain-accent"
                 />
                 <div className="flex-1">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{interest.name}</span>
-                    {!interest.hasCuratedSource && (
-                      <span className="pill">deep-dive only</span>
-                    )}
+                    {interest.isCustom && <span className="pill">custom</span>}
+                    {!interest.hasCuratedSource && <span className="pill">news via web search</span>}
                   </div>
                   {interest.description && (
                     <p className="mt-0.5 text-xs text-brain-muted">{interest.description}</p>
@@ -113,26 +179,73 @@ export function InterestPicker({
               </label>
 
               {c.enabled && (
-                <div className="mt-3 flex flex-wrap gap-2 pl-7">
-                  {LEVELS.map((level) => (
-                    <button
-                      key={level}
-                      type="button"
-                      onClick={() => setLevel(interest.id, level)}
-                      className={
-                        c.level === level
-                          ? "rounded-full bg-brain-accent px-3 py-1 text-xs font-medium text-brain-bg"
-                          : "rounded-full border border-brain-border px-3 py-1 text-xs text-brain-muted hover:text-brain-text"
-                      }
-                    >
-                      {LEVEL_LABELS[level]}
-                    </button>
-                  ))}
+                <div className="mt-3 space-y-3 pl-7">
+                  <div className="flex flex-wrap gap-2">
+                    {LEVELS.map((level) => (
+                      <button
+                        key={level}
+                        type="button"
+                        onClick={() => setLevel(interest.id, level)}
+                        className={
+                          c.level === level
+                            ? "rounded-full bg-brain-accent px-3 py-1 text-xs font-medium text-brain-bg"
+                            : "rounded-full border border-brain-border px-3 py-1 text-xs text-brain-muted hover:text-brain-text"
+                        }
+                      >
+                        {LEVEL_LABELS[level]}
+                      </button>
+                    ))}
+                  </div>
+
+                  {mode === "settings" && (
+                    <label className="flex items-center gap-2 text-xs text-brain-muted">
+                      <input
+                        type="checkbox"
+                        checked={c.generatesAppliedInsights}
+                        onChange={() => toggleAppliedInsights(interest.id)}
+                        className="h-3.5 w-3.5 rounded border-brain-border bg-brain-surface2 accent-brain-accent"
+                      />
+                      Generate an Applied Insight card after each deep dive
+                    </label>
+                  )}
                 </div>
               )}
             </div>
           );
         })}
+      </div>
+
+      <div className="card">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-brain-muted">
+          Don't see your field? Add any topic.
+        </p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={customName}
+            onChange={(e) => setCustomName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addCustomInterest();
+              }
+            }}
+            placeholder="e.g. Byzantine history, climate policy, jazz theory…"
+            className="flex-1 rounded-lg border border-brain-border bg-brain-surface2 px-3 py-2 text-sm text-brain-text placeholder:text-brain-muted focus:border-brain-accent focus:outline-none"
+          />
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={addCustomInterest}
+            disabled={addingCustom || !customName.trim()}
+          >
+            {addingCustom ? "Adding…" : "Add"}
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-brain-muted">
+          Custom interests get a web-search-generated News roundup instead of a fixed RSS feed, plus
+          the same Deep Dive and Applied Insight treatment as everything else.
+        </p>
       </div>
 
       {error && <p className="text-xs text-red-400">{error}</p>}

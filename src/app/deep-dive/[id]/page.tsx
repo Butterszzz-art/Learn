@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { getDeepDiveById } from "@/lib/digest";
 import { LEVEL_LABELS } from "@/db/schema";
+import { AppliedInsightCard } from "@/components/AppliedInsightCard";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,12 @@ export default async function DeepDivePage({ params }: { params: { id: string } 
       <article className="prose prose-invert max-w-none prose-headings:font-serif prose-a:text-brain-accent prose-strong:text-brain-text">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{deepDive.content}</ReactMarkdown>
       </article>
+
+      {deepDive.appliedInsight && (
+        <div className="mt-8">
+          <AppliedInsightCard entry={{ id: deepDive.id, content: deepDive.appliedInsight, createdAt: deepDive.createdAt }} />
+        </div>
+      )}
 
       {deepDive.sources.length > 0 && (
         <div className="mt-10 border-t border-brain-border pt-6">

@@ -22,7 +22,8 @@ export function RefreshButton() {
       if (data.enabledInterestCount === 0) {
         setStatus("No interests enabled yet — check Settings.");
       } else {
-        const parts = [`+${data.curatedAdded} curated`, `+${data.deepDivesAdded} deep dives`];
+        const parts = [`+${data.newsAdded} news`, `+${data.deepDivesAdded} deep dives`];
+        if (data.appliedInsightsAdded > 0) parts.push(`+${data.appliedInsightsAdded} insights`);
         setStatus(
           parts.join(", ") + (data.usedClaude ? "" : " (no API key — deep dives skipped)") + "."
         );

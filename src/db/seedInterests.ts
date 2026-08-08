@@ -17,6 +17,8 @@ export async function seedInterests(): Promise<number> {
       name: interest.name,
       description: interest.description,
       hasCuratedSource: interest.hasCuratedSource,
+      isCustom: false,
+      generatesAppliedInsights: interest.generatesAppliedInsights,
     });
     inserted++;
   }

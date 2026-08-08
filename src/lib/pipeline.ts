@@ -1,27 +1,38 @@
 import { db, client } from "@/db";
-import { digests, items, settings, deepDives } from "@/db/schema";
-import type { Category, Level } from "@/db/schema";
+import { digests, items, settings, deepDives, appliedInsights } from "@/db/schema";
+import type { Category } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { fetchForInterest } from "./fetchers/registry";
+import { generateFieldNewsRoundup } from "./newsRoundup";
 import { dedupeItems, dedupeKeyFor } from "./dedupe";
 import { categorizeByKeywords } from "./categorize";
 import { classifyAndSummarizeBatch, summarizeBatch, hasClaudeKey } from "./claude";
-import { generateDeepDive } from "./deepDive";
+import { generateDeepDive, generateAppliedInsight } from "./deepDive";
 import { scoreItem } from "./score";
 import { pickBrainFactOfTheDay, maybeGenerateWeeklyFacts } from "./brainFact";
 import { getEnabledInterests, getCoveredTopics, addCoveredTopic } from "./interests";
+import type { InterestWithConfig } from "./interests";
 import type { RawItem, ProcessedItem } from "./types";
 
-const TARGET_ITEMS_PER_INTEREST = 8;
+const TARGET_ITEMS_PER_INTEREST = 8; // curated (RSS/API) sources
+const TARGET_ROUNDUP_ITEMS = 5; // generated Field News Roundup
 
 export interface PipelineResult {
   cycleId: number;
-  curatedAdded: number;
+  newsAdded: number;
   deepDivesAdded: number;
+  appliedInsightsAdded: number;
   fetchedCount: number;
   usedClaude: boolean;
   newBrainFacts: number;
   enabledInterestCount: number;
+}
+
+interface InterestCycleResult {
+  newsAdded: number;
+  fetched: number;
+  deepDiveAdded: boolean;
+  insightAdded: boolean;
 }
 
 function truncateSnippet(snippet: string, max = 300): string {
@@ -64,65 +75,6 @@ async function findOrCreateCurrentCycle(frequency: "daily" | "weekly"): Promise<
   return inserted[0].id;
 }
 
-/** Fetches curated items for every enabled+curated interest, in parallel. */
-async function fetchCurated(
-  enabledInterests: { id: number; slug: string; hasCuratedSource: boolean }[]
-): Promise<{ interestId: number; item: RawItem }[]> {
-  const curated = enabledInterests.filter((i) => i.hasCuratedSource);
-  const results = await Promise.all(
-    curated.map(async (interest) => {
-      const rawItems = await fetchForInterest(interest.slug);
-      return rawItems.map((item) => ({ interestId: interest.id, item }));
-    })
-  );
-  return results.flat();
-}
-
-/**
- * Runs the full pipeline for one refresh: fetches curated items for every
- * enabled interest, dedupes/categorizes/scores/persists the new ones into
- * the current cycle, and generates one deep dive per enabled interest that
- * doesn't already have one for this cycle. Both halves are best-effort per
- * interest — one failing never blocks the others.
- */
-export async function runDigestPipeline(): Promise<PipelineResult> {
-  const frequency = await getFrequency();
-  const enabledInterests = await getEnabledInterests();
-  const cycleId = await ensureCycleHasBrainFact(await findOrCreateCurrentCycle(frequency));
-
-  if (enabledInterests.length === 0) {
-    return {
-      cycleId,
-      curatedAdded: 0,
-      deepDivesAdded: 0,
-      fetchedCount: 0,
-      usedClaude: hasClaudeKey(),
-      newBrainFacts: 0,
-      enabledInterestCount: 0,
-    };
-  }
-
-  const [curatedAdded, deepDivesAdded] = await Promise.all([
-    runCuratedFetch(enabledInterests, cycleId),
-    runDeepDives(enabledInterests, cycleId),
-  ]);
-
-  const newBrainFacts = await maybeGenerateWeeklyFacts().catch((err) => {
-    console.error("[pipeline] weekly brain fact generation failed:", err);
-    return 0;
-  });
-
-  return {
-    cycleId,
-    curatedAdded: curatedAdded.added,
-    deepDivesAdded,
-    fetchedCount: curatedAdded.fetched,
-    usedClaude: hasClaudeKey(),
-    newBrainFacts,
-    enabledInterestCount: enabledInterests.length,
-  };
-}
-
 async function ensureCycleHasBrainFact(cycleId: number): Promise<number> {
   const rows = await db.select().from(digests).where(eq(digests.id, cycleId)).limit(1);
   if (rows[0] && !rows[0].brainFactId) {
@@ -134,131 +86,241 @@ async function ensureCycleHasBrainFact(cycleId: number): Promise<number> {
   return cycleId;
 }
 
-async function runCuratedFetch(
-  enabledInterests: { id: number; slug: string; hasCuratedSource: boolean }[],
-  cycleId: number
-): Promise<{ added: number; fetched: number }> {
-  const tagged = await fetchCurated(enabledInterests);
-  const fetchedCount = tagged.length;
-  if (fetchedCount === 0) return { added: 0, fetched: 0 };
+/**
+ * Runs the full pipeline for one refresh: for every enabled interest, in
+ * parallel — fetches/generates that interest's News, generates one Deep
+ * Dive if this cycle doesn't already have one, and (if applicable) one
+ * Applied Insight off that deep dive. Every interest is fully isolated: one
+ * failing never blocks the others, and a failure partway through an
+ * interest (e.g. News succeeds, Deep Dive throws) still returns partial
+ * results rather than losing what already succeeded.
+ */
+export async function runDigestPipeline(): Promise<PipelineResult> {
+  const frequency = await getFrequency();
+  const enabledInterests = await getEnabledInterests();
+  const cycleId = await ensureCycleHasBrainFact(await findOrCreateCurrentCycle(frequency));
 
-  // Dedupe within this batch (URL + fuzzy title), preserving the interest tag.
-  const dedupedRaw = dedupeItems(tagged.map((t) => t.item));
-  const dedupedTagged = tagged.filter((t) => dedupedRaw.includes(t.item));
-
-  // Drop anything whose dedupe key already exists in the DB.
-  const existingKeysResult = await client.execute("SELECT dedupe_key FROM items");
-  const existingKeys = new Set(existingKeysResult.rows.map((r: any) => r.dedupe_key as string));
-  const fresh = dedupedTagged.filter((t) => !existingKeys.has(dedupeKeyFor(t.item)));
-  if (fresh.length === 0) return { added: 0, fetched: fetchedCount };
-
-  // Neuroscience uses the legacy 4-category classifier; everything else
-  // just gets a plain summary (no forced category).
-  const neuroInterestId = enabledInterests.find((i) => i.slug === "neuroscience")?.id;
-  const neuroFresh = neuroInterestId ? fresh.filter((t) => t.interestId === neuroInterestId) : [];
-  const otherFresh = fresh.filter((t) => t.interestId !== neuroInterestId);
-
-  const [neuroResults, otherResults] = await Promise.all([
-    classifyAndSummarizeBatch(neuroFresh.map((t) => t.item)),
-    summarizeBatch(otherFresh.map((t) => t.item)),
-  ]);
-
-  const processedNeuro: (ProcessedItem & { interestId: number })[] = neuroFresh.map((t, idx) => {
-    const claudeResult = neuroResults.get(idx);
-    const category: Category = claudeResult?.category ?? categorizeByKeywords(t.item);
-    const summary = claudeResult?.summary ?? (truncateSnippet(t.item.snippet) || "No summary available.");
+  if (enabledInterests.length === 0) {
     return {
-      ...t.item,
-      interestId: t.interestId,
-      category,
-      summary,
-      score: scoreItem(t.item),
-      dedupeKey: dedupeKeyFor(t.item),
+      cycleId,
+      newsAdded: 0,
+      deepDivesAdded: 0,
+      appliedInsightsAdded: 0,
+      fetchedCount: 0,
+      usedClaude: hasClaudeKey(),
+      newBrainFacts: 0,
+      enabledInterestCount: 0,
     };
-  });
-
-  const processedOther: (ProcessedItem & { interestId: number })[] = otherFresh.map((t, idx) => {
-    const summary = otherResults.get(idx) ?? (truncateSnippet(t.item.snippet) || "No summary available.");
-    return {
-      ...t.item,
-      interestId: t.interestId,
-      category: null, // legacy field, unused outside neuroscience
-      summary,
-      score: scoreItem(t.item),
-      dedupeKey: dedupeKeyFor(t.item),
-    };
-  });
-
-  const allProcessed = [...processedNeuro, ...processedOther];
-
-  // Rank and cap PER interest, so no single interest crowds out the others.
-  const byInterest = new Map<number, typeof allProcessed>();
-  for (const item of allProcessed) {
-    const list = byInterest.get(item.interestId) ?? [];
-    list.push(item);
-    byInterest.set(item.interestId, list);
   }
-
-  const selected: typeof allProcessed = [];
-  for (const list of byInterest.values()) {
-    list.sort((a, b) => b.score - a.score);
-    selected.push(...list.slice(0, TARGET_ITEMS_PER_INTEREST));
-  }
-
-  for (const item of selected) {
-    await db.insert(items).values({
-      title: item.title,
-      authors: item.authors,
-      summary: item.summary,
-      rawSnippet: item.snippet,
-      sourceName: item.sourceName,
-      sourceType: item.sourceType,
-      category: item.category,
-      interestId: item.interestId,
-      url: item.url,
-      dedupeKey: item.dedupeKey,
-      publishedAt: item.publishedAt,
-      score: item.score,
-      digestId: cycleId,
-    });
-  }
-
-  await db.update(settings).set({ lastRefreshAt: new Date().toISOString() }).where(eq(settings.id, 1));
-
-  return { added: selected.length, fetched: fetchedCount };
-}
-
-async function runDeepDives(
-  enabledInterests: { id: number; name: string; level: Level }[],
-  cycleId: number
-): Promise<number> {
-  if (!hasClaudeKey()) return 0;
 
   const results = await Promise.all(
-    enabledInterests.map(async (interest) => {
-      const existing = await db
-        .select({ id: deepDives.id })
+    enabledInterests.map((interest) => runInterestCycle(interest, cycleId))
+  );
+
+  const newBrainFacts = await maybeGenerateWeeklyFacts().catch((err) => {
+    console.error("[pipeline] weekly brain fact generation failed:", err);
+    return 0;
+  });
+
+  if (results.some((r) => r.newsAdded > 0)) {
+    await db.update(settings).set({ lastRefreshAt: new Date().toISOString() }).where(eq(settings.id, 1));
+  }
+
+  return {
+    cycleId,
+    newsAdded: results.reduce((sum, r) => sum + r.newsAdded, 0),
+    deepDivesAdded: results.filter((r) => r.deepDiveAdded).length,
+    appliedInsightsAdded: results.filter((r) => r.insightAdded).length,
+    fetchedCount: results.reduce((sum, r) => sum + r.fetched, 0),
+    usedClaude: hasClaudeKey(),
+    newBrainFacts,
+    enabledInterestCount: enabledInterests.length,
+  };
+}
+
+/** News + Deep Dive + Applied Insight for one interest. Never throws — every step is self-isolating. */
+async function runInterestCycle(
+  interest: InterestWithConfig,
+  cycleId: number
+): Promise<InterestCycleResult> {
+  const newsResult = await (interest.hasCuratedSource
+    ? runCuratedNews(interest, cycleId)
+    : runRoundupNews(interest, cycleId)
+  ).catch((err) => {
+    console.error(`[pipeline] News failed for "${interest.name}":`, err);
+    return { added: 0, fetched: 0 };
+  });
+
+  let deepDiveAdded = false;
+  let deepDiveRow: { id: number; topic: string; content: string } | null = null;
+
+  if (hasClaudeKey()) {
+    try {
+      const existingDive = await db
+        .select()
         .from(deepDives)
         .where(and(eq(deepDives.interestId, interest.id), eq(deepDives.digestId, cycleId)))
         .limit(1);
-      if (existing.length > 0) return false; // already have one for this cycle
 
-      const covered = await getCoveredTopics(interest.id);
-      const result = await generateDeepDive(interest.name, interest.level, covered);
-      if (!result) return false;
+      if (existingDive.length > 0) {
+        deepDiveRow = existingDive[0];
+      } else {
+        const covered = await getCoveredTopics(interest.id);
+        const result = await generateDeepDive(interest.name, interest.level, covered);
+        if (result) {
+          const inserted = await db
+            .insert(deepDives)
+            .values({
+              interestId: interest.id,
+              topic: result.topic,
+              content: result.content,
+              sources: JSON.stringify(result.sources),
+              level: interest.level,
+              digestId: cycleId,
+            })
+            .returning();
+          await addCoveredTopic(interest.id, result.topic);
+          deepDiveRow = inserted[0];
+          deepDiveAdded = true;
+        }
+      }
+    } catch (err) {
+      console.error(`[pipeline] Deep dive failed for "${interest.name}":`, err);
+    }
+  }
 
-      await db.insert(deepDives).values({
-        interestId: interest.id,
-        topic: result.topic,
-        content: result.content,
-        sources: JSON.stringify(result.sources),
-        level: interest.level,
+  let insightAdded = false;
+  if (interest.generatesAppliedInsights && deepDiveRow && hasClaudeKey()) {
+    try {
+      const existingInsight = await db
+        .select({ id: appliedInsights.id })
+        .from(appliedInsights)
+        .where(eq(appliedInsights.deepDiveId, deepDiveRow.id))
+        .limit(1);
+
+      if (existingInsight.length === 0) {
+        const content = await generateAppliedInsight(interest.name, deepDiveRow.topic, deepDiveRow.content);
+        if (content) {
+          await db
+            .insert(appliedInsights)
+            .values({ interestId: interest.id, deepDiveId: deepDiveRow.id, content });
+          insightAdded = true;
+        }
+      }
+    } catch (err) {
+      console.error(`[pipeline] Applied insight failed for "${interest.name}":`, err);
+    }
+  }
+
+  return { newsAdded: newsResult.added, fetched: newsResult.fetched, deepDiveAdded, insightAdded };
+}
+
+/** Dedupes a batch against everything already persisted, returning only genuinely new items. */
+async function filterFresh(rawItems: RawItem[]): Promise<RawItem[]> {
+  const deduped = dedupeItems(rawItems);
+  const existingKeysResult = await client.execute("SELECT dedupe_key FROM items");
+  const existingKeys = new Set(existingKeysResult.rows.map((r: any) => r.dedupe_key as string));
+  return deduped.filter((item) => !existingKeys.has(dedupeKeyFor(item)));
+}
+
+/** Inserts processed items one at a time, skipping (not aborting the batch on) a rare dedupe-key race. */
+async function insertItems(
+  processed: ProcessedItem[],
+  interestId: number,
+  cycleId: number
+): Promise<number> {
+  let inserted = 0;
+  for (const item of processed) {
+    try {
+      await db.insert(items).values({
+        title: item.title,
+        authors: item.authors,
+        summary: item.summary,
+        rawSnippet: item.snippet,
+        sourceName: item.sourceName,
+        sourceType: item.sourceType,
+        category: item.category,
+        interestId,
+        url: item.url,
+        dedupeKey: item.dedupeKey,
+        publishedAt: item.publishedAt,
+        score: item.score,
         digestId: cycleId,
       });
-      await addCoveredTopic(interest.id, result.topic);
-      return true;
-    })
-  );
+      inserted++;
+    } catch (err) {
+      console.error(`[pipeline] Skipping item insert (likely a dedupe race) for "${item.title}":`, err);
+    }
+  }
+  return inserted;
+}
 
-  return results.filter(Boolean).length;
+/** News for a hasCuratedSource=true interest: fetch its registered RSS/API source(s). */
+async function runCuratedNews(
+  interest: InterestWithConfig,
+  cycleId: number
+): Promise<{ added: number; fetched: number }> {
+  const rawItems = await fetchForInterest(interest.slug);
+  const fetchedCount = rawItems.length;
+  if (fetchedCount === 0) return { added: 0, fetched: 0 };
+
+  const fresh = await filterFresh(rawItems);
+  if (fresh.length === 0) return { added: 0, fetched: fetchedCount };
+
+  // Neuroscience keeps the legacy 4-category classifier; every other
+  // curated interest just gets a plain summary (no forced category).
+  const isNeuro = interest.slug === "neuroscience";
+  const neuroResults = isNeuro ? await classifyAndSummarizeBatch(fresh) : null;
+  const otherResults = isNeuro ? null : await summarizeBatch(fresh);
+
+  const processed: ProcessedItem[] = fresh.map((item, idx) => {
+    let category: Category | null = null;
+    let summary: string;
+    if (neuroResults) {
+      const r = neuroResults.get(idx);
+      category = r?.category ?? categorizeByKeywords(item);
+      summary = r?.summary ?? (truncateSnippet(item.snippet) || "No summary available.");
+    } else {
+      summary = otherResults?.get(idx) ?? (truncateSnippet(item.snippet) || "No summary available.");
+    }
+    return { ...item, category, summary, score: scoreItem(item), dedupeKey: dedupeKeyFor(item) };
+  });
+
+  processed.sort((a, b) => b.score - a.score);
+  const selected = processed.slice(0, TARGET_ITEMS_PER_INTEREST);
+  const added = await insertItems(selected, interest.id, cycleId);
+  return { added, fetched: fetchedCount };
+}
+
+/**
+ * News for an interest with no registered fetcher (any custom interest, or
+ * Business/Political Science): a Claude-generated, web-search-grounded
+ * Field News Roundup. Items arrive already summarized in the app's own
+ * words, so — unlike curated items — they skip the summarize step entirely.
+ */
+async function runRoundupNews(
+  interest: InterestWithConfig,
+  cycleId: number
+): Promise<{ added: number; fetched: number }> {
+  if (!hasClaudeKey()) return { added: 0, fetched: 0 };
+
+  const rawItems = await generateFieldNewsRoundup(interest.name);
+  const fetchedCount = rawItems.length;
+  if (fetchedCount === 0) return { added: 0, fetched: 0 };
+
+  const fresh = await filterFresh(rawItems);
+  if (fresh.length === 0) return { added: 0, fetched: fetchedCount };
+
+  const processed: ProcessedItem[] = fresh.map((item) => ({
+    ...item,
+    category: null,
+    summary: item.snippet, // already Claude-authored, in the app's own words — see newsRoundup.ts
+    score: scoreItem(item),
+    dedupeKey: dedupeKeyFor(item),
+  }));
+
+  processed.sort((a, b) => b.score - a.score);
+  const selected = processed.slice(0, TARGET_ROUNDUP_ITEMS);
+  const added = await insertItems(selected, interest.id, cycleId);
+  return { added, fetched: fetchedCount };
 }

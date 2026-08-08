@@ -22,8 +22,8 @@ export default async function ArchivePage() {
                 <div>
                   <p className="font-medium">{c.periodLabel}</p>
                   <p className="text-xs text-brain-muted">
-                    {c.frequency} · {c.curatedCount} curated · {c.deepDiveCount} deep dives ·{" "}
-                    {new Date(c.createdAt).toLocaleDateString()}
+                    {c.frequency} · {c.newsCount} news · {c.deepDiveCount} deep dives ·{" "}
+                    {c.insightCount} insights · {new Date(c.createdAt).toLocaleDateString()}
                   </p>
                 </div>
                 <span className="text-brain-muted">→</span>

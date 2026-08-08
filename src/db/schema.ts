@@ -14,16 +14,18 @@ export const CATEGORIES = [
 
 export type Category = (typeof CATEGORIES)[number];
 
-export const SOURCE_TYPES = ["academic", "journalism"] as const;
+// "generated" = written by Claude (Field News Roundup), not fetched from a feed.
+export const SOURCE_TYPES = ["academic", "journalism", "generated"] as const;
 export type SourceType = (typeof SOURCE_TYPES)[number];
 
-export const LEVELS = ["new_to_this", "some_background", "advanced"] as const;
+export const LEVELS = ["new_to_this", "some_background", "advanced", "research_level"] as const;
 export type Level = (typeof LEVELS)[number];
 
 export const LEVEL_LABELS: Record<Level, string> = {
   new_to_this: "New to this",
   some_background: "Some background",
   advanced: "Advanced / studying it",
+  research_level: "Research level",
 };
 
 // ---------------------------------------------------------------------------
@@ -36,6 +38,16 @@ export const interests = sqliteTable("interests", {
   name: text("name").notNull(),
   description: text("description"),
   hasCuratedSource: integer("has_curated_source", { mode: "boolean" }).notNull().default(false),
+  // User-typed fields (Phase 3) vs. the Phase 2 seed list. Custom interests
+  // always have hasCuratedSource=false — there's no registered fetcher for
+  // an arbitrary field, so they get a generated Field News Roundup instead.
+  isCustom: integer("is_custom", { mode: "boolean" }).notNull().default(false),
+  // Whether to generate a short "apply this to daily life" card after each
+  // deep dive. Sensible per-interest default at seed/creation time,
+  // overridable later in Settings.
+  generatesAppliedInsights: integer("generates_applied_insights", { mode: "boolean" })
+    .notNull()
+    .default(false),
 });
 
 // ---------------------------------------------------------------------------
@@ -78,6 +90,23 @@ export const deepDives = sqliteTable("deep_dives", {
   sources: text("sources").notNull().default("[]"), // JSON array of {title, url}
   level: text("level").$type<Level>().notNull(),
   digestId: integer("digest_id").references(() => digests.id), // which cycle it belongs to
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+});
+
+// ---------------------------------------------------------------------------
+// appliedInsights — one short, concrete "apply this to daily life" card per
+// deep dive, for interests where that generally makes sense. Skipped
+// (no row) when a given day's topic doesn't have a natural application.
+// ---------------------------------------------------------------------------
+export const appliedInsights = sqliteTable("applied_insights", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  interestId: integer("interest_id")
+    .notNull()
+    .references(() => interests.id),
+  deepDiveId: integer("deep_dive_id").references(() => deepDives.id),
+  content: text("content").notNull(),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(current_timestamp)`),

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { ensureDb } from "@/db/bootstrap";
-import { getAllInterests, saveUserInterests } from "@/lib/interests";
+import { getAllInterests, saveUserInterests, setGeneratesAppliedInsights } from "@/lib/interests";
 import { LEVELS } from "@/db/schema";
 import type { Level } from "@/db/schema";
 
@@ -15,6 +15,7 @@ interface UpdatePayload {
   interestId: number;
   level: Level;
   enabled: boolean;
+  generatesAppliedInsights?: boolean;
 }
 
 export async function POST(req: Request) {
@@ -33,13 +34,25 @@ export async function POST(req: Request) {
     ) {
       continue;
     }
-    updates.push({ interestId: entry.interestId, level: entry.level, enabled: entry.enabled });
+    updates.push({
+      interestId: entry.interestId,
+      level: entry.level,
+      enabled: entry.enabled,
+      generatesAppliedInsights:
+        typeof entry.generatesAppliedInsights === "boolean" ? entry.generatesAppliedInsights : undefined,
+    });
   }
 
   if (updates.length === 0) {
     return NextResponse.json({ error: "No valid interest updates in body" }, { status: 400 });
   }
 
-  await saveUserInterests(updates);
+  await saveUserInterests(updates.map(({ interestId, level, enabled }) => ({ interestId, level, enabled })));
+  for (const u of updates) {
+    if (u.generatesAppliedInsights !== undefined) {
+      await setGeneratesAppliedInsights(u.interestId, u.generatesAppliedInsights);
+    }
+  }
+
   return NextResponse.json(await getAllInterests());
 }

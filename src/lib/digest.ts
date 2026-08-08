@@ -1,37 +1,44 @@
 import { db } from "@/db";
-import { digests, items, brainFacts, settings, deepDives, interests } from "@/db/schema";
+import { digests, items, brainFacts, settings, deepDives, appliedInsights, interests } from "@/db/schema";
 import type { Category, Level } from "@/db/schema";
-import { eq, desc, inArray } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 
-export interface FeedCuratedEntry {
-  type: "curated";
+export interface NewsItem {
   id: number;
   title: string;
   authors: string | null;
   summary: string;
   sourceName: string;
-  sourceType: string;
+  sourceType: string; // "academic" | "journalism" | "generated"
   category: Category | null;
   url: string;
   publishedAt: string | null;
-  interestName: string;
-  interestSlug: string;
   score: number;
 }
 
-export interface FeedDeepDiveEntry {
-  type: "deepdive";
+export interface DeepDiveSummary {
   id: number;
   topic: string;
   contentPreview: string;
   level: Level;
-  interestName: string;
-  interestSlug: string;
   createdAt: string;
   sourceCount: number;
 }
 
-export type FeedEntry = FeedCuratedEntry | FeedDeepDiveEntry;
+export interface AppliedInsightSummary {
+  id: number;
+  content: string;
+  createdAt: string;
+}
+
+export interface InterestFeedSection {
+  interestId: number;
+  interestName: string;
+  interestSlug: string;
+  news: NewsItem[];
+  deepDive: DeepDiveSummary | null;
+  appliedInsight: AppliedInsightSummary | null;
+}
 
 export interface CycleFeed {
   cycleId: number;
@@ -40,7 +47,8 @@ export interface CycleFeed {
   createdAt: string;
   brainFact: { text: string; topic: string | null } | null;
   showBrainFact: boolean;
-  entries: FeedEntry[];
+  sections: InterestFeedSection[];
+  totalEntries: number;
 }
 
 function stripMarkdown(md: string): string {
@@ -59,10 +67,11 @@ function previewOf(md: string, max = 220): string {
 }
 
 /**
- * Builds the merged, bounded feed for one cycle, restricted to the given
- * interest ids (the enabled set at read time — an interest disabled after a
- * cycle was compiled simply drops out of view, without deleting anything).
- * Deep dives sort first (most substantial), then curated items by score.
+ * Builds the bounded feed for one cycle, restricted to the given interest
+ * ids (the enabled set at read time — an interest disabled after a cycle
+ * was compiled simply drops out of view, without deleting anything).
+ * Grouped by interest; within each interest, News / Deep Dive / Applied
+ * Insight are clearly separate sections (Phase 3).
  */
 async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Promise<CycleFeed | null> {
   const cycleRows = await db.select().from(digests).where(eq(digests.id, cycleId)).limit(1);
@@ -77,70 +86,98 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
       createdAt: cycle.createdAt,
       brainFact: null,
       showBrainFact: false,
-      entries: [],
+      sections: [],
+      totalEntries: 0,
     };
   }
 
   const allInterests = await db.select().from(interests);
   const interestById = new Map(allInterests.map((i) => [i.id, i]));
-
-  const itemRows = await db
-    .select()
-    .from(items)
-    .where(eq(items.digestId, cycleId));
-  const diveRows = await db
-    .select()
-    .from(deepDives)
-    .where(eq(deepDives.digestId, cycleId));
-
   const enabledSet = new Set(enabledInterestIds);
 
-  const curatedEntries: FeedCuratedEntry[] = itemRows
-    .filter((r) => r.interestId != null && enabledSet.has(r.interestId))
-    .map((r) => {
-      const interest = interestById.get(r.interestId!);
-      return {
-        type: "curated",
-        id: r.id,
-        title: r.title,
-        authors: r.authors,
-        summary: r.summary,
-        sourceName: r.sourceName,
-        sourceType: r.sourceType,
-        category: r.category,
-        url: r.url,
-        publishedAt: r.publishedAt,
+  const itemRows = await db.select().from(items).where(eq(items.digestId, cycleId));
+  const diveRows = await db.select().from(deepDives).where(eq(deepDives.digestId, cycleId));
+  const insightRows = await db
+    .select({ insight: appliedInsights, dive: deepDives })
+    .from(appliedInsights)
+    .innerJoin(deepDives, eq(appliedInsights.deepDiveId, deepDives.id))
+    .where(eq(deepDives.digestId, cycleId));
+
+  const sectionsById = new Map<number, InterestFeedSection>();
+  function getSection(interestId: number): InterestFeedSection | null {
+    if (!enabledSet.has(interestId)) return null;
+    let section = sectionsById.get(interestId);
+    if (!section) {
+      const interest = interestById.get(interestId);
+      section = {
+        interestId,
         interestName: interest?.name ?? "Unknown",
         interestSlug: interest?.slug ?? "unknown",
-        score: r.score,
+        news: [],
+        deepDive: null,
+        appliedInsight: null,
       };
-    });
+      sectionsById.set(interestId, section);
+    }
+    return section;
+  }
 
-  const deepDiveEntries: FeedDeepDiveEntry[] = diveRows
-    .filter((r) => enabledSet.has(r.interestId))
-    .map((r) => {
-      const interest = interestById.get(r.interestId);
-      let sourceCount = 0;
-      try {
-        sourceCount = (JSON.parse(r.sources) as unknown[]).length;
-      } catch {
-        sourceCount = 0;
-      }
-      return {
-        type: "deepdive",
-        id: r.id,
-        topic: r.topic,
-        contentPreview: previewOf(r.content),
-        level: r.level,
-        interestName: interest?.name ?? "Unknown",
-        interestSlug: interest?.slug ?? "unknown",
-        createdAt: r.createdAt,
-        sourceCount,
-      };
+  for (const r of itemRows) {
+    if (r.interestId == null) continue;
+    const section = getSection(r.interestId);
+    if (!section) continue;
+    section.news.push({
+      id: r.id,
+      title: r.title,
+      authors: r.authors,
+      summary: r.summary,
+      sourceName: r.sourceName,
+      sourceType: r.sourceType,
+      category: r.category,
+      url: r.url,
+      publishedAt: r.publishedAt,
+      score: r.score,
     });
+  }
 
-  curatedEntries.sort((a, b) => b.score - a.score);
-  deepDiveEntries.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  for (const r of diveRows) {
+    const section = getSection(r.interestId);
+    if (!section) continue;
+    let sourceCount = 0;
+    try {
+      sourceCount = (JSON.parse(r.sources) as unknown[]).length;
+    } catch {
+      sourceCount = 0;
+    }
+    section.deepDive = {
+      id: r.id,
+      topic: r.topic,
+      contentPreview: previewOf(r.content),
+      level: r.level,
+      createdAt: r.createdAt,
+      sourceCount,
+    };
+  }
+
+  for (const { insight, dive } of insightRows) {
+    const section = getSection(dive.interestId);
+    if (!section) continue;
+    section.appliedInsight = { id: insight.id, content: insight.content, createdAt: insight.createdAt };
+  }
+
+  for (const section of sectionsById.values()) {
+    section.news.sort((a, b) => b.score - a.score);
+  }
+
+  // Stable order: interest creation order (roughly onboarding order).
+  const sections = allInterests
+    .filter((i) => sectionsById.has(i.id))
+    .map((i) => sectionsById.get(i.id)!);
+
+  const totalEntries = sections.reduce(
+    (sum, s) => sum + s.news.length + (s.deepDive ? 1 : 0) + (s.appliedInsight ? 1 : 0),
+    0
+  );
 
   let brainFact: { text: string; topic: string | null } | null = null;
   if (cycle.brainFactId) {
@@ -157,7 +194,8 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
     createdAt: cycle.createdAt,
     brainFact,
     showBrainFact,
-    entries: [...deepDiveEntries, ...curatedEntries],
+    sections,
+    totalEntries,
   };
 }
 
@@ -180,8 +218,9 @@ export interface CycleListEntry {
   periodLabel: string;
   frequency: string;
   createdAt: string;
-  curatedCount: number;
+  newsCount: number;
   deepDiveCount: number;
+  insightCount: number;
 }
 
 /** All cycles, newest first, for the Archive view. */
@@ -191,13 +230,19 @@ export async function listCycles(): Promise<CycleListEntry[]> {
   for (const d of rows) {
     const itemRows = await db.select({ id: items.id }).from(items).where(eq(items.digestId, d.id));
     const diveRows = await db.select({ id: deepDives.id }).from(deepDives).where(eq(deepDives.digestId, d.id));
+    const insightRows = await db
+      .select({ id: appliedInsights.id })
+      .from(appliedInsights)
+      .innerJoin(deepDives, eq(appliedInsights.deepDiveId, deepDives.id))
+      .where(eq(deepDives.digestId, d.id));
     out.push({
       id: d.id,
       periodLabel: d.periodLabel,
       frequency: d.frequency,
       createdAt: d.createdAt,
-      curatedCount: itemRows.length,
+      newsCount: itemRows.length,
       deepDiveCount: diveRows.length,
+      insightCount: insightRows.length,
     });
   }
   return out;
@@ -212,6 +257,7 @@ export interface DeepDiveDetail {
   interestName: string;
   interestSlug: string;
   createdAt: string;
+  appliedInsight: string | null;
 }
 
 export async function getDeepDiveById(id: number): Promise<DeepDiveDetail | null> {
@@ -226,6 +272,12 @@ export async function getDeepDiveById(id: number): Promise<DeepDiveDetail | null
   } catch {
     sources = [];
   }
+  const insightRows = await db
+    .select({ content: appliedInsights.content })
+    .from(appliedInsights)
+    .where(eq(appliedInsights.deepDiveId, id))
+    .limit(1);
+
   return {
     id: row.id,
     topic: row.topic,
@@ -235,6 +287,7 @@ export async function getDeepDiveById(id: number): Promise<DeepDiveDetail | null
     interestName: interest?.name ?? "Unknown",
     interestSlug: interest?.slug ?? "unknown",
     createdAt: row.createdAt,
+    appliedInsight: insightRows[0]?.content ?? null,
   };
 }
 

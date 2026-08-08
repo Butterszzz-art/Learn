@@ -3,6 +3,7 @@
 // migration journal. This keeps `npm run db:migrate` self-contained and safe
 // to re-run on every startup.
 import { client } from "./index";
+import { INTERESTS_SEED } from "./interestsSeed";
 
 const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS brain_facts (
@@ -25,7 +26,9 @@ const STATEMENTS = [
     slug TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     description TEXT,
-    has_curated_source INTEGER NOT NULL DEFAULT 0
+    has_curated_source INTEGER NOT NULL DEFAULT 0,
+    is_custom INTEGER NOT NULL DEFAULT 0,
+    generates_applied_insights INTEGER NOT NULL DEFAULT 0
   );`,
   `CREATE TABLE IF NOT EXISTS user_interests (
     interest_id INTEGER PRIMARY KEY REFERENCES interests(id),
@@ -67,6 +70,13 @@ const STATEMENTS = [
     score REAL NOT NULL DEFAULT 0,
     digest_id INTEGER REFERENCES digests(id)
   );`,
+  `CREATE TABLE IF NOT EXISTS applied_insights (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    interest_id INTEGER NOT NULL REFERENCES interests(id),
+    deep_dive_id INTEGER REFERENCES deep_dives(id),
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (current_timestamp)
+  );`,
   `CREATE TABLE IF NOT EXISTS settings (
     id INTEGER PRIMARY KEY DEFAULT 1,
     frequency TEXT NOT NULL DEFAULT 'daily',
@@ -80,6 +90,8 @@ const STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS brain_facts_last_shown_idx ON brain_facts(last_shown_at);`,
   `CREATE INDEX IF NOT EXISTS covered_topics_interest_idx ON covered_topics(interest_id);`,
   `CREATE INDEX IF NOT EXISTS deep_dives_digest_idx ON deep_dives(digest_id);`,
+  `CREATE INDEX IF NOT EXISTS applied_insights_deep_dive_idx ON applied_insights(deep_dive_id);`,
+  `CREATE INDEX IF NOT EXISTS applied_insights_interest_idx ON applied_insights(interest_id);`,
   `INSERT OR IGNORE INTO settings (id, frequency, muted_categories) VALUES (1, 'daily', '[]');`,
 ];
 
@@ -87,7 +99,34 @@ const STATEMENTS = [
 // so re-running against a DB that already has them is a harmless no-op.
 const ADDITIVE_COLUMNS: { table: string; column: string; ddl: string }[] = [
   { table: "settings", column: "last_fact_gen_at", ddl: "ALTER TABLE settings ADD COLUMN last_fact_gen_at TEXT;" },
+  {
+    table: "interests",
+    column: "is_custom",
+    ddl: "ALTER TABLE interests ADD COLUMN is_custom INTEGER NOT NULL DEFAULT 0;",
+  },
+  {
+    table: "interests",
+    column: "generates_applied_insights",
+    ddl: "ALTER TABLE interests ADD COLUMN generates_applied_insights INTEGER NOT NULL DEFAULT 0;",
+  },
 ];
+
+/**
+ * The ALTER TABLE ADD COLUMN above defaults every existing interest's
+ * generates_applied_insights to false. Immediately after adding it for the
+ * first time, backfill the per-interest defaults from INTERESTS_SEED (e.g.
+ * Psychology/Business/Economics/Philosophy default on) — but only on that
+ * first run, so it never clobbers a value the user has since changed in
+ * Settings on a later boot.
+ */
+async function backfillAppliedInsightsDefaults() {
+  for (const seed of INTERESTS_SEED) {
+    await client.execute({
+      sql: "UPDATE interests SET generates_applied_insights = ? WHERE slug = ?",
+      args: [seed.generatesAppliedInsights ? 1 : 0, seed.slug],
+    });
+  }
+}
 
 /**
  * Phase 1 created `items.category` as NOT NULL. Phase 2 needs it nullable
@@ -139,6 +178,9 @@ export async function runMigrations() {
     const hasColumn = result.rows.some((row: any) => row.name === column);
     if (!hasColumn) {
       await client.execute(ddl);
+      if (table === "interests" && column === "generates_applied_insights") {
+        await backfillAppliedInsightsDefaults();
+      }
     }
   }
   await rebuildItemsTableIfNeeded();

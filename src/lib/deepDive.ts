@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Level } from "@/db/schema";
 import { getAnthropicClient } from "./claude";
+import type { CoveredTopicsInfo } from "./interests";
 
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 const MAX_RESUME_ATTEMPTS = 3; // guards against pause_turn looping forever
@@ -24,7 +25,30 @@ const LEVEL_INSTRUCTIONS: Record<Level, string> = {
     "This reader is advanced — actively studying or working in this field. Skip introductory framing " +
     "entirely. Go straight into mechanisms, current open questions, and nuance that would only be " +
     "useful to someone who already has the basics down.",
+  research_level:
+    "This reader is at research level — either about to start research in this field or already doing " +
+    "so. Write like a literature review aimed at that person, not a textbook chapter: engage directly " +
+    "with actual open questions, current debates between competing views or approaches, and recent " +
+    "papers or results. Assume full command of the field's standard toolkit and vocabulary.",
 };
+
+// Below research_level, there's deliberately no ceiling: the goal is that
+// sustained daily use gradually carries the reader from their starting level
+// toward genuinely advanced, research-adjacent territory over weeks/months,
+// the way a real course sequence would — not an indefinite plateau at
+// whatever level they started at.
+function escalationInstruction(level: Level, totalCovered: number): string {
+  if (level === "research_level" || totalCovered === 0) return "";
+  return (
+    `\nThis is entry #${totalCovered + 1} in the series. Each entry should be somewhat more ` +
+    "sophisticated than the last as the series accumulates — use the length and content of the " +
+    "topics-covered list below as your signal for how far the series has already progressed, and " +
+    "push a bit further than the previous entry rather than holding steady at the reader's " +
+    "originally-stated level. Over enough entries, the series should be capable of reaching genuinely " +
+    "advanced, research-adjacent territory even if the reader started out new to the field — the " +
+    "self-reported level sets the starting point, not a permanent ceiling."
+  );
+}
 
 const SYSTEM_PROMPT =
   "You write entries in an ongoing explainer series that replaces doomscrolling with real, thorough " +
@@ -35,19 +59,15 @@ const SYSTEM_PROMPT =
   "recall — this is a knowledge feed, not a listicle, so favor genuine depth and structure over a " +
   "breezy summary.";
 
-function buildUserPrompt(
-  interestName: string,
-  level: Level,
-  coveredTopics: string[]
-): string {
+function buildUserPrompt(interestName: string, level: Level, covered: CoveredTopicsInfo): string {
   const coveredList =
-    coveredTopics.length > 0
-      ? coveredTopics.map((t) => `- ${t}`).join("\n")
+    covered.recent.length > 0
+      ? covered.recent.map((t) => `- ${t}`).join("\n")
       : "(none yet — this is the first entry in the series)";
 
   return (
     `Write the next entry in the ${interestName} explainer series.\n\n` +
-    `Reader level: ${level}. ${LEVEL_INSTRUCTIONS[level]}\n\n` +
+    `Reader level: ${level}. ${LEVEL_INSTRUCTIONS[level]}${escalationInstruction(level, covered.totalCount)}\n\n` +
     `Topics already covered in this series, in the order they were covered — do not repeat any of ` +
     `them, and pick the next topic a well-designed course or syllabus would logically cover next ` +
     `(build on what's already been covered rather than jumping randomly or restarting from scratch, ` +
@@ -75,13 +95,13 @@ function buildUserPrompt(
 export async function generateDeepDive(
   interestName: string,
   level: Level,
-  coveredTopics: string[]
+  covered: CoveredTopicsInfo
 ): Promise<DeepDiveResult | null> {
   const anthropic = getAnthropicClient();
   if (!anthropic) return null;
 
   try {
-    const userPrompt = buildUserPrompt(interestName, level, coveredTopics);
+    const userPrompt = buildUserPrompt(interestName, level, covered);
     let messages: Anthropic.MessageParam[] = [{ role: "user", content: userPrompt }];
     let response = await anthropic.messages.create({
       model: MODEL,
@@ -158,6 +178,76 @@ function parseDeepDiveResponse(
   }
 
   return { topic, content: body, sources };
+}
+
+/**
+ * Given a just-written deep dive, generates ONE short, concrete, actionable
+ * "apply this to daily life" takeaway — or returns null if the topic
+ * genuinely doesn't have a natural everyday application. Quality over
+ * completeness per spec: a forced or generic insight is worse than none, so
+ * the model is explicitly told to decline rather than pad.
+ */
+export async function generateAppliedInsight(
+  interestName: string,
+  deepDiveTopic: string,
+  deepDiveContent: string
+): Promise<string | null> {
+  const anthropic = getAnthropicClient();
+  if (!anthropic) return null;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: 1024,
+      output_config: {
+        format: {
+          type: "json_schema",
+          schema: {
+            type: "object",
+            properties: {
+              applicable: {
+                type: "boolean",
+                description:
+                  "True only if this specific topic has a genuine, concrete, actionable everyday " +
+                  "application — not a stretch, not generic advice. False if it doesn't; many " +
+                  "legitimate topics won't, and that's fine.",
+              },
+              content: {
+                type: "string",
+                description:
+                  "2-4 sentences: a specific, concrete takeaway the reader could actually act on " +
+                  "today, grounded in the deep dive's actual content. Empty string if applicable is false.",
+              },
+            },
+            required: ["applicable", "content"],
+            additionalProperties: false,
+          },
+        },
+      },
+      messages: [
+        {
+          role: "user",
+          content:
+            `You just wrote this deep-dive explainer on "${deepDiveTopic}" for the ${interestName} ` +
+            `series:\n\n---\n${deepDiveContent}\n---\n\n` +
+            "If this specific topic has a genuine, concrete, actionable application to someone's " +
+            "everyday life, write ONE short practical takeaway card grounded in what the deep dive " +
+            "actually said — specific enough to act on today, not a vague platitude like 'be more " +
+            "aware of this.' If it doesn't have a natural everyday application, say so — don't force " +
+            "one just to have something. Quality over completeness.",
+        },
+      ],
+    });
+
+    const textBlock = response.content.find((b) => b.type === "text");
+    if (!textBlock || textBlock.type !== "text") return null;
+    const parsed = JSON.parse(textBlock.text) as { applicable: boolean; content: string };
+    if (!parsed.applicable || !parsed.content.trim()) return null;
+    return parsed.content.trim();
+  } catch (err) {
+    console.error(`[deepDive] Applied insight generation failed for "${interestName}":`, err);
+    return null;
+  }
 }
 
 function harvestSourcesFromToolResults(

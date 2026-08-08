@@ -19,12 +19,16 @@ async function main() {
   }
 
   console.log(
-    `Cycle #${result.cycleId}: +${result.curatedAdded} curated items ` +
+    `Cycle #${result.cycleId}: +${result.newsAdded} news items ` +
       `(fetched ${result.fetchedCount} across ${result.enabledInterestCount} interests), ` +
-      `+${result.deepDivesAdded} deep dives, using ${result.usedClaude ? "Claude" : "keyword fallback"}.`
+      `+${result.deepDivesAdded} deep dives, +${result.appliedInsightsAdded} applied insights, ` +
+      `using ${result.usedClaude ? "Claude" : "keyword fallback"}.`
   );
   if (!result.usedClaude) {
-    console.log("No ANTHROPIC_API_KEY set — deep dives were skipped; curated items still work.");
+    console.log(
+      "No ANTHROPIC_API_KEY set — deep dives, applied insights, and roundup-only interests were " +
+        "skipped; curated items still work."
+    );
   }
   if (result.newBrainFacts > 0) {
     console.log(`Added ${result.newBrainFacts} new brain facts to the bank.`);

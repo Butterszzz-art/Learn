@@ -1,16 +1,14 @@
 import Link from "next/link";
-import type { FeedDeepDiveEntry } from "@/lib/digest";
+import type { DeepDiveSummary } from "@/lib/digest";
 import { LEVEL_LABELS } from "@/db/schema";
 
-export function DeepDiveCard({ entry }: { entry: FeedDeepDiveEntry }) {
+export function DeepDiveCard({ entry }: { entry: DeepDiveSummary }) {
   return (
     <Link
       href={`/deep-dive/${entry.id}`}
       className="card block border-brain-accent2/40 bg-gradient-to-br from-brain-surface to-brain-surface2 transition hover:border-brain-accent2"
     >
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-        <span className="pill border-brain-accent2/50 text-brain-accent2">📖 Deep dive</span>
-        <span className="pill">{entry.interestName}</span>
         <span className="pill">{LEVEL_LABELS[entry.level]}</span>
       </div>
       <h3 className="mb-2 font-serif text-lg leading-snug">{entry.topic}</h3>
