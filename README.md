@@ -98,19 +98,20 @@ do this step for you):
 
 ### 1. Create the Turso database
 
-Install the Turso CLI and create a database (see
-[docs.turso.tech](https://docs.turso.tech/quickstart) if `curl | sh` isn't
-your thing):
+Install the CLI (native Windows isn't supported — run this from WSL, Git
+Bash won't work for the installer itself, though the resulting `turso`
+binary works fine from any shell once it's on your `PATH`):
 
 ```bash
+curl -sSfL https://get.tur.so/install.sh | bash
+turso auth login
 turso db create digest
-turso db show digest --url          # -> TURSO_DATABASE_URL
-turso auth token create digest      # -> TURSO_AUTH_TOKEN
+turso db show digest --url                              # -> TURSO_DATABASE_URL
+turso db tokens create digest --expiration never         # -> TURSO_AUTH_TOKEN
 ```
 
-(Command names have shifted a bit across Turso CLI versions — `turso db
-tokens create digest` is the older form. Either way you're after a URL
-starting `libsql://...` and a JWT-looking auth token.)
+`--expiration never` matters here — the default token expires, and you
+don't want the deployed app to silently lose database access weeks later.
 
 Apply the schema to the new hosted database once, from your machine:
 
