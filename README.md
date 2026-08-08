@@ -1,21 +1,37 @@
-# Neuro Digest
+# Digest
 
-A personal, automated news digest for neuroscience and psychobiology — runs
-entirely on your own machine. No hosting, no email, no account required.
+A personal, local knowledge feed — a doomscrolling replacement. It surfaces
+real current material *and* thorough, level-matched explainers across
+whatever fields you choose, not just neuroscience. Runs entirely on your own
+machine. No hosting, no email, no account required.
 
-- **Content pipeline**: pulls recent items from PubMed, arXiv (`q-bio.NC` +
-  a quantum-biology/brain crossover query), bioRxiv's neuroscience feed, and
-  five science-journalism RSS feeds (Quanta, ScienceDaily ×3, MIT News).
+- **Interests**: pick any number of fields — Neuroscience & Psychobiology,
+  Psychology, Philosophy, History, Economics & Finance, Business, Political
+  Science, Computer Science / AI, Physics — and set a level for each: *new to
+  this*, *some background*, or *advanced*. Add more later from Settings.
+- **Curated items**: for every enabled interest with a curated source (all of
+  them except Business and Political Science), pulls recent items from
+  PubMed, arXiv, bioRxiv, and a set of RSS feeds specific to that field —
+  deduplicated, scored, and capped per interest so the feed stays substantive
+  rather than exhaustive.
+- **Deep dives** (the "actually learn something" feature): once per digest
+  cycle, for every enabled interest, asks Claude — with the `web_search` tool
+  — to write one genuinely thorough, several-hundred-word explainer, grounded
+  in real current sources, on the next logical topic in that field's ongoing
+  "syllabus" (it tracks what's already been covered so it builds rather than
+  repeats or jumps randomly). Calibrated to your level, but never
+  condescending — level only changes which concepts are assumed as
+  background, not the register.
+- **Bounded feed**: the home page is a single feed mixing curated items and
+  deep-dive cards from all your enabled interests, most substantial/recent
+  first. Once you've seen everything in the current cycle, you get a clear
+  "You're caught up" end state — nothing lazy-loads just to keep you
+  scrolling. That's the whole point.
 - **Storage**: a single SQLite file at `./data/neuro-digest.db` (via
-  `better-sqlite3` + Drizzle ORM). Nothing leaves your machine except the
-  outbound fetches to those public feeds/APIs, and — if you set an API key —
-  requests to the Anthropic API for summarization.
-- **AI features (optional)**: with an `ANTHROPIC_API_KEY` set, Claude
-  categorizes and writes 2–3 sentence plain-language summaries for each
-  item, and periodically (about once a week) proposes new candidate "Brain
-  Fact of the Day" entries. Without a key, the app falls back to
-  keyword-based categorization and truncated-snippet summaries, and only
-  ever shows the 75+ curated seed facts — nothing is generated live.
+  `@libsql/client` + Drizzle ORM — no native build tools required, works
+  out of the box on Windows). Nothing leaves your machine except the
+  outbound fetches to public feeds/APIs, and — for deep dives — requests to
+  the Anthropic API.
 
 ---
 
@@ -24,72 +40,76 @@ entirely on your own machine. No hosting, no email, no account required.
 ```bash
 cd neuro-digest
 npm install
-npm run db:migrate   # creates the SQLite schema in ./data/neuro-digest.db
-npm run db:seed      # loads the curated brain-fact bank
+npm run db:migrate   # creates/updates the SQLite schema in ./data/neuro-digest.db
+npm run db:seed      # loads the curated brain-fact bank (Neuroscience only)
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and click **Refresh
-now** to compile your first digest.
+Open [http://localhost:3000](http://localhost:3000). First run takes you
+through onboarding — pick your interests and levels — then click **Refresh
+now** to compile your first cycle.
 
-### Enabling AI summaries (optional)
+### Enabling deep dives (needs an API key)
+
+Deep-dive generation is the core feature and **requires** an Anthropic API
+key — curated items work fine without one, but you'll only get half the
+feed.
 
 1. Copy `.env.example` to `.env.local`.
 2. Set `ANTHROPIC_API_KEY=sk-ant-...` (get one from
-   [platform.claude.com](https://platform.claude.com)).
+   [platform.claude.com](https://platform.claude.com)). **Add it yourself** —
+   don't paste it into a chat with an AI assistant and ask it to write the
+   file for you.
 3. Optionally set `ANTHROPIC_MODEL` to a different model ID — defaults to
    `claude-sonnet-5`.
 4. Restart `npm run dev`.
-
-Without a key, everything still works: items are sorted into categories via
-keyword rules, and each item's "summary" is a truncated excerpt of the
-original RSS/abstract snippet (never the full article body, to respect
-publisher copyright).
 
 ---
 
 ## How it works
 
-- **Refresh** (the button in the UI, or `npm run fetch` from the CLI) fetches
-  new items from all sources in parallel, deduplicates by normalized URL and
-  fuzzy title match, drops anything already seen in a past digest, then
-  categorizes/summarizes/scores what's left and keeps the top ~15–20 most
-  substantive items for a new digest. If nothing new was found, no empty
-  digest is created — the most recent one just stays current.
-- **Categories**: every item gets exactly one of *Computational
-  Neuroscience*, *Quantum Biology*, *Behavioral Neuroscience*, or *General
-  Neuroscience & Psychobiology*.
-- **Brain Fact of the Day**: picked from the seed bank (never-shown facts
-  first, then least-recently-shown), rotated once per calendar day. If an
-  API key is set, roughly once a week the app asks Claude for a handful of
-  new candidate facts, runs them through a basic plausibility filter, and
-  appends survivors to the bank — nothing generated is shown before that
-  filter runs.
-- **Archive**: every compiled digest is kept and browsable by date.
-- **Settings**: toggle daily/weekly labeling and mute categories you don't
-  want included in future digests (past digests are unaffected).
+- **Refresh** (the button in the UI, or `npm run fetch` from the CLI) does
+  two things per enabled interest, in parallel:
+  1. **Curated fetch** — pulls from that interest's sources, dedupes against
+     everything already seen, scores what's left, and keeps the top ~8 most
+     substantive new items.
+  2. **Deep dive** — if one hasn't already been generated for the *current
+     cycle*, asks Claude (with `web_search`) to pick the next syllabus topic
+     and write the explainer, then logs the topic so it's never repeated.
+- **Cycles**: a cycle is one compiled period — daily or weekly, per Settings.
+  Refreshing multiple times within the same day/week adds new curated items
+  to the *same* cycle rather than creating a new one each time; deep dives
+  are capped at one per interest per cycle regardless of how many times you
+  refresh. This is what makes "You're caught up" mean something.
+- **Brain Fact of the Day**: a Phase 1 holdover — still shown at the top of
+  the feed, but only when Neuroscience & Psychobiology is one of your
+  enabled interests. Picked from a 75+ entry seed bank (never-shown facts
+  first), rotated once per day; if a key is set, the bank grows by a
+  handful of Claude-generated (plausibility-checked) facts about once a
+  week.
+- **Archive**: every past cycle is kept and browsable by date, showing
+  everything that was in it at the time — including from interests you've
+  since disabled.
+- **Settings**: change your interest levels, enable/disable interests, or
+  toggle daily/weekly cycles, all from one page.
 
 ---
 
-## Hands-off daily updates (optional)
+## Hands-off updates (optional)
 
-The web app's "Refresh now" button is the simplest way to update the
-digest — it always works, no scheduler required. If you'd rather have it
-update automatically every morning, `npm run fetch` runs the exact same
-fetch-and-compile pipeline outside the web server, so you can hook it into
-your OS's own scheduler.
+The **Refresh now** button always works, no scheduler required. If you'd
+rather it update automatically every morning, `npm run fetch` runs the exact
+same pipeline outside the web server, so you can hook it into your OS's own
+scheduler.
 
 ### Windows (Task Scheduler)
 
 1. Open **Task Scheduler** → **Create Basic Task…**
-2. Trigger: **Daily**, at whatever time you want (e.g. 7:00 AM).
+2. Trigger: **Daily**, at whatever time you want.
 3. Action: **Start a program**
-   - Program/script: `npm.cmd` (or the full path to `npm.cmd`, typically
-     found via `where npm` in a terminal)
+   - Program/script: `npm.cmd` (find the full path via `where npm`)
    - Add arguments: `run fetch`
-   - Start in: the full path to this project folder, e.g.
-     `C:\Users\you\Learn\neuro-digest`
-4. Finish. The task will run `npm run fetch` in this folder every day.
+   - Start in: this project folder, e.g. `C:\Users\you\Learn\neuro-digest`
 
 ### macOS / Linux (cron)
 
@@ -97,10 +117,8 @@ your OS's own scheduler.
 crontab -e
 ```
 
-Add a line like (adjust the path and time):
-
 ```
-0 7 * * * cd /path/to/neuro-digest && /usr/local/bin/npm run fetch >> /tmp/neuro-digest.log 2>&1
+0 7 * * * cd /path/to/neuro-digest && /usr/local/bin/npm run fetch >> /tmp/digest.log 2>&1
 ```
 
 ---
@@ -109,29 +127,38 @@ Add a line like (adjust the path and time):
 
 ```
 src/
-  db/            Drizzle schema, migrations, seed data (75+ brain facts)
+  db/
+    schema.ts          Drizzle schema: interests, user_interests,
+                        covered_topics, deep_dives, items, digests
+                        (cycles), brain_facts, settings
+    interestsSeed.ts    The 9 seed interests
+    brainFactsSeed.ts   75+ curated brain facts
   lib/
-    fetchers/    PubMed, arXiv, bioRxiv, and RSS fetchers
-    claude.ts    Anthropic API integration (categorize/summarize/brain facts)
-    categorize.ts   Keyword-based fallback categorizer
-    dedupe.ts    URL + fuzzy-title deduplication
-    score.ts     Ranks items so only the most substantive ~15-20 surface
-    pipeline.ts  Orchestrates the whole fetch -> digest flow
-    digest.ts    Read-side queries used by the pages
-  app/           Next.js App Router pages + API routes
-  components/    UI components
-scripts/fetch.ts Standalone fetch-and-compile script (for cron/Task Scheduler)
+    fetchers/           One fetcher per curated interest, plus a registry
+                        mapping interest slug -> fetcher
+    interests.ts        Interest config (enable/level), covered-topics log
+    claude.ts           Categorize/summarize items (Claude, keyword fallback)
+    deepDive.ts         Deep-dive generation via the web_search tool
+    dedupe.ts           URL + fuzzy-title deduplication
+    score.ts            Per-interest item ranking
+    pipeline.ts         Orchestrates fetch -> dedupe -> score -> deep dive
+    digest.ts           Read-side feed/archive/settings queries
+  app/                  Next.js App Router pages + API routes
+  components/           UI components (Feed, DeepDiveCard, ItemCard,
+                        InterestPicker, ...)
+scripts/fetch.ts        Standalone fetch-and-compile script (cron/Task Scheduler)
 ```
 
 ## Backing up your archive
 
-The whole app is a single SQLite file at `./data/neuro-digest.db`. If you
-reinstall or move machines and want to keep your digest archive and brain
-fact history, just copy that file over.
+The whole app is a single SQLite file at `./data/neuro-digest.db`. Copy it
+to keep your feed archive, deep-dive history, and interest config when
+reinstalling or moving machines.
 
-## A note on the RSS feed URLs
+## A note on the RSS/API feed URLs
 
-The journalism feed URLs in `src/lib/fetchers/journalism.ts` were verified
-to resolve at the time this project was generated. Publishers occasionally
-change feed paths — if one starts 404ing, check the site's own `/rss` or
-`/feed` listing page for the replacement and update the URL there.
+Every feed in `src/lib/fetchers/` was verified to resolve at the time this
+project was generated (one, NBER's, redirects — `fetch()` follows it
+automatically). Publishers occasionally change feed paths; if one starts
+404ing, check the site's own `/rss` or `/feed` listing page for the
+replacement.

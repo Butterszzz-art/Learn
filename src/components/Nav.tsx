@@ -15,7 +15,7 @@ export function Nav() {
     <header className="border-b border-brain-border">
       <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-4">
         <Link href="/" className="font-serif text-lg tracking-tight">
-          🧠 Neuro Digest
+          📚 Digest
         </Link>
         <nav className="flex gap-6">
           {LINKS.map((link) => {

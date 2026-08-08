@@ -7,36 +7,38 @@ export function RefreshButton() {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [status, setStatus] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleClick() {
     setError(null);
-    setStatus("Fetching new items…");
+    setLoading(true);
+    setStatus(null);
     try {
       const res = await fetch("/api/refresh", { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "Refresh failed");
 
-      if (data.noNewItems) {
-        setStatus(`No new items found (checked ${data.fetchedCount} fetched).`);
+      if (data.enabledInterestCount === 0) {
+        setStatus("No interests enabled yet — check Settings.");
       } else {
+        const parts = [`+${data.curatedAdded} curated`, `+${data.deepDivesAdded} deep dives`];
         setStatus(
-          `Added ${data.itemCount} items to the digest` +
-            (data.usedClaude ? "" : " (keyword mode — no API key set)") +
-            "."
+          parts.join(", ") + (data.usedClaude ? "" : " (no API key — deep dives skipped)") + "."
         );
       }
       startTransition(() => router.refresh());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
-      setStatus(null);
+    } finally {
+      setLoading(false);
     }
   }
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <button className="btn-primary" onClick={handleClick} disabled={isPending || status === "Fetching new items…"}>
-        {status === "Fetching new items…" || isPending ? (
+      <button className="btn-primary" onClick={handleClick} disabled={isPending || loading}>
+        {loading || isPending ? (
           <>
             <Spinner /> Refreshing…
           </>
@@ -44,9 +46,7 @@ export function RefreshButton() {
           <>↻ Refresh now</>
         )}
       </button>
-      {status && status !== "Fetching new items…" && (
-        <p className="max-w-xs text-right text-xs text-brain-muted">{status}</p>
-      )}
+      {status && <p className="max-w-xs text-right text-xs text-brain-muted">{status}</p>}
       {error && <p className="max-w-xs text-right text-xs text-red-400">{error}</p>}
     </div>
   );

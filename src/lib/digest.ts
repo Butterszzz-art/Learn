@@ -1,111 +1,245 @@
 import { db } from "@/db";
-import { digests, items, brainFacts, settings } from "@/db/schema";
-import type { Category } from "@/db/schema";
-import { CATEGORIES } from "@/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { digests, items, brainFacts, settings, deepDives, interests } from "@/db/schema";
+import type { Category, Level } from "@/db/schema";
+import { eq, desc, inArray } from "drizzle-orm";
 
-export interface DigestItem {
+export interface FeedCuratedEntry {
+  type: "curated";
   id: number;
   title: string;
   authors: string | null;
   summary: string;
   sourceName: string;
   sourceType: string;
-  category: Category;
+  category: Category | null;
   url: string;
   publishedAt: string | null;
+  interestName: string;
+  interestSlug: string;
+  score: number;
 }
 
-export interface DigestView {
+export interface FeedDeepDiveEntry {
+  type: "deepdive";
   id: number;
+  topic: string;
+  contentPreview: string;
+  level: Level;
+  interestName: string;
+  interestSlug: string;
+  createdAt: string;
+  sourceCount: number;
+}
+
+export type FeedEntry = FeedCuratedEntry | FeedDeepDiveEntry;
+
+export interface CycleFeed {
+  cycleId: number;
   periodLabel: string;
   frequency: string;
   createdAt: string;
   brainFact: { text: string; topic: string | null } | null;
-  itemsByCategory: { category: Category; items: DigestItem[] }[];
-  totalItems: number;
+  showBrainFact: boolean;
+  entries: FeedEntry[];
 }
 
-function groupByCategory(rows: DigestItem[]): { category: Category; items: DigestItem[] }[] {
-  const grouped: { category: Category; items: DigestItem[] }[] = [];
-  for (const category of CATEGORIES) {
-    const inCategory = rows.filter((r) => r.category === category);
-    if (inCategory.length > 0) grouped.push({ category, items: inCategory });
+function stripMarkdown(md: string): string {
+  return md
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[*_`>#-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function previewOf(md: string, max = 220): string {
+  const plain = stripMarkdown(md);
+  if (plain.length <= max) return plain;
+  return plain.slice(0, max).replace(/\s+\S*$/, "") + "…";
+}
+
+/**
+ * Builds the merged, bounded feed for one cycle, restricted to the given
+ * interest ids (the enabled set at read time — an interest disabled after a
+ * cycle was compiled simply drops out of view, without deleting anything).
+ * Deep dives sort first (most substantial), then curated items by score.
+ */
+async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Promise<CycleFeed | null> {
+  const cycleRows = await db.select().from(digests).where(eq(digests.id, cycleId)).limit(1);
+  const cycle = cycleRows[0];
+  if (!cycle) return null;
+
+  if (enabledInterestIds.length === 0) {
+    return {
+      cycleId: cycle.id,
+      periodLabel: cycle.periodLabel,
+      frequency: cycle.frequency,
+      createdAt: cycle.createdAt,
+      brainFact: null,
+      showBrainFact: false,
+      entries: [],
+    };
   }
-  return grouped;
-}
 
-async function loadDigest(digestId: number): Promise<DigestView | null> {
-  const digestRows = await db.select().from(digests).where(eq(digests.id, digestId)).limit(1);
-  const digestRow = digestRows[0];
-  if (!digestRow) return null;
+  const allInterests = await db.select().from(interests);
+  const interestById = new Map(allInterests.map((i) => [i.id, i]));
 
-  const itemRows = (await db
+  const itemRows = await db
     .select()
     .from(items)
-    .where(eq(items.digestId, digestId))
-    .orderBy(desc(items.score))) as unknown as DigestItem[];
+    .where(eq(items.digestId, cycleId));
+  const diveRows = await db
+    .select()
+    .from(deepDives)
+    .where(eq(deepDives.digestId, cycleId));
+
+  const enabledSet = new Set(enabledInterestIds);
+
+  const curatedEntries: FeedCuratedEntry[] = itemRows
+    .filter((r) => r.interestId != null && enabledSet.has(r.interestId))
+    .map((r) => {
+      const interest = interestById.get(r.interestId!);
+      return {
+        type: "curated",
+        id: r.id,
+        title: r.title,
+        authors: r.authors,
+        summary: r.summary,
+        sourceName: r.sourceName,
+        sourceType: r.sourceType,
+        category: r.category,
+        url: r.url,
+        publishedAt: r.publishedAt,
+        interestName: interest?.name ?? "Unknown",
+        interestSlug: interest?.slug ?? "unknown",
+        score: r.score,
+      };
+    });
+
+  const deepDiveEntries: FeedDeepDiveEntry[] = diveRows
+    .filter((r) => enabledSet.has(r.interestId))
+    .map((r) => {
+      const interest = interestById.get(r.interestId);
+      let sourceCount = 0;
+      try {
+        sourceCount = (JSON.parse(r.sources) as unknown[]).length;
+      } catch {
+        sourceCount = 0;
+      }
+      return {
+        type: "deepdive",
+        id: r.id,
+        topic: r.topic,
+        contentPreview: previewOf(r.content),
+        level: r.level,
+        interestName: interest?.name ?? "Unknown",
+        interestSlug: interest?.slug ?? "unknown",
+        createdAt: r.createdAt,
+        sourceCount,
+      };
+    });
+
+  curatedEntries.sort((a, b) => b.score - a.score);
+  deepDiveEntries.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
   let brainFact: { text: string; topic: string | null } | null = null;
-  if (digestRow.brainFactId) {
-    const factRows = await db
-      .select()
-      .from(brainFacts)
-      .where(eq(brainFacts.id, digestRow.brainFactId))
-      .limit(1);
+  if (cycle.brainFactId) {
+    const factRows = await db.select().from(brainFacts).where(eq(brainFacts.id, cycle.brainFactId)).limit(1);
     if (factRows[0]) brainFact = { text: factRows[0].text, topic: factRows[0].topic };
   }
+  const neuroInterest = allInterests.find((i) => i.slug === "neuroscience");
+  const showBrainFact = !!neuroInterest && enabledSet.has(neuroInterest.id);
 
   return {
-    id: digestRow.id,
-    periodLabel: digestRow.periodLabel,
-    frequency: digestRow.frequency,
-    createdAt: digestRow.createdAt,
+    cycleId: cycle.id,
+    periodLabel: cycle.periodLabel,
+    frequency: cycle.frequency,
+    createdAt: cycle.createdAt,
     brainFact,
-    itemsByCategory: groupByCategory(itemRows),
-    totalItems: itemRows.length,
+    showBrainFact,
+    entries: [...deepDiveEntries, ...curatedEntries],
   };
 }
 
-/** The most recently compiled digest, or null if none exist yet. */
-export async function getLatestDigest(): Promise<DigestView | null> {
+/** The current (most recent) cycle's feed, restricted to enabled interests. */
+export async function getCurrentFeed(enabledInterestIds: number[]): Promise<CycleFeed | null> {
   const latest = await db.select().from(digests).orderBy(desc(digests.id)).limit(1);
   if (!latest[0]) return null;
-  return loadDigest(latest[0].id);
+  return loadCycleFeed(latest[0].id, enabledInterestIds);
 }
 
-export async function getDigestById(id: number): Promise<DigestView | null> {
-  return loadDigest(id);
+export async function getFeedByCycleId(
+  cycleId: number,
+  enabledInterestIds: number[]
+): Promise<CycleFeed | null> {
+  return loadCycleFeed(cycleId, enabledInterestIds);
 }
 
-export interface DigestListEntry {
+export interface CycleListEntry {
   id: number;
   periodLabel: string;
   frequency: string;
   createdAt: string;
-  itemCount: number;
+  curatedCount: number;
+  deepDiveCount: number;
 }
 
-/** All digests, newest first, for the Archive view. */
-export async function listDigests(): Promise<DigestListEntry[]> {
+/** All cycles, newest first, for the Archive view. */
+export async function listCycles(): Promise<CycleListEntry[]> {
   const rows = await db.select().from(digests).orderBy(desc(digests.id));
-  const withCounts: DigestListEntry[] = [];
+  const out: CycleListEntry[] = [];
   for (const d of rows) {
     const itemRows = await db.select({ id: items.id }).from(items).where(eq(items.digestId, d.id));
-    withCounts.push({
+    const diveRows = await db.select({ id: deepDives.id }).from(deepDives).where(eq(deepDives.digestId, d.id));
+    out.push({
       id: d.id,
       periodLabel: d.periodLabel,
       frequency: d.frequency,
       createdAt: d.createdAt,
-      itemCount: itemRows.length,
+      curatedCount: itemRows.length,
+      deepDiveCount: diveRows.length,
     });
   }
-  return withCounts;
+  return out;
+}
+
+export interface DeepDiveDetail {
+  id: number;
+  topic: string;
+  content: string;
+  sources: { title: string; url: string }[];
+  level: Level;
+  interestName: string;
+  interestSlug: string;
+  createdAt: string;
+}
+
+export async function getDeepDiveById(id: number): Promise<DeepDiveDetail | null> {
+  const rows = await db.select().from(deepDives).where(eq(deepDives.id, id)).limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  const interestRows = await db.select().from(interests).where(eq(interests.id, row.interestId)).limit(1);
+  const interest = interestRows[0];
+  let sources: { title: string; url: string }[] = [];
+  try {
+    sources = JSON.parse(row.sources);
+  } catch {
+    sources = [];
+  }
+  return {
+    id: row.id,
+    topic: row.topic,
+    content: row.content,
+    sources,
+    level: row.level,
+    interestName: interest?.name ?? "Unknown",
+    interestSlug: interest?.slug ?? "unknown",
+    createdAt: row.createdAt,
+  };
 }
 
 export interface AppSettings {
   frequency: "daily" | "weekly";
-  mutedCategories: Category[];
   lastRefreshAt: string | null;
 }
 
@@ -114,17 +248,13 @@ export async function getAppSettings(): Promise<AppSettings> {
   const row = rows[0];
   return {
     frequency: (row?.frequency as "daily" | "weekly") ?? "daily",
-    mutedCategories: row?.mutedCategories ? (JSON.parse(row.mutedCategories) as Category[]) : [],
     lastRefreshAt: row?.lastRefreshAt ?? null,
   };
 }
 
-export async function updateAppSettings(update: {
-  frequency?: "daily" | "weekly";
-  mutedCategories?: Category[];
-}) {
+export async function updateAppSettings(update: { frequency?: "daily" | "weekly" }) {
   const patch: Record<string, unknown> = {};
   if (update.frequency) patch.frequency = update.frequency;
-  if (update.mutedCategories) patch.mutedCategories = JSON.stringify(update.mutedCategories);
+  if (Object.keys(patch).length === 0) return;
   await db.update(settings).set(patch).where(eq(settings.id, 1));
 }

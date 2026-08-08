@@ -17,6 +17,72 @@ export type Category = (typeof CATEGORIES)[number];
 export const SOURCE_TYPES = ["academic", "journalism"] as const;
 export type SourceType = (typeof SOURCE_TYPES)[number];
 
+export const LEVELS = ["new_to_this", "some_background", "advanced"] as const;
+export type Level = (typeof LEVELS)[number];
+
+export const LEVEL_LABELS: Record<Level, string> = {
+  new_to_this: "New to this",
+  some_background: "Some background",
+  advanced: "Advanced / studying it",
+};
+
+// ---------------------------------------------------------------------------
+// interests — the catalog of subjects the feed can pull from. Seeded once;
+// the user can add more later (see seedInterests.ts).
+// ---------------------------------------------------------------------------
+export const interests = sqliteTable("interests", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  slug: text("slug").notNull().unique(), // stable code key, e.g. "neuroscience"
+  name: text("name").notNull(),
+  description: text("description"),
+  hasCuratedSource: integer("has_curated_source", { mode: "boolean" }).notNull().default(false),
+});
+
+// ---------------------------------------------------------------------------
+// userInterests — which interests are enabled and at what level. One row per
+// interest (single-user app, so this doubles as "my interests config").
+// ---------------------------------------------------------------------------
+export const userInterests = sqliteTable("user_interests", {
+  interestId: integer("interest_id")
+    .primaryKey()
+    .references(() => interests.id),
+  level: text("level").$type<Level>().notNull().default("some_background"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+});
+
+// ---------------------------------------------------------------------------
+// coveredTopics — the syllabus log: which deep-dive subtopics have already
+// been shown per interest, so content progresses instead of repeating.
+// ---------------------------------------------------------------------------
+export const coveredTopics = sqliteTable("covered_topics", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  interestId: integer("interest_id")
+    .notNull()
+    .references(() => interests.id),
+  topic: text("topic").notNull(),
+  dateCovered: text("date_covered")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+});
+
+// ---------------------------------------------------------------------------
+// deepDives — long-form, level-matched, web-search-grounded explainers.
+// ---------------------------------------------------------------------------
+export const deepDives = sqliteTable("deep_dives", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  interestId: integer("interest_id")
+    .notNull()
+    .references(() => interests.id),
+  topic: text("topic").notNull(),
+  content: text("content").notNull(), // markdown body, sources section stripped out
+  sources: text("sources").notNull().default("[]"), // JSON array of {title, url}
+  level: text("level").$type<Level>().notNull(),
+  digestId: integer("digest_id").references(() => digests.id), // which cycle it belongs to
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+});
+
 // ---------------------------------------------------------------------------
 // items — every fetched article/preprint/paper, deduped, categorized, scored.
 // ---------------------------------------------------------------------------
@@ -28,7 +94,11 @@ export const items = sqliteTable("items", {
   rawSnippet: text("raw_snippet"), // original RSS/abstract snippet, kept for the keyword fallback
   sourceName: text("source_name").notNull(), // e.g. "PubMed", "arXiv", "Quanta Magazine"
   sourceType: text("source_type").$type<SourceType>().notNull(),
-  category: text("category").$type<Category>().notNull(),
+  // Category is a legacy, neuroscience-only sub-tag from Phase 1 (one of the
+  // four CATEGORIES below). Every other interest leaves this null — the
+  // feed's primary organizing dimension is now `interestId`.
+  category: text("category").$type<Category | null>(),
+  interestId: integer("interest_id").references(() => interests.id),
   url: text("url").notNull(),
   dedupeKey: text("dedupe_key").notNull(), // normalized URL/DOI or fuzzy title hash
   publishedAt: text("published_at"), // ISO date string, nullable if source omits it
@@ -40,7 +110,10 @@ export const items = sqliteTable("items", {
 });
 
 // ---------------------------------------------------------------------------
-// digests — one compiled digest per refresh cycle that produces new content.
+// digests — one row per compiled cycle (day or week, per the frequency
+// setting). Despite the Phase 1 name, this now represents a "cycle" that
+// items and deep dives across ALL enabled interests attach to — kept as
+// `digests` to preserve existing local data rather than a risky rename.
 // ---------------------------------------------------------------------------
 export const digests = sqliteTable("digests", {
   id: integer("id").primaryKey({ autoIncrement: true }),

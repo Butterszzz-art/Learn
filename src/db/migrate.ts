@@ -20,6 +20,36 @@ const STATEMENTS = [
     created_at TEXT NOT NULL DEFAULT (current_timestamp),
     brain_fact_id INTEGER REFERENCES brain_facts(id)
   );`,
+  `CREATE TABLE IF NOT EXISTS interests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    description TEXT,
+    has_curated_source INTEGER NOT NULL DEFAULT 0
+  );`,
+  `CREATE TABLE IF NOT EXISTS user_interests (
+    interest_id INTEGER PRIMARY KEY REFERENCES interests(id),
+    level TEXT NOT NULL DEFAULT 'some_background',
+    enabled INTEGER NOT NULL DEFAULT 1
+  );`,
+  `CREATE TABLE IF NOT EXISTS covered_topics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    interest_id INTEGER NOT NULL REFERENCES interests(id),
+    topic TEXT NOT NULL,
+    date_covered TEXT NOT NULL DEFAULT (current_timestamp)
+  );`,
+  `CREATE TABLE IF NOT EXISTS deep_dives (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    interest_id INTEGER NOT NULL REFERENCES interests(id),
+    topic TEXT NOT NULL,
+    content TEXT NOT NULL,
+    sources TEXT NOT NULL DEFAULT '[]',
+    level TEXT NOT NULL,
+    digest_id INTEGER REFERENCES digests(id),
+    created_at TEXT NOT NULL DEFAULT (current_timestamp)
+  );`,
+  // category is nullable here (Phase 2) — see rebuildItemsTableIfNeeded()
+  // below for the migration path from Phase 1's NOT NULL version.
   `CREATE TABLE IF NOT EXISTS items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
@@ -28,7 +58,8 @@ const STATEMENTS = [
     raw_snippet TEXT,
     source_name TEXT NOT NULL,
     source_type TEXT NOT NULL,
-    category TEXT NOT NULL,
+    category TEXT,
+    interest_id INTEGER REFERENCES interests(id),
     url TEXT NOT NULL,
     dedupe_key TEXT NOT NULL,
     published_at TEXT,
@@ -43,9 +74,12 @@ const STATEMENTS = [
     last_refresh_at TEXT,
     last_fact_gen_at TEXT
   );`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS items_dedupe_key_idx ON items(dedupe_key);`,
-  `CREATE INDEX IF NOT EXISTS items_digest_id_idx ON items(digest_id);`,
+  // Note: items_* indexes are created after rebuildItemsTableIfNeeded() runs
+  // below, not here — on an existing Phase 1 DB, `items` doesn't have
+  // interest_id yet at this point in the migration.
   `CREATE INDEX IF NOT EXISTS brain_facts_last_shown_idx ON brain_facts(last_shown_at);`,
+  `CREATE INDEX IF NOT EXISTS covered_topics_interest_idx ON covered_topics(interest_id);`,
+  `CREATE INDEX IF NOT EXISTS deep_dives_digest_idx ON deep_dives(digest_id);`,
   `INSERT OR IGNORE INTO settings (id, frequency, muted_categories) VALUES (1, 'daily', '[]');`,
 ];
 
@@ -54,6 +88,47 @@ const STATEMENTS = [
 const ADDITIVE_COLUMNS: { table: string; column: string; ddl: string }[] = [
   { table: "settings", column: "last_fact_gen_at", ddl: "ALTER TABLE settings ADD COLUMN last_fact_gen_at TEXT;" },
 ];
+
+/**
+ * Phase 1 created `items.category` as NOT NULL. Phase 2 needs it nullable
+ * (only neuroscience items get a category; every other interest leaves it
+ * null). SQLite can't relax a NOT NULL constraint via ALTER TABLE, so this
+ * rebuilds the table in place if — and only if — the existing column is
+ * still NOT NULL. Safe to re-run: a no-op once the column is nullable.
+ */
+async function rebuildItemsTableIfNeeded() {
+  const info = await client.execute("PRAGMA table_info(items)");
+  const categoryCol = info.rows.find((r: any) => r.name === "category") as
+    | { notnull: number }
+    | undefined;
+  const hasInterestCol = info.rows.some((r: any) => r.name === "interest_id");
+  if (!categoryCol || (categoryCol.notnull === 0 && hasInterestCol)) return; // already migrated or fresh table
+
+  await client.execute("ALTER TABLE items RENAME TO items_old_phase1;");
+  await client.execute(`CREATE TABLE items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    authors TEXT,
+    summary TEXT NOT NULL,
+    raw_snippet TEXT,
+    source_name TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    category TEXT,
+    interest_id INTEGER REFERENCES interests(id),
+    url TEXT NOT NULL,
+    dedupe_key TEXT NOT NULL,
+    published_at TEXT,
+    fetched_at TEXT NOT NULL DEFAULT (current_timestamp),
+    score REAL NOT NULL DEFAULT 0,
+    digest_id INTEGER REFERENCES digests(id)
+  );`);
+  await client.execute(`INSERT INTO items
+    (id, title, authors, summary, raw_snippet, source_name, source_type, category, url, dedupe_key, published_at, fetched_at, score, digest_id)
+    SELECT id, title, authors, summary, raw_snippet, source_name, source_type, category, url, dedupe_key, published_at, fetched_at, score, digest_id
+    FROM items_old_phase1;`);
+  await client.execute("DROP TABLE items_old_phase1;");
+  console.log("[migrate] Rebuilt items table for Phase 2 (category is now nullable, interest_id added).");
+}
 
 export async function runMigrations() {
   for (const stmt of STATEMENTS) {
@@ -66,6 +141,11 @@ export async function runMigrations() {
       await client.execute(ddl);
     }
   }
+  await rebuildItemsTableIfNeeded();
+  // Re-create indexes in case the rebuild just dropped them along with the table.
+  await client.execute(`CREATE UNIQUE INDEX IF NOT EXISTS items_dedupe_key_idx ON items(dedupe_key);`);
+  await client.execute(`CREATE INDEX IF NOT EXISTS items_digest_id_idx ON items(digest_id);`);
+  await client.execute(`CREATE INDEX IF NOT EXISTS items_interest_id_idx ON items(interest_id);`);
 }
 
 // Allow `npm run db:migrate` (tsx src/db/migrate.ts) to run this directly.

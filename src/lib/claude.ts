@@ -133,6 +133,97 @@ async function classifyChunk(
 }
 
 /**
+ * Plain 2-3 sentence summarization for interests that don't use the fixed
+ * neuroscience category taxonomy — every interest other than Neuroscience.
+ * Same batching/fallback contract as classifyAndSummarizeBatch: returns an
+ * empty map on no-key or failure, caller falls back to a truncated snippet.
+ */
+export async function summarizeBatch(items: RawItem[]): Promise<Map<number, string>> {
+  const anthropic = getAnthropicClient();
+  const results = new Map<number, string>();
+  if (!anthropic || items.length === 0) return results;
+
+  const chunks: RawItem[][] = [];
+  for (let i = 0; i < items.length; i += BATCH_SIZE) {
+    chunks.push(items.slice(i, i + BATCH_SIZE));
+  }
+
+  for (const chunk of chunks) {
+    const offset = items.indexOf(chunk[0]);
+    try {
+      const summarized = await summarizeChunk(anthropic, chunk);
+      summarized.forEach((value, idx) => results.set(offset + idx, value));
+    } catch (err) {
+      console.error("[claude] summarizeChunk failed, will fall back for this batch:", err);
+    }
+  }
+
+  return results;
+}
+
+async function summarizeChunk(anthropic: Anthropic, chunk: RawItem[]): Promise<Map<number, string>> {
+  const itemsForPrompt = chunk.map((item, i) => ({
+    index: i,
+    title: item.title,
+    source: item.sourceName,
+    text: (item.snippet || "").slice(0, 1200),
+  }));
+
+  const response = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 4096,
+    output_config: {
+      format: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: {
+            results: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  index: { type: "integer" },
+                  summary: {
+                    type: "string",
+                    description:
+                      "A 2-3 sentence plain-language summary written in the app's own words, never copied verbatim from the source text.",
+                  },
+                },
+                required: ["index", "summary"],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["results"],
+          additionalProperties: false,
+        },
+      },
+    },
+    messages: [
+      {
+        role: "user",
+        content:
+          "You are helping compile a personal knowledge digest. For each item below, write a " +
+          "plain-language 2-3 sentence summary in your own words (never copy sentences verbatim " +
+          "from the provided text).\n\nItems:\n" +
+          JSON.stringify(itemsForPrompt, null, 2),
+      },
+    ],
+  });
+
+  const textBlock = response.content.find((b) => b.type === "text");
+  if (!textBlock || textBlock.type !== "text") return new Map();
+
+  const parsed = JSON.parse(textBlock.text) as { results: { index: number; summary: string }[] };
+  const map = new Map<number, string>();
+  for (const r of parsed.results) {
+    map.set(r.index, r.summary);
+  }
+  return map;
+}
+
+/**
  * Generates a handful of new candidate brain facts, with a basic
  * plausibility check applied by the caller before they're appended to the
  * bank. Returns [] if no API key is configured or generation fails —

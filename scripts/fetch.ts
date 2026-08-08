@@ -1,5 +1,5 @@
 // Standalone fetch-and-compile script, meant to be run outside the web
-// server (e.g. from cron or Windows Task Scheduler) so the digest can be
+// server (e.g. from cron or Windows Task Scheduler) so the feed can be
 // refreshed hands-off every morning. Equivalent to clicking "Refresh now"
 // in the UI. See the README for scheduling instructions.
 //
@@ -13,17 +13,18 @@ async function main() {
   console.log(`[${new Date().toISOString()}] Starting fetch-and-compile…`);
   const result = await runDigestPipeline();
 
-  if (result.noNewItems) {
-    console.log(
-      `No new items found (checked ${result.fetchedCount} fetched, ${result.newItemCount} new).` +
-        (result.digestId > 0 ? ` Latest digest is #${result.digestId}.` : " No digest exists yet.")
-    );
-  } else {
-    console.log(
-      `Compiled digest #${result.digestId}: ${result.itemCount} items ` +
-        `(fetched ${result.fetchedCount}, ${result.newItemCount} new) ` +
-        `using ${result.usedClaude ? "Claude" : "keyword fallback"}.`
-    );
+  if (result.enabledInterestCount === 0) {
+    console.log("No interests are enabled yet — visit the app and complete onboarding first.");
+    return;
+  }
+
+  console.log(
+    `Cycle #${result.cycleId}: +${result.curatedAdded} curated items ` +
+      `(fetched ${result.fetchedCount} across ${result.enabledInterestCount} interests), ` +
+      `+${result.deepDivesAdded} deep dives, using ${result.usedClaude ? "Claude" : "keyword fallback"}.`
+  );
+  if (!result.usedClaude) {
+    console.log("No ANTHROPIC_API_KEY set — deep dives were skipped; curated items still work.");
   }
   if (result.newBrainFacts > 0) {
     console.log(`Added ${result.newBrainFacts} new brain facts to the bank.`);

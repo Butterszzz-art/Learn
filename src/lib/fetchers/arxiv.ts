@@ -18,7 +18,12 @@ function asArray<T>(value: T | T[] | undefined | null): T[] {
   return Array.isArray(value) ? value : [value];
 }
 
-async function queryArxiv(searchQuery: string, maxResults: number): Promise<RawItem[]> {
+/**
+ * Runs a raw arXiv search query (e.g. `cat:cs.AI`) and returns normalized
+ * RawItems. Exported so other interests' fetchers can reuse the arXiv API
+ * without duplicating the fetch/parse plumbing.
+ */
+export async function queryArxiv(searchQuery: string, maxResults: number): Promise<RawItem[]> {
   const url =
     `${ARXIV_API}?search_query=${encodeURIComponent(searchQuery)}` +
     `&sortBy=submittedDate&sortOrder=descending&max_results=${maxResults}`;

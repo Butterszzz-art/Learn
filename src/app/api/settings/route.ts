@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
 import { ensureDb } from "@/db/bootstrap";
 import { getAppSettings, updateAppSettings } from "@/lib/digest";
-import { isValidCategory } from "@/lib/categorize";
-import type { Category } from "@/db/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -18,16 +16,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid body" }, { status: 400 });
   }
 
-  const update: { frequency?: "daily" | "weekly"; mutedCategories?: Category[] } = {};
-
+  const update: { frequency?: "daily" | "weekly" } = {};
   if (body.frequency === "daily" || body.frequency === "weekly") {
     update.frequency = body.frequency;
-  }
-
-  if (Array.isArray(body.mutedCategories)) {
-    update.mutedCategories = body.mutedCategories.filter(
-      (c: unknown): c is Category => typeof c === "string" && isValidCategory(c)
-    );
   }
 
   await updateAppSettings(update);

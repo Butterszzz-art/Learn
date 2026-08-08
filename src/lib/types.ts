@@ -11,10 +11,12 @@ export interface RawItem {
   sourceType: SourceType;
 }
 
-// What a RawItem becomes after processing, ready to persist.
+// What a RawItem becomes after processing, ready to persist. Category is a
+// legacy, neuroscience-only sub-tag (Phase 1) — every other interest leaves
+// it null; the feed's primary organizing dimension is now the interest itself.
 export interface ProcessedItem extends RawItem {
   summary: string;
-  category: Category;
+  category: Category | null;
   score: number;
   dedupeKey: string;
 }

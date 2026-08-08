@@ -4,8 +4,9 @@ import { Nav } from "@/components/Nav";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Neuro Digest",
-  description: "A personal, local neuroscience & psychobiology news digest.",
+  title: "Digest",
+  description:
+    "A personal, local knowledge feed — real current material and thorough, level-matched explainers across whatever fields you choose.",
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
