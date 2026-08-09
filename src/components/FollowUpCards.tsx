@@ -45,8 +45,8 @@ export function FollowUpCards({
   }
 
   return (
-    <div className="mt-10 border-t border-brain-border pt-6">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brain-muted">
+    <div className="mt-10 border-t border-neuron-border pt-6">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neuron-muted">
         Keep going →
       </h2>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -58,12 +58,12 @@ export function FollowUpCards({
               type="button"
               onClick={() => handleClick(t.topic)}
               disabled={loadingTopic !== null}
-              className="card block text-left transition hover:border-brain-accent2 disabled:opacity-60"
+              className="card block text-left transition hover:-translate-y-0.5 hover:border-neuron-accent2 hover:shadow-xl hover:shadow-neuron-accent2/10 disabled:opacity-60 disabled:hover:translate-y-0"
             >
-              <p className="mb-1 font-serif text-base leading-snug">{t.topic}</p>
-              <p className="text-xs leading-relaxed text-brain-muted">{t.teaser}</p>
+              <p className="mb-1 font-display text-base leading-snug">{t.topic}</p>
+              <p className="text-xs leading-relaxed text-neuron-muted">{t.teaser}</p>
               {isLoading && (
-                <p className="mt-2 text-xs text-brain-accent2">Researching and writing this now…</p>
+                <p className="mt-2 text-xs text-neuron-accent2">Researching and writing this now…</p>
               )}
             </button>
           );

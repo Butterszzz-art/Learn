@@ -8,8 +8,8 @@ export default async function OnboardingPage() {
 
   return (
     <div>
-      <h1 className="mb-2 font-serif text-2xl">Welcome to Digest</h1>
-      <p className="mb-6 max-w-2xl text-sm text-brain-muted">
+      <h1 className="mb-2 font-display text-2xl font-bold">Welcome to Neuron</h1>
+      <p className="mb-6 max-w-2xl text-sm text-neuron-muted">
         Pick whatever fields you want to follow — the list below is a starting point, not a ceiling;
         add any topic of your own at the bottom. For each one, set how much background you already
         have, up to research level. This only changes which concepts get assumed vs. explained — every

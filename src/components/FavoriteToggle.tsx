@@ -36,7 +36,7 @@ export function FavoriteToggle({ interestId, isFavorite }: { interestId: number;
           : "Mark as a favorite: more deep dives per cycle, framed a notch deeper, plus Binge and topic-picking"
       }
       className={`text-lg leading-none transition ${
-        isFavorite ? "text-amber-400" : "text-brain-muted hover:text-amber-400"
+        isFavorite ? "text-amber-400" : "text-neuron-muted hover:text-amber-400"
       } disabled:opacity-50`}
     >
       {isFavorite ? "★" : "☆"}

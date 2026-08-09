@@ -34,7 +34,7 @@ export async function queryArxiv(searchQuery: string, maxResults: number): Promi
   try {
     const res = await fetch(url, {
       signal: controller.signal,
-      headers: { "User-Agent": "NeuroDigest/0.1 (personal local research digest)" },
+      headers: { "User-Agent": "Neuron/0.1 (personal local knowledge feed)" },
     });
     if (!res.ok) throw new Error(`arXiv returned HTTP ${res.status}`);
     xml = await res.text();

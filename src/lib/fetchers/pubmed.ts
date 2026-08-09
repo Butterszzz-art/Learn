@@ -16,7 +16,7 @@ async function fetchJson(url: string, timeoutMs = 15000): Promise<any> {
   try {
     const res = await fetch(url, {
       signal: controller.signal,
-      headers: { "User-Agent": "NeuroDigest/0.1 (personal local research digest)" },
+      headers: { "User-Agent": "Neuron/0.1 (personal local knowledge feed)" },
     });
     if (!res.ok) throw new Error(`PubMed request returned HTTP ${res.status}`);
     return await res.json();

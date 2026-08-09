@@ -1,4 +1,4 @@
-# Digest
+# Neuron
 
 A personal, local knowledge feed — a doomscrolling replacement. It surfaces
 real current material *and* thorough, level-matched explainers across ANY

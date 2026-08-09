@@ -128,7 +128,7 @@ export function RefreshButton() {
       </button>
 
       {progress.length > 0 && (
-        <ul className="w-56 space-y-1 text-right text-xs text-brain-muted">
+        <ul className="w-56 space-y-1 text-right text-xs text-neuron-muted">
           {progress.map((p) => (
             <li key={p.id} className="flex items-center justify-end gap-1.5">
               <span>{p.name}</span>
@@ -138,7 +138,7 @@ export function RefreshButton() {
         </ul>
       )}
 
-      {summary && <p className="max-w-xs text-right text-xs text-brain-muted">{summary}</p>}
+      {summary && <p className="max-w-xs text-right text-xs text-neuron-muted">{summary}</p>}
       {error && <p className="max-w-xs text-right text-xs text-red-400">{error}</p>}
     </div>
   );
@@ -154,7 +154,7 @@ function StatusBadge({ status }: { status: InterestProgress["status"] }) {
     error: "✕",
   };
   const color =
-    status === "done" ? "text-green-400" : status === "error" ? "text-red-400" : "text-brain-accent";
+    status === "done" ? "text-green-400" : status === "error" ? "text-red-400" : "text-neuron-accent";
   return <span className={color}>{label[status]}</span>;
 }
 

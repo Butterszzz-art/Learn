@@ -28,8 +28,8 @@ export function FrequencyForm({ initial }: { initial: "daily" | "weekly" }) {
 
   return (
     <div className="card">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brain-muted">
-        Digest cycle
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neuron-muted">
+        Neuron cycle
       </h2>
       <div className="flex gap-3">
         {(["daily", "weekly"] as const).map((f) => (
@@ -42,9 +42,9 @@ export function FrequencyForm({ initial }: { initial: "daily" | "weekly" }) {
             {f === "daily" ? "Daily" : "Weekly"}
           </button>
         ))}
-        {saved && <span className="self-center text-xs text-brain-muted">Saved.</span>}
+        {saved && <span className="self-center text-xs text-neuron-muted">Saved.</span>}
       </div>
-      <p className="mt-2 text-xs text-brain-muted">
+      <p className="mt-2 text-xs text-neuron-muted">
         One deep dive is generated per enabled interest, once per cycle. Refreshing multiple times
         within the same cycle adds new curated items but won't duplicate deep dives.
       </p>

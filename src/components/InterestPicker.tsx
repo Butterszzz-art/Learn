@@ -183,14 +183,14 @@ export function InterestPicker({
           return (
             <div
               key={interest.id}
-              className={`card transition ${c.enabled ? "border-brain-accent/50" : "opacity-70"}`}
+              className={`card transition ${c.enabled ? "border-neuron-accent/50" : "opacity-70"}`}
             >
               <label className="flex cursor-pointer items-start gap-3">
                 <input
                   type="checkbox"
                   checked={c.enabled}
                   onChange={() => toggle(interest.id)}
-                  className="mt-1 h-4 w-4 rounded border-brain-border bg-brain-surface2 accent-brain-accent"
+                  className="mt-1 h-4 w-4 rounded border-neuron-border bg-neuron-surface2 accent-neuron-accent"
                 />
                 <div className="flex-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -199,7 +199,7 @@ export function InterestPicker({
                     {!interest.hasCuratedSource && <span className="pill">news via web search</span>}
                   </div>
                   {interest.description && (
-                    <p className="mt-0.5 text-xs text-brain-muted">{interest.description}</p>
+                    <p className="mt-0.5 text-xs text-neuron-muted">{interest.description}</p>
                   )}
                 </div>
               </label>
@@ -214,8 +214,8 @@ export function InterestPicker({
                         onClick={() => setLevel(interest.id, level)}
                         className={
                           c.level === level
-                            ? "rounded-full bg-brain-accent px-3 py-1 text-xs font-medium text-brain-bg"
-                            : "rounded-full border border-brain-border px-3 py-1 text-xs text-brain-muted hover:text-brain-text"
+                            ? "rounded-full bg-neuron-accent px-3 py-1 text-xs font-medium text-neuron-bg"
+                            : "rounded-full border border-neuron-border px-3 py-1 text-xs text-neuron-muted hover:text-neuron-text"
                         }
                       >
                         {LEVEL_LABELS[level]}
@@ -225,21 +225,21 @@ export function InterestPicker({
 
                   {mode === "settings" && (
                     <>
-                      <label className="flex items-center gap-2 text-xs text-brain-muted">
+                      <label className="flex items-center gap-2 text-xs text-neuron-muted">
                         <input
                           type="checkbox"
                           checked={c.generatesAppliedInsights}
                           onChange={() => toggleAppliedInsights(interest.id)}
-                          className="h-3.5 w-3.5 rounded border-brain-border bg-brain-surface2 accent-brain-accent"
+                          className="h-3.5 w-3.5 rounded border-neuron-border bg-neuron-surface2 accent-neuron-accent"
                         />
                         Generate an Applied Insight card after each deep dive
                       </label>
-                      <label className="flex items-center gap-2 text-xs text-brain-muted">
+                      <label className="flex items-center gap-2 text-xs text-neuron-muted">
                         <input
                           type="checkbox"
                           checked={c.isFavorite}
                           onChange={() => toggleFavorite(interest.id)}
-                          className="h-3.5 w-3.5 rounded border-brain-border bg-brain-surface2 accent-amber-400"
+                          className="h-3.5 w-3.5 rounded border-neuron-border bg-neuron-surface2 accent-amber-400"
                         />
                         ⭐ Passion Mode — more deep dives per cycle, framed a notch deeper, plus Binge
                         and topic-picking in the feed
@@ -254,7 +254,7 @@ export function InterestPicker({
       </div>
 
       <div className="card">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-brain-muted">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neuron-muted">
           Don't see your field? Add any topic.
         </p>
         <div className="flex gap-2">
@@ -269,7 +269,7 @@ export function InterestPicker({
               }
             }}
             placeholder="e.g. Byzantine history, climate policy, jazz theory…"
-            className="flex-1 rounded-lg border border-brain-border bg-brain-surface2 px-3 py-2 text-sm text-brain-text placeholder:text-brain-muted focus:border-brain-accent focus:outline-none"
+            className="flex-1 rounded-2xl border border-neuron-border bg-neuron-surface2 px-3 py-2 text-sm text-neuron-text placeholder:text-neuron-muted focus:border-neuron-accent focus:outline-none"
           />
           <button
             type="button"
@@ -280,7 +280,7 @@ export function InterestPicker({
             {addingCustom ? "Adding…" : "Add"}
           </button>
         </div>
-        <p className="mt-2 text-xs text-brain-muted">
+        <p className="mt-2 text-xs text-neuron-muted">
           Custom interests get a web-search-generated News roundup instead of a fixed RSS feed, plus
           the same Deep Dive and Applied Insight treatment as everything else.
         </p>
@@ -293,7 +293,7 @@ export function InterestPicker({
           {saving ? "Saving…" : mode === "onboarding" ? "Start my feed →" : "Save interests"}
         </button>
         {enabledCount === 0 && (
-          <span className="text-xs text-brain-muted">Enable at least one interest to continue.</span>
+          <span className="text-xs text-neuron-muted">Enable at least one interest to continue.</span>
         )}
       </div>
     </div>

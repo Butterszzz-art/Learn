@@ -10,7 +10,7 @@ function formatDate(iso: string | null): string {
 export function ItemCard({ item }: { item: NewsItem }) {
   return (
     <article className="card">
-      <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-brain-muted">
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-neuron-muted">
         <span className="pill">{item.sourceName}</span>
         {item.category && <span className="pill">{item.category}</span>}
         {item.publishedAt && <span>{formatDate(item.publishedAt)}</span>}
@@ -18,17 +18,17 @@ export function ItemCard({ item }: { item: NewsItem }) {
         {item.sourceType === "generated" && <span className="pill">web search</span>}
       </div>
       <h3 className="mb-1 text-base font-semibold leading-snug">
-        <a href={item.url} target="_blank" rel="noopener noreferrer" className="hover:text-brain-accent">
+        <a href={item.url} target="_blank" rel="noopener noreferrer" className="hover:text-neuron-accent">
           {item.title}
         </a>
       </h3>
-      {item.authors && <p className="mb-2 text-xs text-brain-muted">{item.authors}</p>}
-      <p className="text-sm leading-relaxed text-brain-text/90">{item.summary}</p>
+      {item.authors && <p className="mb-2 text-xs text-neuron-muted">{item.authors}</p>}
+      <p className="text-sm leading-relaxed text-neuron-text/90">{item.summary}</p>
       <a
         href={item.url}
         target="_blank"
         rel="noopener noreferrer"
-        className="mt-3 inline-block text-xs text-brain-accent hover:underline"
+        className="mt-3 inline-block text-xs text-neuron-accent hover:underline"
       >
         Read source →
       </a>

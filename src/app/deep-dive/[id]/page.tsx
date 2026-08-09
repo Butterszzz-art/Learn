@@ -24,21 +24,21 @@ export default async function DeepDivePage({ params }: { params: { id: string } 
 
   return (
     <div>
-      <Link href="/" className="mb-4 inline-block text-xs text-brain-muted hover:text-brain-text">
+      <Link href="/" className="mb-4 inline-block text-xs text-neuron-muted hover:text-neuron-text">
         ← Back to feed
       </Link>
 
       <div className="mb-6">
         <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-          <span className="pill border-brain-accent2/50 text-brain-accent2">📖 Deep dive</span>
+          <span className="pill border-neuron-accent2/50 text-neuron-accent2">📖 Deep dive</span>
           <span className="pill">{deepDive.interestName}</span>
           <span className="pill">{LEVEL_LABELS[deepDive.level]}</span>
-          {createdLabel && <span className="text-brain-muted">{createdLabel}</span>}
+          {createdLabel && <span className="text-neuron-muted">{createdLabel}</span>}
         </div>
-        <h1 className="font-serif text-3xl leading-tight">{deepDive.topic}</h1>
+        <h1 className="font-display text-3xl font-bold leading-tight">{deepDive.topic}</h1>
       </div>
 
-      <article className="prose prose-invert max-w-none prose-headings:font-serif prose-a:text-brain-accent prose-strong:text-brain-text">
+      <article className="prose prose-invert max-w-none prose-headings:font-display prose-a:text-neuron-accent prose-strong:text-neuron-text">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{deepDive.content}</ReactMarkdown>
       </article>
 
@@ -49,8 +49,8 @@ export default async function DeepDivePage({ params }: { params: { id: string } 
       )}
 
       {deepDive.sources.length > 0 && (
-        <div className="mt-10 border-t border-brain-border pt-6">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brain-muted">
+        <div className="mt-10 border-t border-neuron-border pt-6">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neuron-muted">
             Sources
           </h2>
           <ul className="space-y-1.5 text-sm">
@@ -60,7 +60,7 @@ export default async function DeepDivePage({ params }: { params: { id: string } 
                   href={source.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-brain-accent hover:underline"
+                  className="text-neuron-accent hover:underline"
                 >
                   {source.title}
                 </a>

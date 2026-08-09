@@ -63,7 +63,7 @@ export function PassionModeControls({ interestId }: { interestId: number }) {
   const disabled = busy || loadingCandidates;
 
   return (
-    <div className="mt-3 rounded-lg border border-amber-400/20 bg-amber-400/5 p-3 text-xs">
+    <div className="mt-3 rounded-2xl border border-amber-400/20 bg-amber-400/5 p-3 text-xs">
       <p className="mb-2 font-semibold uppercase tracking-wide text-amber-300">⭐ Passion Mode</p>
       <div className="flex flex-wrap gap-2">
         <button type="button" className="btn-secondary" onClick={() => generate()} disabled={disabled}>
@@ -82,16 +82,16 @@ export function PassionModeControls({ interestId }: { interestId: number }) {
               type="button"
               onClick={() => generate(c.topic)}
               disabled={busy}
-              className="block w-full rounded-lg border border-brain-border bg-brain-surface2 p-2 text-left transition hover:border-amber-400/50 disabled:opacity-50"
+              className="block w-full rounded-2xl border border-neuron-border bg-neuron-surface2 p-2 text-left transition hover:border-amber-400/50 disabled:opacity-50"
             >
-              <span className="font-medium text-brain-text">{c.topic}</span>
-              <span className="block text-brain-muted">{c.teaser}</span>
+              <span className="font-medium text-neuron-text">{c.topic}</span>
+              <span className="block text-neuron-muted">{c.teaser}</span>
             </button>
           ))}
         </div>
       )}
       {candidates && candidates.length === 0 && (
-        <p className="mt-2 text-brain-muted">No candidate topics came back — try again in a moment.</p>
+        <p className="mt-2 text-neuron-muted">No candidate topics came back — try again in a moment.</p>
       )}
       {error && <p className="mt-2 text-red-400">{error}</p>}
     </div>

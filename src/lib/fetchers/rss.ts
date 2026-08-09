@@ -70,7 +70,7 @@ export async function fetchRssFeed(
     const res = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "User-Agent": "NeuroDigest/0.1 (personal local research digest)",
+        "User-Agent": "Neuron/0.1 (personal local knowledge feed)",
         Accept: "application/rss+xml, application/xml, text/xml, application/atom+xml",
       },
     });

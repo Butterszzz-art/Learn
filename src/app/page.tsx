@@ -21,12 +21,12 @@ export default async function HomePage() {
       <div className="mb-6 flex items-start justify-between gap-4">
         <div className="max-w-md">
           {!claudeConfigured && (
-            <p className="mb-2 text-xs text-brain-muted">
+            <p className="mb-2 text-xs text-neuron-muted">
               No <code>ANTHROPIC_API_KEY</code> set — deep dives are skipped; curated items still
               work. See the README to enable them.
             </p>
           )}
-          <Link href="/settings" className="text-xs text-brain-muted hover:text-brain-text">
+          <Link href="/settings" className="text-xs text-neuron-muted hover:text-neuron-text">
             {enabledInterests.length} interest{enabledInterests.length === 1 ? "" : "s"} enabled · edit
             in Settings →
           </Link>
@@ -39,7 +39,7 @@ export default async function HomePage() {
       ) : (
         <div className="card text-center">
           <p className="mb-2 text-lg font-medium">No cycle yet</p>
-          <p className="text-sm text-brain-muted">
+          <p className="text-sm text-neuron-muted">
             Click "Refresh now" to fetch curated items and generate your first deep dives.
           </p>
         </div>

@@ -17,8 +17,8 @@ export function SelfCheckQuiz({ questions }: { questions: SelfCheckQuestion[] })
   if (questions.length === 0) return null;
 
   return (
-    <div className="mt-10 border-t border-brain-border pt-6">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-brain-muted">
+    <div className="mt-10 border-t border-neuron-border pt-6">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neuron-muted">
         Self-check
       </h2>
       <div className="space-y-4">
@@ -41,7 +41,7 @@ function QuizQuestion({ q }: { q: SelfCheckQuestion }) {
           const isSelected = selected === i;
           const isCorrect = i === q.correctIndex;
           const showState = selected !== null;
-          let style = "border-brain-border hover:border-brain-accent";
+          let style = "border-neuron-border hover:border-neuron-accent";
           if (showState && isCorrect) style = "border-green-500/60 bg-green-500/10";
           else if (showState && isSelected && !isCorrect) style = "border-red-500/60 bg-red-500/10";
 
@@ -51,7 +51,7 @@ function QuizQuestion({ q }: { q: SelfCheckQuestion }) {
               type="button"
               onClick={() => setSelected(i)}
               disabled={selected !== null}
-              className={`block w-full rounded-lg border p-2.5 text-left text-sm transition disabled:cursor-default ${style}`}
+              className={`block w-full rounded-2xl border p-2.5 text-left text-sm transition disabled:cursor-default ${style}`}
             >
               {option}
               {showState && isSelected && (
@@ -62,7 +62,7 @@ function QuizQuestion({ q }: { q: SelfCheckQuestion }) {
         })}
       </div>
       {selected !== null && (
-        <p className="mt-3 text-xs leading-relaxed text-brain-muted">{q.explanation}</p>
+        <p className="mt-3 text-xs leading-relaxed text-neuron-muted">{q.explanation}</p>
       )}
     </div>
   );

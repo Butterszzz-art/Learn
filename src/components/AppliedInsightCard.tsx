@@ -9,7 +9,7 @@ export function AppliedInsightCard({
   showLabel?: boolean;
 }) {
   return (
-    <div className="card border-amber-400/30 bg-gradient-to-br from-brain-surface to-brain-surface2">
+    <div className="card border-amber-400/30 bg-gradient-to-br from-neuron-surface to-neuron-surface2">
       {showLabel && (
         <div className="mb-2 flex items-center gap-2">
           <span className="text-lg">💡</span>
@@ -18,7 +18,7 @@ export function AppliedInsightCard({
           </span>
         </div>
       )}
-      <p className="text-sm leading-relaxed text-brain-text/90">{entry.content}</p>
+      <p className="text-sm leading-relaxed text-neuron-text/90">{entry.content}</p>
     </div>
   );
 }
