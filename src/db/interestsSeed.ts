@@ -70,4 +70,64 @@ export const INTERESTS_SEED: InterestSeed[] = [
     hasCuratedSource: true,
     generatesAppliedInsights: false,
   },
+  // --- Phase 5 ---
+  {
+    slug: "critical-thinking",
+    name: "Critical Thinking & Argumentation",
+    description:
+      "Practice spotting fallacies, reconstructing arguments, and checking validity — Drills are this " +
+      "interest's primary content, not deep dives. News is a generated roundup of real arguments and " +
+      "fallacies currently in circulation.",
+    hasCuratedSource: false,
+    generatesAppliedInsights: true,
+  },
+  {
+    slug: "exercise-science",
+    name: "Exercise Science",
+    description: "Training, physiology, and the research behind what actually works.",
+    hasCuratedSource: true,
+    generatesAppliedInsights: true,
+  },
+  {
+    slug: "philosophy-of-science",
+    name: "Philosophy of Science",
+    description: "What makes something scientific — theory-ladenness, falsifiability, and the demarcation problem.",
+    hasCuratedSource: false,
+    generatesAppliedInsights: false,
+  },
+  {
+    slug: "mathematics",
+    name: "Mathematics",
+    description: "Pure and applied — from elegant proofs to the open problems mathematicians are chasing.",
+    hasCuratedSource: true,
+    generatesAppliedInsights: false,
+  },
+  {
+    slug: "logic",
+    name: "Logic",
+    description: "Formal reasoning — syllogisms, validity and soundness, and mathematical logic research.",
+    hasCuratedSource: true,
+    generatesAppliedInsights: true,
+  },
+  {
+    slug: "animal-world",
+    name: "Animal World",
+    description: "Animal behavior, cognition, and the science of how other species navigate their worlds.",
+    hasCuratedSource: true,
+    generatesAppliedInsights: false,
+  },
+  {
+    slug: "biology",
+    name: "Biology",
+    description: "Molecular and cellular biology — the machinery underneath every living thing.",
+    hasCuratedSource: true,
+    generatesAppliedInsights: false,
+  },
+  {
+    slug: "evolution",
+    name: "Evolution",
+    description: "Evolutionary biology and human origins — how species (and we) got this way.",
+    hasCuratedSource: true,
+    generatesAppliedInsights: false,
+  },
 ];

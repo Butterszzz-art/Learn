@@ -6,9 +6,11 @@ field you choose, at any depth up to genuine research level, plus concrete
 takeaways for applying it to daily life. Runs entirely on your own machine.
 No hosting, no email, no account required.
 
-- **Interests, wide open**: nine seeded fields (Neuroscience & Psychobiology,
+- **Interests, wide open**: 17 seeded fields (Neuroscience & Psychobiology,
   Psychology, Philosophy, History, Economics & Finance, Business, Political
-  Science, Computer Science / AI, Physics) are suggestions, not a ceiling —
+  Science, Computer Science / AI, Physics, Critical Thinking &
+  Argumentation, Exercise Science, Philosophy of Science, Mathematics,
+  Logic, Animal World, Biology, Evolution) are suggestions, not a ceiling —
   type any topic of your own in onboarding or Settings and it gets the full
   treatment. Set a level per interest: *new to this*, *some background*,
   *advanced*, or *research level*.
@@ -62,6 +64,16 @@ No hosting, no email, no account required.
   original entry on request. A plain, non-punitive progress count ("14
   concepts covered this month across 3 interests") sits at the top of the
   feed — never a streak, never framed as being "at risk."
+- **Drills**: critical-thinking/logic practice — spot the fallacy,
+  reconstruct the argument, check validity, or strengthen/weaken it.
+  Grounded in real content whenever possible: each cycle, 1-2 drills are
+  built from an actual argument or claim found in a recent deep dive
+  (any interest), with a link back to it. Plus one standalone formal-logic
+  drill per cycle (syllogisms, validity vs. soundness, formal fallacies)
+  for Critical Thinking & Argumentation and/or Logic, which share drill
+  material rather than repeating each other. Same instant-feedback,
+  nothing-persisted UI as the self-check questions; drilled concepts feed
+  into the same spaced-resurfacing system as deep-dive topics.
 
 ---
 

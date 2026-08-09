@@ -8,9 +8,10 @@ import {
   appliedInsights,
   interests,
   coveredTopics,
+  drills,
 } from "@/db/schema";
-import type { Category, Level } from "@/db/schema";
-import { eq, desc, and, inArray, isNotNull, lte, asc } from "drizzle-orm";
+import type { Category, Level, DrillType } from "@/db/schema";
+import { eq, desc, and, or, inArray, isNotNull, lte, asc } from "drizzle-orm";
 
 export interface NewsItem {
   id: number;
@@ -40,6 +41,20 @@ export interface AppliedInsightSummary {
   createdAt: string;
 }
 
+export interface DrillSummary {
+  id: number;
+  drillType: DrillType;
+  promptContent: string;
+  options: string[];
+  correctOption: number;
+  explanation: string;
+  conceptLabel: string;
+  // Set when grounded in a real deep dive — lets the card link back with
+  // "based on today's [Interest] deep-dive". Null for standalone logic drills.
+  sourceDeepDiveId: number | null;
+  sourceDeepDiveTopic: string | null;
+}
+
 export interface InterestFeedSection {
   interestId: number;
   interestName: string;
@@ -51,6 +66,7 @@ export interface InterestFeedSection {
   // pipeline.ts — plus curiosity-branching/Binge on-demand additions.
   deepDives: DeepDiveSummary[];
   appliedInsights: AppliedInsightSummary[];
+  drills: DrillSummary[];
 }
 
 export interface DueReviewTopic {
@@ -128,11 +144,21 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
 
   const itemRows = await db.select().from(items).where(eq(items.digestId, cycleId));
   const diveRows = await db.select().from(deepDives).where(eq(deepDives.digestId, cycleId));
+  const drillRows = await db
+    .select({ drill: drills, sourceDive: deepDives })
+    .from(drills)
+    .leftJoin(deepDives, eq(drills.sourceDeepDiveId, deepDives.id))
+    .where(eq(drills.digestId, cycleId));
+  // LEFT JOIN both possible sources (an insight grounds in exactly one) and
+  // filter by either's digestId — an INNER JOIN on deepDives alone would
+  // silently drop drill-grounded insights (e.g. Critical Thinking &
+  // Argumentation, whose primary content is Drills, not Deep Dives).
   const insightRows = await db
-    .select({ insight: appliedInsights, dive: deepDives })
+    .select({ insight: appliedInsights, dive: deepDives, drill: drills })
     .from(appliedInsights)
-    .innerJoin(deepDives, eq(appliedInsights.deepDiveId, deepDives.id))
-    .where(eq(deepDives.digestId, cycleId));
+    .leftJoin(deepDives, eq(appliedInsights.deepDiveId, deepDives.id))
+    .leftJoin(drills, eq(appliedInsights.drillId, drills.id))
+    .where(or(eq(deepDives.digestId, cycleId), eq(drills.digestId, cycleId)));
 
   const sectionsById = new Map<number, InterestFeedSection>();
   function getSection(interestId: number): InterestFeedSection | null {
@@ -148,6 +174,7 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
         news: [],
         deepDives: [],
         appliedInsights: [],
+        drills: [],
       };
       sectionsById.set(interestId, section);
     }
@@ -191,8 +218,32 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
     });
   }
 
-  for (const { insight, dive } of insightRows) {
-    const section = getSection(dive.interestId);
+  for (const { drill, sourceDive } of drillRows) {
+    const section = getSection(drill.interestId);
+    if (!section) continue;
+    let options: string[] = [];
+    try {
+      options = JSON.parse(drill.options);
+    } catch {
+      options = [];
+    }
+    section.drills.push({
+      id: drill.id,
+      drillType: drill.drillType,
+      promptContent: drill.promptContent,
+      options,
+      correctOption: drill.correctOption,
+      explanation: drill.explanation,
+      conceptLabel: drill.conceptLabel,
+      sourceDeepDiveId: sourceDive?.id ?? null,
+      sourceDeepDiveTopic: sourceDive?.topic ?? null,
+    });
+  }
+
+  for (const { insight, dive, drill } of insightRows) {
+    const interestId = dive?.interestId ?? drill?.interestId;
+    if (interestId == null) continue;
+    const section = getSection(interestId);
     if (!section) continue;
     section.appliedInsights.push({ id: insight.id, content: insight.content, createdAt: insight.createdAt });
   }
@@ -207,7 +258,7 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
     .map((i) => sectionsById.get(i.id)!);
 
   const totalEntries = sections.reduce(
-    (sum, s) => sum + s.news.length + s.deepDives.length + s.appliedInsights.length,
+    (sum, s) => sum + s.news.length + s.deepDives.length + s.appliedInsights.length + s.drills.length,
     0
   );
 
@@ -334,6 +385,7 @@ export interface CycleListEntry {
   newsCount: number;
   deepDiveCount: number;
   insightCount: number;
+  drillCount: number;
 }
 
 /** All cycles, newest first, for the Archive view. */
@@ -343,11 +395,15 @@ export async function listCycles(): Promise<CycleListEntry[]> {
   for (const d of rows) {
     const itemRows = await db.select({ id: items.id }).from(items).where(eq(items.digestId, d.id));
     const diveRows = await db.select({ id: deepDives.id }).from(deepDives).where(eq(deepDives.digestId, d.id));
+    const drillRows = await db.select({ id: drills.id }).from(drills).where(eq(drills.digestId, d.id));
+    // LEFT JOIN both possible sources, same reasoning as loadCycleFeed above
+    // — an INNER JOIN on deepDives alone undercounts drill-grounded insights.
     const insightRows = await db
       .select({ id: appliedInsights.id })
       .from(appliedInsights)
-      .innerJoin(deepDives, eq(appliedInsights.deepDiveId, deepDives.id))
-      .where(eq(deepDives.digestId, d.id));
+      .leftJoin(deepDives, eq(appliedInsights.deepDiveId, deepDives.id))
+      .leftJoin(drills, eq(appliedInsights.drillId, drills.id))
+      .where(or(eq(deepDives.digestId, d.id), eq(drills.digestId, d.id)));
     out.push({
       id: d.id,
       periodLabel: d.periodLabel,
@@ -356,6 +412,7 @@ export async function listCycles(): Promise<CycleListEntry[]> {
       newsCount: itemRows.length,
       deepDiveCount: diveRows.length,
       insightCount: insightRows.length,
+      drillCount: drillRows.length,
     });
   }
   return out;

@@ -51,6 +51,13 @@ export async function getInterestById(id: number): Promise<InterestWithConfig | 
   return all.find((i) => i.id === id) ?? null;
 }
 
+/** Single interest by slug, with config — used by the cycle-level Drills
+ * step to find Critical Thinking & Argumentation / Logic without an id. */
+export async function getInterestBySlug(slug: string): Promise<InterestWithConfig | null> {
+  const all = await getAllInterests();
+  return all.find((i) => i.slug === slug) ?? null;
+}
+
 /** True once the user has saved at least one interest config — gates onboarding. */
 export async function hasCompletedOnboarding(): Promise<boolean> {
   const rows = await db.select({ interestId: userInterests.interestId }).from(userInterests).limit(1);
@@ -197,8 +204,9 @@ function daysFromNowSqlite(days: number): string {
 
 /** Logs a newly-covered topic and schedules its first spaced-review date.
  * deepDiveId links back to the entry so a later "Remember this?" card can
- * pull a refresher from it. */
-export async function addCoveredTopic(interestId: number, topic: string, deepDiveId: number) {
+ * pull a refresher from it — null for topics with no source entry (Phase 5:
+ * a standalone formal-logic drill has no source deep dive). */
+export async function addCoveredTopic(interestId: number, topic: string, deepDiveId: number | null) {
   await db.insert(coveredTopics).values({
     interestId,
     topic,

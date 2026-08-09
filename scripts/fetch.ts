@@ -22,7 +22,7 @@ async function main() {
     `Cycle #${result.cycleId}: +${result.newsAdded} news items ` +
       `(fetched ${result.fetchedCount} across ${result.enabledInterestCount} interests), ` +
       `+${result.deepDivesAdded} deep dives, +${result.appliedInsightsAdded} applied insights, ` +
-      `using ${result.usedClaude ? "Claude" : "keyword fallback"}.`
+      `+${result.drillsAdded} drills, using ${result.usedClaude ? "Claude" : "keyword fallback"}.`
   );
   if (!result.usedClaude) {
     console.log(

@@ -23,7 +23,8 @@ export default async function ArchivePage() {
                   <p className="font-medium">{c.periodLabel}</p>
                   <p className="text-xs text-neuron-muted">
                     {c.frequency} · {c.newsCount} news · {c.deepDiveCount} deep dives ·{" "}
-                    {c.insightCount} insights · {new Date(c.createdAt).toLocaleDateString()}
+                    {c.insightCount} insights{c.drillCount > 0 ? ` · ${c.drillCount} drills` : ""} ·{" "}
+                    {new Date(c.createdAt).toLocaleDateString()}
                   </p>
                 </div>
                 <span className="text-neuron-muted">→</span>

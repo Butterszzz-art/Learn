@@ -3,6 +3,7 @@ import { BrainFactCard } from "./BrainFactCard";
 import { DeepDiveCard } from "./DeepDiveCard";
 import { AppliedInsightCard } from "./AppliedInsightCard";
 import { ItemCard } from "./ItemCard";
+import { DrillCard } from "./DrillCard";
 import { FavoriteToggle } from "./FavoriteToggle";
 import { PassionModeControls } from "./PassionModeControls";
 import { RememberThisCard } from "./RememberThisCard";
@@ -10,7 +11,10 @@ import { ProgressIndicator } from "./ProgressIndicator";
 
 function InterestSection({ section }: { section: InterestFeedSection }) {
   const hasContent =
-    section.news.length > 0 || section.deepDives.length > 0 || section.appliedInsights.length > 0;
+    section.news.length > 0 ||
+    section.deepDives.length > 0 ||
+    section.appliedInsights.length > 0 ||
+    section.drills.length > 0;
   if (!hasContent) return null;
 
   return (
@@ -45,13 +49,26 @@ function InterestSection({ section }: { section: InterestFeedSection }) {
       )}
 
       {section.appliedInsights.length > 0 && (
-        <div className={section.isFavorite ? "" : "mb-5"}>
+        <div className="mb-5">
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neuron-muted">
             💡 Applied Insight{section.appliedInsights.length > 1 ? "s" : ""}
           </h3>
           <div className="space-y-3">
             {section.appliedInsights.map((insight) => (
               <AppliedInsightCard key={insight.id} entry={insight} showLabel={false} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {section.drills.length > 0 && (
+        <div className="mb-5">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neuron-muted">
+            🧩 Drill{section.drills.length > 1 ? "s" : ""} — practice
+          </h3>
+          <div className="space-y-3">
+            {section.drills.map((drill) => (
+              <DrillCard key={drill.id} entry={drill} />
             ))}
           </div>
         </div>

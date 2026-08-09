@@ -37,6 +37,25 @@ export function bumpLevel(level: Level): Level {
 }
 
 // ---------------------------------------------------------------------------
+// Drills (Phase 5) — critical-thinking/logic practice, a content type
+// alongside News / Deep Dive / Applied Insight.
+// ---------------------------------------------------------------------------
+export const DRILL_TYPES = [
+  "spot_fallacy",
+  "reconstruct_argument",
+  "validity_check",
+  "strengthen_weaken",
+] as const;
+export type DrillType = (typeof DRILL_TYPES)[number];
+
+export const DRILL_TYPE_LABELS: Record<DrillType, string> = {
+  spot_fallacy: "Spot the Fallacy",
+  reconstruct_argument: "Reconstruct the Argument",
+  validity_check: "Validity Check",
+  strengthen_weaken: "Strengthen or Weaken?",
+};
+
+// ---------------------------------------------------------------------------
 // interests — the catalog of subjects the feed can pull from. Seeded once;
 // the user can add more later (see seedInterests.ts).
 // ---------------------------------------------------------------------------
@@ -134,7 +153,40 @@ export const appliedInsights = sqliteTable("applied_insights", {
     .notNull()
     .references(() => interests.id),
   deepDiveId: integer("deep_dive_id").references(() => deepDives.id),
+  // Phase 5: an insight can also ground in a Drill instead of a Deep Dive —
+  // Critical Thinking & Argumentation's primary content is Drills, so its
+  // Applied Insights need a source other than deepDiveId. Exactly one of
+  // deepDiveId/drillId is set per row in practice, never both.
+  drillId: integer("drill_id").references(() => drills.id),
   content: text("content").notNull(),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+});
+
+// ---------------------------------------------------------------------------
+// drills — critical-thinking/logic practice items (Phase 5). Grounded in a
+// real deep dive whenever possible (sourceDeepDiveId set); a small number
+// per cycle are standalone formal-logic drills with no source material.
+// Rendered like the self-check UI: pick an option, get immediate feedback,
+// nothing about the reader's answer is ever persisted.
+// ---------------------------------------------------------------------------
+export const drills = sqliteTable("drills", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  interestId: integer("interest_id")
+    .notNull()
+    .references(() => interests.id),
+  sourceDeepDiveId: integer("source_deep_dive_id").references(() => deepDives.id),
+  drillType: text("drill_type").$type<DrillType>().notNull(),
+  promptContent: text("prompt_content").notNull(), // the argument/scenario/question text shown to the reader
+  options: text("options").notNull().default("[]"), // JSON array of strings, exactly 4
+  correctOption: integer("correct_option").notNull(), // 0-based index into options
+  explanation: text("explanation").notNull(),
+  // The fallacy/logic-form/argument-pattern being practiced, e.g. "Hasty
+  // generalization" or "Affirming the consequent" — logged to coveredTopics
+  // so it resurfaces later via spaced resurfacing instead of repeating.
+  conceptLabel: text("concept_label").notNull(),
+  digestId: integer("digest_id").references(() => digests.id), // which cycle it belongs to
   createdAt: text("created_at")
     .notNull()
     .default(sql`(current_timestamp)`),

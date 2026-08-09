@@ -20,6 +20,14 @@ async function postStep(path: string, interestId: number): Promise<any> {
   return data;
 }
 
+/** Cycle-level step (Drills) — no interestId, unlike postStep above. */
+async function postCycleStep(path: string): Promise<any> {
+  const res = await fetch(path, { method: "POST" });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error ?? `${path} failed`);
+  return data;
+}
+
 // Passion Mode's per-cycle quota (FAVORITE_DEEP_DIVE_QUOTA in pipeline.ts)
 // is currently 2, but this loop doesn't need to know the exact number: each
 // call is a safe no-op once the server-side quota is reached, so looping up
@@ -64,6 +72,7 @@ export function RefreshButton() {
   const [isPending, startTransition] = useTransition();
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<InterestProgress[]>([]);
+  const [drillsStatus, setDrillsStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [summary, setSummary] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -100,8 +109,22 @@ export function RefreshButton() {
       const newsAdded = results.reduce((sum, r) => sum + r.newsAdded, 0);
       const deepDivesAdded = results.filter((r) => r.deepDiveAdded).length;
       const insightsAdded = results.filter((r) => r.insightAdded).length;
+
+      // Drills scan across ALL interests' deep dives, so this runs once,
+      // after every interest's steps above have settled — not per-interest.
+      setDrillsStatus("running");
+      let drillsFailed = false;
+      const drillsResult = await postCycleStep("/api/refresh/drills").catch((err) => {
+        console.error(err);
+        drillsFailed = true;
+        return { groundedAdded: 0, standaloneAdded: false };
+      });
+      setDrillsStatus(drillsFailed ? "error" : "done");
+      const drillsAdded = (drillsResult.groundedAdded ?? 0) + (drillsResult.standaloneAdded ? 1 : 0);
+
       const parts = [`+${newsAdded} news`, `+${deepDivesAdded} deep dives`];
       if (insightsAdded > 0) parts.push(`+${insightsAdded} insights`);
+      if (drillsAdded > 0) parts.push(`+${drillsAdded} drills`);
       setSummary(parts.join(", ") + ".");
 
       startTransition(() => router.refresh());
@@ -109,7 +132,10 @@ export function RefreshButton() {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
       setLoading(false);
-      setTimeout(() => setProgress([]), 2000);
+      setTimeout(() => {
+        setProgress([]);
+        setDrillsStatus("idle");
+      }, 2000);
     }
   }
 
@@ -135,6 +161,12 @@ export function RefreshButton() {
               <StatusBadge status={p.status} />
             </li>
           ))}
+          {drillsStatus !== "idle" && (
+            <li className="flex items-center justify-end gap-1.5">
+              <span>Drills</span>
+              <StatusBadge status={drillsStatus === "running" ? "waiting" : drillsStatus} />
+            </li>
+          )}
         </ul>
       )}
 

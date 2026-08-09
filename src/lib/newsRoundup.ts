@@ -11,10 +11,11 @@ const SYSTEM_PROMPT =
   "never invent a source, a URL, or a detail. Summaries are written in your own words, never copied " +
   "verbatim from the source.";
 
-function buildPrompt(interestName: string): string {
+function buildPrompt(interestName: string, focusOverride?: string): string {
+  const subject = focusOverride ?? `real, current, dated developments, news items, or notable recent ` +
+    `happenings in the field of "${interestName}"`;
   return (
-    `Search for 3 to 5 real, current, dated developments, news items, or notable recent happenings ` +
-    `in the field of "${interestName}". Use web search to confirm each one is real and to get a ` +
+    `Search for 3 to 5 ${subject}. Use web search to confirm each one is real and to get a ` +
     "genuine, working source URL — never invent one.\n\n" +
     "Respond with exactly one block per item, in this format, separated by a line containing only " +
     "three dashes (---):\n\n" +
@@ -33,17 +34,22 @@ function buildPrompt(interestName: string): string {
 
 /**
  * Generates a "Field News Roundup" for an interest with no registered RSS
- * fetcher (any custom interest, or Business/Political Science) — 3-5 real,
- * current, web-search-grounded developments, each shaped like a RawItem so
- * it can flow through the same dedupe/score/render pipeline as fetched
- * items. Returns [] if no API key is configured or generation fails.
+ * fetcher (any custom interest, Business/Political Science/Philosophy of
+ * Science, or Critical Thinking & Argumentation) — 3-5 real, current,
+ * web-search-grounded developments, each shaped like a RawItem so it can
+ * flow through the same dedupe/score/render pipeline as fetched items.
+ * focusOverride replaces the generic "developments in the field of X" ask
+ * with a more specific one (see pipeline.ts's use for Critical Thinking).
+ * Returns [] if no API key is configured or generation fails.
  */
-export async function generateFieldNewsRoundup(interestName: string): Promise<RawItem[]> {
+export async function generateFieldNewsRoundup(interestName: string, focusOverride?: string): Promise<RawItem[]> {
   const anthropic = getAnthropicClient();
   if (!anthropic) return [];
 
   try {
-    let messages: Anthropic.MessageParam[] = [{ role: "user", content: buildPrompt(interestName) }];
+    let messages: Anthropic.MessageParam[] = [
+      { role: "user", content: buildPrompt(interestName, focusOverride) },
+    ];
     let response = await anthropic.messages.create({
       model: MODEL,
       max_tokens: 3072,

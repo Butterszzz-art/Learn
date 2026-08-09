@@ -1,8 +1,8 @@
 import { db, client } from "@/db";
-import { digests, items, settings, deepDives, appliedInsights } from "@/db/schema";
+import { digests, items, settings, deepDives, appliedInsights, drills } from "@/db/schema";
 import type { Category } from "@/db/schema";
 import { bumpLevel } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, gte, desc, isNotNull } from "drizzle-orm";
 import { fetchForInterest } from "./fetchers/registry";
 import { generateFieldNewsRoundup } from "./newsRoundup";
 import { dedupeItems, dedupeKeyFor } from "./dedupe";
@@ -14,9 +14,16 @@ import {
   generateFollowUpTopics,
   generateSelfCheckQuestions,
 } from "./deepDive";
+import { generateGroundedDrill, generateStandaloneLogicDrill } from "./drills";
 import { scoreItem } from "./score";
 import { pickBrainFactOfTheDay, maybeGenerateWeeklyFacts } from "./brainFact";
-import { getEnabledInterests, getInterestById, getCoveredTopics, addCoveredTopic } from "./interests";
+import {
+  getEnabledInterests,
+  getInterestById,
+  getInterestBySlug,
+  getCoveredTopics,
+  addCoveredTopic,
+} from "./interests";
 import type { InterestWithConfig } from "./interests";
 import type { RawItem, ProcessedItem } from "./types";
 
@@ -26,12 +33,18 @@ const TARGET_ROUNDUP_ITEMS = 5; // generated Field News Roundup
 // instead of 1. Kept modest (not the full "2-3" range) to bound API cost —
 // see README if you want to raise it.
 const FAVORITE_DEEP_DIVE_QUOTA = 2;
+// Drills (Phase 5): "1-2 drills" grounded in real recent deep-dive content
+// per cycle, scanned across ALL interests.
+const GROUNDED_DRILL_TARGET = 2;
+const GROUNDED_DRILL_LOOKBACK_DAYS = 4;
+const GROUNDED_DRILL_MAX_CANDIDATES = 5; // bounds Claude calls even with a large recent-dive pool
 
 export interface PipelineResult {
   cycleId: number;
   newsAdded: number;
   deepDivesAdded: number;
   appliedInsightsAdded: number;
+  drillsAdded: number;
   fetchedCount: number;
   usedClaude: boolean;
   newBrainFacts: number;
@@ -232,6 +245,13 @@ export async function refreshDeepDiveForInterest(interestId: number): Promise<De
   if (!interest || !interest.enabled) return null;
   if (!hasClaudeKey()) return { interestId, interestName: interest.name, added: false, topic: null };
 
+  // Critical Thinking & Argumentation's primary content is Drills, not a
+  // traditional syllogism-of-the-day deep dive — see refreshDrillsForCycle.
+  // Skip the normal algorithm-picked deep dive entirely for this interest.
+  if (interest.slug === "critical-thinking") {
+    return { interestId, interestName: interest.name, added: false, topic: null };
+  }
+
   const cycleId = await getOrCreateCurrentCycleId();
   const quota = interest.isFavorite ? FAVORITE_DEEP_DIVE_QUOTA : 1;
   const existing = await db
@@ -338,6 +358,33 @@ async function generateInsightForDive(interest: InterestWithConfig, deepDiveId: 
   return true;
 }
 
+/** Same as generateInsightForDive, but grounded in a Drill instead of a
+ * Deep Dive — for interests like Critical Thinking & Argumentation, whose
+ * primary content is Drills, so most cycles have no deep dive to base an
+ * Applied Insight on. */
+async function generateInsightForDrill(interest: InterestWithConfig, drillId: number): Promise<boolean> {
+  const existingInsight = await db
+    .select({ id: appliedInsights.id })
+    .from(appliedInsights)
+    .where(eq(appliedInsights.drillId, drillId))
+    .limit(1);
+  if (existingInsight.length > 0) return false;
+
+  const drillRows = await db.select().from(drills).where(eq(drills.id, drillId)).limit(1);
+  const drill = drillRows[0];
+  if (!drill) return false;
+
+  const content = await generateAppliedInsight(
+    interest.name,
+    drill.conceptLabel,
+    `${drill.promptContent}\n\nWhy this matters: ${drill.explanation}`
+  );
+  if (!content) return false;
+
+  await db.insert(appliedInsights).values({ interestId: interest.id, drillId: drill.id, content });
+  return true;
+}
+
 /** Applied Insights for every one of this cycle's deep dives for one interest
  * that don't have one yet — no-op if the interest doesn't generate them, has
  * no key configured, or has no dives yet this cycle. With Passion Mode's
@@ -368,6 +415,169 @@ export async function refreshInsightForInterest(interestId: number): Promise<Ins
   return { interestId, interestName: interest.name, added: anyAdded };
 }
 
+export interface DrillsStepResult {
+  groundedAdded: number;
+  standaloneAdded: boolean;
+}
+
+/**
+ * Cycle-level Drills step (not per-interest, unlike the steps above) — run
+ * once per cycle, after other interests' deep dives are generated, since
+ * grounded drills scan across ALL interests' recent deep-dive content. Two
+ * parts, each independently idempotent so a retry never duplicates:
+ *  1. 1-2 drills grounded in a real, recent deep dive (any interest).
+ *  2. 1 standalone formal-logic drill for Critical Thinking & Argumentation
+ *     (preferred) or Logic, if either is enabled.
+ */
+export async function refreshDrillsForCycle(): Promise<DrillsStepResult> {
+  if (!hasClaudeKey()) return { groundedAdded: 0, standaloneAdded: false };
+
+  const cycleId = await getOrCreateCurrentCycleId();
+  const existing = await db
+    .select({ id: drills.id, sourceDeepDiveId: drills.sourceDeepDiveId })
+    .from(drills)
+    .where(eq(drills.digestId, cycleId));
+  const existingGroundedCount = existing.filter((d) => d.sourceDeepDiveId !== null).length;
+  const hasStandalone = existing.some((d) => d.sourceDeepDiveId === null);
+
+  const groundedAdded =
+    existingGroundedCount < GROUNDED_DRILL_TARGET
+      ? await addGroundedDrills(cycleId, GROUNDED_DRILL_TARGET - existingGroundedCount)
+      : 0;
+  const standaloneAdded = hasStandalone ? false : await addStandaloneLogicDrill(cycleId);
+
+  return { groundedAdded, standaloneAdded };
+}
+
+/** Formats a past Date to match SQLite's own `current_timestamp` shape, for
+ * a lookback-window comparison against deepDives.createdAt. */
+function daysAgoSqlite(days: number): string {
+  return new Date(Date.now() - days * 86400000).toISOString().slice(0, 19).replace("T", " ");
+}
+
+/**
+ * Scans recent deep dives (any interest) for extractable arguments, oldest-
+ * excluded-first (already-drilled dives are skipped entirely — each dive
+ * gets at most one grounded drill, ever), and attempts to build up to
+ * `needed` drills from them. A dive with nothing extractable is simply
+ * skipped (see generateGroundedDrill) rather than forcing a weak drill.
+ */
+async function addGroundedDrills(cycleId: number, needed: number): Promise<number> {
+  if (needed <= 0) return 0;
+
+  const alreadyDrilledRows = await db
+    .select({ id: drills.sourceDeepDiveId })
+    .from(drills)
+    .where(isNotNull(drills.sourceDeepDiveId));
+  const alreadyDrilledIds = new Set(alreadyDrilledRows.map((r) => r.id as number));
+
+  const cutoff = daysAgoSqlite(GROUNDED_DRILL_LOOKBACK_DAYS);
+  const recentDives = await db
+    .select({
+      id: deepDives.id,
+      interestId: deepDives.interestId,
+      topic: deepDives.topic,
+      content: deepDives.content,
+    })
+    .from(deepDives)
+    .where(gte(deepDives.createdAt, cutoff))
+    .orderBy(desc(deepDives.createdAt))
+    .limit(GROUNDED_DRILL_MAX_CANDIDATES + alreadyDrilledIds.size);
+
+  const candidates = recentDives.filter((d) => !alreadyDrilledIds.has(d.id)).slice(0, GROUNDED_DRILL_MAX_CANDIDATES);
+
+  let added = 0;
+  for (const candidate of candidates) {
+    if (added >= needed) break;
+    const interest = await getInterestById(candidate.interestId);
+    if (!interest) continue;
+
+    try {
+      const result = await generateGroundedDrill(interest.name, candidate.topic, candidate.content);
+      if (!result) continue; // declined — nothing extractable in this dive
+
+      const inserted = await db
+        .insert(drills)
+        .values({
+          interestId: candidate.interestId,
+          sourceDeepDiveId: candidate.id,
+          drillType: result.drillType,
+          promptContent: result.promptContent,
+          options: JSON.stringify(result.options),
+          correctOption: result.correctOption,
+          explanation: result.explanation,
+          conceptLabel: result.conceptLabel,
+          digestId: cycleId,
+        })
+        .returning({ id: drills.id });
+
+      await addCoveredTopic(candidate.interestId, result.conceptLabel, candidate.id);
+      if (interest.generatesAppliedInsights) {
+        await generateInsightForDrill(interest, inserted[0].id).catch((err) => {
+          console.error(`[pipeline] Grounded-drill applied insight failed for "${interest.name}":`, err);
+        });
+      }
+      added++;
+    } catch (err) {
+      console.error(`[pipeline] Grounded drill generation failed for dive #${candidate.id}:`, err);
+    }
+  }
+  return added;
+}
+
+/**
+ * One standalone formal-logic drill (no source deep dive), attached to
+ * Critical Thinking & Argumentation if enabled, else Logic if enabled, else
+ * skipped — no point generating pure logic drills if neither is tracked.
+ * The two interests share drill material: the "avoid repeating" list pools
+ * covered topics from both rather than treating them as separate tracks.
+ */
+async function addStandaloneLogicDrill(cycleId: number): Promise<boolean> {
+  const [criticalThinking, logic] = await Promise.all([
+    getInterestBySlug("critical-thinking"),
+    getInterestBySlug("logic"),
+  ]);
+  const targetInterest = criticalThinking?.enabled ? criticalThinking : logic?.enabled ? logic : null;
+  if (!targetInterest) return false;
+
+  try {
+    const [ctCovered, logicCovered] = await Promise.all([
+      criticalThinking ? getCoveredTopics(criticalThinking.id) : null,
+      logic ? getCoveredTopics(logic.id) : null,
+    ]);
+    const avoidConcepts = [...(ctCovered?.recent ?? []), ...(logicCovered?.recent ?? [])];
+
+    const result = await generateStandaloneLogicDrill(avoidConcepts);
+    if (!result) return false;
+
+    const inserted = await db
+      .insert(drills)
+      .values({
+        interestId: targetInterest.id,
+        sourceDeepDiveId: null,
+        drillType: result.drillType,
+        promptContent: result.promptContent,
+        options: JSON.stringify(result.options),
+        correctOption: result.correctOption,
+        explanation: result.explanation,
+        conceptLabel: result.conceptLabel,
+        digestId: cycleId,
+      })
+      .returning({ id: drills.id });
+
+    await addCoveredTopic(targetInterest.id, result.conceptLabel, null);
+    if (targetInterest.generatesAppliedInsights) {
+      await generateInsightForDrill(targetInterest, inserted[0].id).catch((err) => {
+        console.error(`[pipeline] Standalone-drill applied insight failed for "${targetInterest.name}":`, err);
+      });
+    }
+    return true;
+  } catch (err) {
+    console.error("[pipeline] Standalone logic drill generation failed:", err);
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // All-at-once pipeline — used by the standalone `npm run fetch` CLI script,
 // which runs locally with no HTTP function time limit. The web UI instead
@@ -392,6 +602,7 @@ export async function runDigestPipeline(): Promise<PipelineResult> {
       newsAdded: 0,
       deepDivesAdded: 0,
       appliedInsightsAdded: 0,
+      drillsAdded: 0,
       fetchedCount: 0,
       usedClaude: hasClaudeKey(),
       newBrainFacts: 0,
@@ -400,6 +611,13 @@ export async function runDigestPipeline(): Promise<PipelineResult> {
   }
 
   const results = await Promise.all(enabledInterests.map((interest) => runInterestCycle(interest)));
+
+  // Drills scan across ALL interests' deep dives, so this runs once, after
+  // every interest's News/Deep Dive/Applied Insight steps above have settled.
+  const drillsResult = await refreshDrillsForCycle().catch((err) => {
+    console.error("[pipeline] Drills step failed:", err);
+    return { groundedAdded: 0, standaloneAdded: false };
+  });
 
   const newBrainFacts = await maybeGenerateWeeklyFacts().catch((err) => {
     console.error("[pipeline] weekly brain fact generation failed:", err);
@@ -411,6 +629,7 @@ export async function runDigestPipeline(): Promise<PipelineResult> {
     newsAdded: results.reduce((sum, r) => sum + r.newsAdded, 0),
     deepDivesAdded: results.filter((r) => r.deepDiveAdded).length,
     appliedInsightsAdded: results.filter((r) => r.insightAdded).length,
+    drillsAdded: drillsResult.groundedAdded + (drillsResult.standaloneAdded ? 1 : 0),
     fetchedCount: results.reduce((sum, r) => sum + r.fetched, 0),
     usedClaude: hasClaudeKey(),
     newBrainFacts,
@@ -532,11 +751,23 @@ async function runCuratedNews(
   return { added, fetched: fetchedCount };
 }
 
+// Critical Thinking & Argumentation's News Roundup targets real arguments/
+// fallacies in circulation specifically, rather than generic "developments
+// in critical thinking" commentary — see newsRoundup.ts's focusOverride.
+const ROUNDUP_FOCUS_OVERRIDES: Record<string, string> = {
+  "critical-thinking":
+    "real arguments, claims, or pieces of reasoning currently circulating in public discourse or " +
+    "media (op-eds, punditry, marketing claims, political rhetoric, viral social posts, etc.) that " +
+    "would make good critical-thinking practice material — not just general commentary about " +
+    "critical thinking as a topic",
+};
+
 /**
- * News for an interest with no registered fetcher (any custom interest, or
- * Business/Political Science): a Claude-generated, web-search-grounded
- * Field News Roundup. Items arrive already summarized in the app's own
- * words, so — unlike curated items — they skip the summarize step entirely.
+ * News for an interest with no registered fetcher (any custom interest,
+ * Business/Political Science/Philosophy of Science, or Critical Thinking &
+ * Argumentation): a Claude-generated, web-search-grounded Field News
+ * Roundup. Items arrive already summarized in the app's own words, so —
+ * unlike curated items — they skip the summarize step entirely.
  */
 async function runRoundupNews(
   interest: InterestWithConfig,
@@ -544,7 +775,7 @@ async function runRoundupNews(
 ): Promise<{ added: number; fetched: number }> {
   if (!hasClaudeKey()) return { added: 0, fetched: 0 };
 
-  const rawItems = await generateFieldNewsRoundup(interest.name);
+  const rawItems = await generateFieldNewsRoundup(interest.name, ROUNDUP_FOCUS_OVERRIDES[interest.slug]);
   const fetchedCount = rawItems.length;
   if (fetchedCount === 0) return { added: 0, fetched: 0 };
 

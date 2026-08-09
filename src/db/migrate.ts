@@ -51,6 +51,20 @@ const STATEMENTS = [
     digest_id INTEGER REFERENCES digests(id),
     created_at TEXT NOT NULL DEFAULT (current_timestamp)
   );`,
+  // Phase 5 — critical-thinking/logic practice items.
+  `CREATE TABLE IF NOT EXISTS drills (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    interest_id INTEGER NOT NULL REFERENCES interests(id),
+    source_deep_dive_id INTEGER REFERENCES deep_dives(id),
+    drill_type TEXT NOT NULL,
+    prompt_content TEXT NOT NULL,
+    options TEXT NOT NULL DEFAULT '[]',
+    correct_option INTEGER NOT NULL,
+    explanation TEXT NOT NULL,
+    concept_label TEXT NOT NULL,
+    digest_id INTEGER REFERENCES digests(id),
+    created_at TEXT NOT NULL DEFAULT (current_timestamp)
+  );`,
   // category is nullable here (Phase 2) — see rebuildItemsTableIfNeeded()
   // below for the migration path from Phase 1's NOT NULL version.
   `CREATE TABLE IF NOT EXISTS items (
@@ -92,6 +106,9 @@ const STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS deep_dives_digest_idx ON deep_dives(digest_id);`,
   `CREATE INDEX IF NOT EXISTS applied_insights_deep_dive_idx ON applied_insights(deep_dive_id);`,
   `CREATE INDEX IF NOT EXISTS applied_insights_interest_idx ON applied_insights(interest_id);`,
+  `CREATE INDEX IF NOT EXISTS drills_interest_idx ON drills(interest_id);`,
+  `CREATE INDEX IF NOT EXISTS drills_digest_idx ON drills(digest_id);`,
+  `CREATE INDEX IF NOT EXISTS drills_source_dive_idx ON drills(source_deep_dive_id);`,
   `INSERT OR IGNORE INTO settings (id, frequency, muted_categories) VALUES (1, 'daily', '[]');`,
 ];
 
@@ -139,6 +156,12 @@ const ADDITIVE_COLUMNS: { table: string; column: string; ddl: string }[] = [
     table: "covered_topics",
     column: "review_count",
     ddl: "ALTER TABLE covered_topics ADD COLUMN review_count INTEGER NOT NULL DEFAULT 0;",
+  },
+  // --- Phase 5: Drills ---
+  {
+    table: "applied_insights",
+    column: "drill_id",
+    ddl: "ALTER TABLE applied_insights ADD COLUMN drill_id INTEGER REFERENCES drills(id);",
   },
 ];
 
