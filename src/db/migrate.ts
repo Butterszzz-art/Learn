@@ -2,7 +2,7 @@
 // EXISTS statements) rather than depending on drizzle-kit's generated
 // migration journal. This keeps `npm run db:migrate` self-contained and safe
 // to re-run on every startup.
-import { client } from "./index";
+import { client, usingHostedDb } from "./index";
 import { INTERESTS_SEED } from "./interestsSeed";
 
 const STATEMENTS = [
@@ -207,20 +207,45 @@ export async function runMigrations() {
   // ensureDb() -> runMigrations() at roughly the same time. Without this,
   // one worker's write lock makes every other worker fail immediately with
   // SQLITE_BUSY instead of just waiting a moment — busy_timeout makes
-  // SQLite retry internally instead. Harmless (and irrelevant) against a
-  // hosted Turso database, which handles concurrent writes itself.
-  await client.execute("PRAGMA busy_timeout = 5000;");
+  // SQLite retry internally instead.
+  //
+  // Local file mode ONLY: a hosted Turso database is reached over its
+  // Hrana remote protocol, which enforces a restricted SQL subset and
+  // rejects PRAGMA busy_timeout outright ("SQL_PARSE_ERROR: SQL not
+  // allowed statement") — sending it broke every Vercel deploy. Turso
+  // itself already handles concurrent writes, so it doesn't need this.
+  if (!usingHostedDb) {
+    await client.execute("PRAGMA busy_timeout = 5000;");
+  }
   for (const stmt of STATEMENTS) {
     await client.execute(stmt);
   }
   for (const { table, column, ddl } of ADDITIVE_COLUMNS) {
     const result = await client.execute(`PRAGMA table_info(${table})`);
     const hasColumn = result.rows.some((row: any) => row.name === column);
-    if (!hasColumn) {
+    if (hasColumn) continue;
+
+    let addedByThisProcess = true;
+    try {
       await client.execute(ddl);
-      if (table === "interests" && column === "generates_applied_insights") {
-        await backfillAppliedInsightsDefaults();
-      }
+    } catch (err) {
+      // Against a hosted Turso database, multiple processes can run this
+      // check-then-add sequence concurrently — e.g. Next.js's parallel
+      // build workers, or two serverless cold starts racing right after a
+      // fresh deploy. Unlike a local SQLite file (which serializes writers
+      // via a file lock), Turso allows both to reach the ALTER TABLE at
+      // once, so the check above can pass for both before either commits.
+      // A "duplicate column" error at this point unambiguously means
+      // another process already added it — exactly the state this call
+      // wanted, so treat it as success rather than a failure (but don't
+      // run the backfill below twice — see addedByThisProcess).
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column name/i.test(message)) throw err;
+      addedByThisProcess = false;
+    }
+
+    if (addedByThisProcess && table === "interests" && column === "generates_applied_insights") {
+      await backfillAppliedInsightsDefaults();
     }
   }
   await rebuildItemsTableIfNeeded();
