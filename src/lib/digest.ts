@@ -1,7 +1,16 @@
 import { db } from "@/db";
-import { digests, items, brainFacts, settings, deepDives, appliedInsights, interests } from "@/db/schema";
+import {
+  digests,
+  items,
+  brainFacts,
+  settings,
+  deepDives,
+  appliedInsights,
+  interests,
+  coveredTopics,
+} from "@/db/schema";
 import type { Category, Level } from "@/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, inArray, isNotNull, lte, asc } from "drizzle-orm";
 
 export interface NewsItem {
   id: number;
@@ -35,9 +44,23 @@ export interface InterestFeedSection {
   interestId: number;
   interestName: string;
   interestSlug: string;
+  isFavorite: boolean;
   news: NewsItem[];
-  deepDive: DeepDiveSummary | null;
-  appliedInsight: AppliedInsightSummary | null;
+  // A cycle normally has one deep dive per interest, but a favorited
+  // (Passion Mode) interest can have more — see FAVORITE_DEEP_DIVE_QUOTA in
+  // pipeline.ts — plus curiosity-branching/Binge on-demand additions.
+  deepDives: DeepDiveSummary[];
+  appliedInsights: AppliedInsightSummary[];
+}
+
+export interface DueReviewTopic {
+  coveredTopicId: number;
+  interestId: number;
+  interestName: string;
+  topic: string;
+  deepDiveId: number | null;
+  contentPreview: string;
+  coveredDaysAgo: number;
 }
 
 export interface CycleFeed {
@@ -49,6 +72,12 @@ export interface CycleFeed {
   showBrainFact: boolean;
   sections: InterestFeedSection[];
   totalEntries: number;
+  // Plain, non-punitive progress count — see ProgressIndicator. Never a
+  // streak, never framed as "at risk".
+  progress: { conceptsThisMonth: number; interestsCount: number };
+  // At most one topic due for spaced review, surfaced as a "Remember this?"
+  // card. Only rendered on the live/current feed, not archive views.
+  dueReview: DueReviewTopic | null;
 }
 
 function stripMarkdown(md: string): string {
@@ -88,6 +117,8 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
       showBrainFact: false,
       sections: [],
       totalEntries: 0,
+      progress: { conceptsThisMonth: 0, interestsCount: 0 },
+      dueReview: null,
     };
   }
 
@@ -113,9 +144,10 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
         interestId,
         interestName: interest?.name ?? "Unknown",
         interestSlug: interest?.slug ?? "unknown",
+        isFavorite: interest?.isFavorite ?? false,
         news: [],
-        deepDive: null,
-        appliedInsight: null,
+        deepDives: [],
+        appliedInsights: [],
       };
       sectionsById.set(interestId, section);
     }
@@ -149,20 +181,20 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
     } catch {
       sourceCount = 0;
     }
-    section.deepDive = {
+    section.deepDives.push({
       id: r.id,
       topic: r.topic,
       contentPreview: previewOf(r.content),
       level: r.level,
       createdAt: r.createdAt,
       sourceCount,
-    };
+    });
   }
 
   for (const { insight, dive } of insightRows) {
     const section = getSection(dive.interestId);
     if (!section) continue;
-    section.appliedInsight = { id: insight.id, content: insight.content, createdAt: insight.createdAt };
+    section.appliedInsights.push({ id: insight.id, content: insight.content, createdAt: insight.createdAt });
   }
 
   for (const section of sectionsById.values()) {
@@ -175,7 +207,7 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
     .map((i) => sectionsById.get(i.id)!);
 
   const totalEntries = sections.reduce(
-    (sum, s) => sum + s.news.length + (s.deepDive ? 1 : 0) + (s.appliedInsight ? 1 : 0),
+    (sum, s) => sum + s.news.length + s.deepDives.length + s.appliedInsights.length,
     0
   );
 
@@ -187,6 +219,16 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
   const neuroInterest = allInterests.find((i) => i.slug === "neuroscience");
   const showBrainFact = !!neuroInterest && enabledSet.has(neuroInterest.id);
 
+  // Plain progress count: how many topics have been covered this calendar
+  // month across the enabled interests, and how many distinct interests
+  // that spans. Deliberately not a streak — see ProgressIndicator.tsx.
+  const progress = await getMonthlyProgress(enabledInterestIds);
+
+  // At most one topic due for spaced review, earliest-due first. Computed
+  // for every cycle load (cheap, single-user dataset) but only rendered on
+  // the live feed, not archive views — see Feed.tsx's isArchive prop.
+  const dueReview = await getDueReviewTopic(enabledInterestIds, interestById);
+
   return {
     cycleId: cycle.id,
     periodLabel: cycle.periodLabel,
@@ -196,6 +238,77 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
     showBrainFact,
     sections,
     totalEntries,
+    progress,
+    dueReview,
+  };
+}
+
+/** Parses SQLite's `current_timestamp` text shape ("YYYY-MM-DD HH:MM:SS",
+ * UTC, no offset) into a Date. Shared by the two helpers below. */
+function parseSqliteTimestamp(raw: string): Date {
+  return new Date(raw.replace(" ", "T") + "Z");
+}
+
+async function getMonthlyProgress(
+  enabledInterestIds: number[]
+): Promise<{ conceptsThisMonth: number; interestsCount: number }> {
+  if (enabledInterestIds.length === 0) return { conceptsThisMonth: 0, interestsCount: 0 };
+
+  const rows = await db
+    .select({ interestId: coveredTopics.interestId, dateCovered: coveredTopics.dateCovered })
+    .from(coveredTopics)
+    .where(inArray(coveredTopics.interestId, enabledInterestIds));
+
+  const now = new Date();
+  const interestsSeen = new Set<number>();
+  let conceptsThisMonth = 0;
+  for (const r of rows) {
+    const d = parseSqliteTimestamp(r.dateCovered);
+    if (!isNaN(d.getTime()) && d.getUTCFullYear() === now.getUTCFullYear() && d.getUTCMonth() === now.getUTCMonth()) {
+      conceptsThisMonth++;
+      interestsSeen.add(r.interestId);
+    }
+  }
+  return { conceptsThisMonth, interestsCount: interestsSeen.size };
+}
+
+async function getDueReviewTopic(
+  enabledInterestIds: number[],
+  interestById: Map<number, typeof interests.$inferSelect>
+): Promise<DueReviewTopic | null> {
+  if (enabledInterestIds.length === 0) return null;
+
+  const nowSqlite = new Date().toISOString().slice(0, 19).replace("T", " ");
+  const dueRows = await db
+    .select({ ct: coveredTopics, dive: deepDives })
+    .from(coveredTopics)
+    .leftJoin(deepDives, eq(coveredTopics.deepDiveId, deepDives.id))
+    .where(
+      and(
+        inArray(coveredTopics.interestId, enabledInterestIds),
+        isNotNull(coveredTopics.nextReviewDate),
+        lte(coveredTopics.nextReviewDate, nowSqlite)
+      )
+    )
+    .orderBy(asc(coveredTopics.nextReviewDate))
+    .limit(1);
+
+  const due = dueRows[0];
+  if (!due) return null;
+
+  const coveredAt = parseSqliteTimestamp(due.ct.dateCovered);
+  const coveredDaysAgo = isNaN(coveredAt.getTime())
+    ? 0
+    : Math.max(0, Math.round((Date.now() - coveredAt.getTime()) / 86400000));
+
+  return {
+    coveredTopicId: due.ct.id,
+    interestId: due.ct.interestId,
+    interestName: interestById.get(due.ct.interestId)?.name ?? "Unknown",
+    topic: due.ct.topic,
+    deepDiveId: due.dive?.id ?? null,
+    contentPreview: due.dive ? previewOf(due.dive.content, 400) : "",
+    coveredDaysAgo,
   };
 }
 
@@ -250,6 +363,7 @@ export async function listCycles(): Promise<CycleListEntry[]> {
 
 export interface DeepDiveDetail {
   id: number;
+  interestId: number;
   topic: string;
   content: string;
   sources: { title: string; url: string }[];
@@ -258,6 +372,22 @@ export interface DeepDiveDetail {
   interestSlug: string;
   createdAt: string;
   appliedInsight: string | null;
+  followUpTopics: { topic: string; teaser: string }[];
+  selfCheckQuestions: {
+    question: string;
+    options: string[];
+    correctIndex: number;
+    explanation: string;
+  }[];
+}
+
+function parseJsonArray<T>(raw: string): T[] {
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function getDeepDiveById(id: number): Promise<DeepDiveDetail | null> {
@@ -280,6 +410,7 @@ export async function getDeepDiveById(id: number): Promise<DeepDiveDetail | null
 
   return {
     id: row.id,
+    interestId: row.interestId,
     topic: row.topic,
     content: row.content,
     sources,
@@ -288,6 +419,8 @@ export async function getDeepDiveById(id: number): Promise<DeepDiveDetail | null
     interestSlug: interest?.slug ?? "unknown",
     createdAt: row.createdAt,
     appliedInsight: insightRows[0]?.content ?? null,
+    followUpTopics: parseJsonArray(row.followUpTopics),
+    selfCheckQuestions: parseJsonArray(row.selfCheckQuestions),
   };
 }
 

@@ -20,7 +20,14 @@ async function postStep(path: string, interestId: number): Promise<any> {
   return data;
 }
 
-/** Runs News -> Deep Dive -> Applied Insight for one interest, sequentially, updating progress as it goes. */
+// Passion Mode's per-cycle quota (FAVORITE_DEEP_DIVE_QUOTA in pipeline.ts)
+// is currently 2, but this loop doesn't need to know the exact number: each
+// call is a safe no-op once the server-side quota is reached, so looping up
+// to this safety cap converges correctly for both favorited (quota 2) and
+// regular (quota 1) interests without coupling the two constants together.
+const MAX_DIVES_PER_INTEREST = 3;
+
+/** Runs News -> Deep Dive(s) -> Applied Insight for one interest, sequentially, updating progress as it goes. */
 async function runInterest(
   id: number,
   onStatus: (status: InterestProgress["status"]) => void
@@ -32,10 +39,15 @@ async function runInterest(
   });
 
   onStatus("deep-dive");
-  const dive = await postStep("/api/refresh/deep-dive", id).catch((err) => {
-    console.error(err);
-    return { added: false };
-  });
+  let deepDiveAdded = false;
+  for (let i = 0; i < MAX_DIVES_PER_INTEREST; i++) {
+    const dive: { added?: boolean } = await postStep("/api/refresh/deep-dive", id).catch((err) => {
+      console.error(err);
+      return { added: false };
+    });
+    if (dive.added) deepDiveAdded = true;
+    else break;
+  }
 
   onStatus("insight");
   const insight = await postStep("/api/refresh/insight", id).catch((err) => {
@@ -44,7 +56,7 @@ async function runInterest(
   });
 
   onStatus("done");
-  return { newsAdded: news.added ?? 0, deepDiveAdded: !!dive.added, insightAdded: !!insight.added };
+  return { newsAdded: news.added ?? 0, deepDiveAdded, insightAdded: !!insight.added };
 }
 
 export function RefreshButton() {

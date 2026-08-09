@@ -28,6 +28,14 @@ export const LEVEL_LABELS: Record<Level, string> = {
   research_level: "Research level",
 };
 
+/** One notch more advanced than `level`, capped at research_level. Used by
+ * Passion Mode to frame favorited interests' deep dives a bit further along
+ * than the interest's own stored setting, without changing that setting. */
+export function bumpLevel(level: Level): Level {
+  const idx = LEVELS.indexOf(level);
+  return LEVELS[Math.min(idx + 1, LEVELS.length - 1)];
+}
+
 // ---------------------------------------------------------------------------
 // interests — the catalog of subjects the feed can pull from. Seeded once;
 // the user can add more later (see seedInterests.ts).
@@ -48,6 +56,9 @@ export const interests = sqliteTable("interests", {
   generatesAppliedInsights: integer("generates_applied_insights", { mode: "boolean" })
     .notNull()
     .default(false),
+  // Passion Mode (Phase 4): more deep dives per cycle, framed one notch more
+  // advanced, plus the Binge/pick-your-next-topic affordances in the feed.
+  isFavorite: integer("is_favorite", { mode: "boolean" }).notNull().default(false),
 });
 
 // ---------------------------------------------------------------------------
@@ -75,6 +86,15 @@ export const coveredTopics = sqliteTable("covered_topics", {
   dateCovered: text("date_covered")
     .notNull()
     .default(sql`(current_timestamp)`),
+  // The deep dive this topic came from — lets a "Remember this?" resurfaced
+  // card show a refresher pulled from the original entry. Nullable so rows
+  // written before this column existed don't break.
+  deepDiveId: integer("deep_dive_id").references(() => deepDives.id),
+  // Spaced resurfacing (Phase 4): simple fixed schedule (3 -> 7 -> 21 -> 60
+  // days), not a full SM-2 implementation. Null until the first deep dive on
+  // this topic is written, which schedules the first review.
+  nextReviewDate: text("next_review_date"),
+  reviewCount: integer("review_count").notNull().default(0),
 });
 
 // ---------------------------------------------------------------------------
@@ -93,6 +113,14 @@ export const deepDives = sqliteTable("deep_dives", {
   createdAt: text("created_at")
     .notNull()
     .default(sql`(current_timestamp)`),
+  // Curiosity branching (Phase 4): 2-3 natural follow-up subtopics with a
+  // one-line teaser each, proposed alongside the main entry. JSON array of
+  // {topic, teaser}.
+  followUpTopics: text("follow_up_topics").notNull().default("[]"),
+  // Retention self-check (Phase 4): 2-3 MCQs testing the entry's core ideas.
+  // JSON array of {question, options: string[4], correctIndex, explanation}.
+  // Answers are never persisted — this is retrieval practice, not a quiz score.
+  selfCheckQuestions: text("self_check_questions").notNull().default("[]"),
 });
 
 // ---------------------------------------------------------------------------

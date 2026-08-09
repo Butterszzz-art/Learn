@@ -11,6 +11,7 @@ export interface InterestWithConfig {
   hasCuratedSource: boolean;
   isCustom: boolean;
   generatesAppliedInsights: boolean;
+  isFavorite: boolean;
   level: Level;
   enabled: boolean;
 }
@@ -31,6 +32,7 @@ export async function getAllInterests(): Promise<InterestWithConfig[]> {
       hasCuratedSource: i.hasCuratedSource,
       isCustom: i.isCustom,
       generatesAppliedInsights: i.generatesAppliedInsights,
+      isFavorite: i.isFavorite,
       level: config?.level ?? "some_background",
       enabled: config?.enabled ?? false,
     };
@@ -107,6 +109,7 @@ export async function createCustomInterest(
     hasCuratedSource: row.hasCuratedSource,
     isCustom: row.isCustom,
     generatesAppliedInsights: row.generatesAppliedInsights,
+    isFavorite: row.isFavorite,
     level: "some_background",
     enabled: false,
   };
@@ -144,6 +147,11 @@ export async function setGeneratesAppliedInsights(interestId: number, value: boo
   await db.update(interests).set({ generatesAppliedInsights: value }).where(eq(interests.id, interestId));
 }
 
+/** Passion Mode toggle — from Settings or a single star tap in the feed. */
+export async function setIsFavorite(interestId: number, value: boolean) {
+  await db.update(interests).set({ isFavorite: value }).where(eq(interests.id, interestId));
+}
+
 export interface CoveredTopicsInfo {
   recent: string[]; // chronological order, bounded — for prompt context
   totalCount: number; // full history length — the escalation signal ("this is entry #N")
@@ -174,8 +182,49 @@ export async function getCoveredTopics(interestId: number, limit = 20): Promise<
   };
 }
 
-export async function addCoveredTopic(interestId: number, topic: string) {
-  await db.insert(coveredTopics).values({ interestId, topic });
+// Spaced resurfacing schedule (Phase 4): simple fixed days-out sequence, not
+// a full SM-2 implementation, per spec. Index 0 is the first review after a
+// topic is newly covered; each subsequent review pushes further out, capped
+// at the last entry rather than growing indefinitely.
+const REVIEW_SCHEDULE_DAYS = [3, 7, 21, 60];
+
+/** Formats a future Date to match SQLite's own `current_timestamp` shape
+ * ("YYYY-MM-DD HH:MM:SS", UTC, no offset marker) so the two stay directly
+ * comparable/sortable as plain text. */
+function daysFromNowSqlite(days: number): string {
+  return new Date(Date.now() + days * 86400000).toISOString().slice(0, 19).replace("T", " ");
+}
+
+/** Logs a newly-covered topic and schedules its first spaced-review date.
+ * deepDiveId links back to the entry so a later "Remember this?" card can
+ * pull a refresher from it. */
+export async function addCoveredTopic(interestId: number, topic: string, deepDiveId: number) {
+  await db.insert(coveredTopics).values({
+    interestId,
+    topic,
+    deepDiveId,
+    nextReviewDate: daysFromNowSqlite(REVIEW_SCHEDULE_DAYS[0]),
+    reviewCount: 0,
+  });
+}
+
+/** Called when a resurfaced "Remember this?" card is actually opened —
+ * pushes that topic's next review further out on the fixed schedule above.
+ * Not called just for being shown; only for being opened/read. */
+export async function markTopicReviewed(coveredTopicId: number): Promise<void> {
+  const rows = await db
+    .select({ reviewCount: coveredTopics.reviewCount })
+    .from(coveredTopics)
+    .where(eq(coveredTopics.id, coveredTopicId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return;
+  const newCount = row.reviewCount + 1;
+  const days = REVIEW_SCHEDULE_DAYS[Math.min(newCount, REVIEW_SCHEDULE_DAYS.length - 1)];
+  await db
+    .update(coveredTopics)
+    .set({ reviewCount: newCount, nextReviewDate: daysFromNowSqlite(days) })
+    .where(eq(coveredTopics.id, coveredTopicId));
 }
 
 /** Convenience lookup used to gate legacy Phase 1 features (Brain Fact of the Day). */

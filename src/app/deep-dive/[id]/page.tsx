@@ -5,6 +5,8 @@ import remarkGfm from "remark-gfm";
 import { getDeepDiveById } from "@/lib/digest";
 import { LEVEL_LABELS } from "@/db/schema";
 import { AppliedInsightCard } from "@/components/AppliedInsightCard";
+import { FollowUpCards } from "@/components/FollowUpCards";
+import { SelfCheckQuiz } from "@/components/SelfCheckQuiz";
 
 export const dynamic = "force-dynamic";
 
@@ -67,6 +69,9 @@ export default async function DeepDivePage({ params }: { params: { id: string } 
           </ul>
         </div>
       )}
+
+      <SelfCheckQuiz questions={deepDive.selfCheckQuestions} />
+      <FollowUpCards interestId={deepDive.interestId} topics={deepDive.followUpTopics} />
     </div>
   );
 }

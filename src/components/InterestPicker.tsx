@@ -13,6 +13,7 @@ export interface InterestConfig {
   hasCuratedSource: boolean;
   isCustom: boolean;
   generatesAppliedInsights: boolean;
+  isFavorite: boolean;
   level: Level;
   enabled: boolean;
 }
@@ -21,6 +22,7 @@ interface RowConfig {
   level: Level;
   enabled: boolean;
   generatesAppliedInsights: boolean;
+  isFavorite: boolean;
 }
 
 export function InterestPicker({
@@ -38,7 +40,12 @@ export function InterestPicker({
     new Map(
       initial.map((i) => [
         i.id,
-        { level: i.level, enabled: i.enabled, generatesAppliedInsights: i.generatesAppliedInsights },
+        {
+          level: i.level,
+          enabled: i.enabled,
+          generatesAppliedInsights: i.generatesAppliedInsights,
+          isFavorite: i.isFavorite,
+        },
       ])
     )
   );
@@ -47,10 +54,17 @@ export function InterestPicker({
   const [customName, setCustomName] = useState("");
   const [addingCustom, setAddingCustom] = useState(false);
 
+  const ROW_DEFAULT: RowConfig = {
+    level: "some_background",
+    enabled: false,
+    generatesAppliedInsights: true,
+    isFavorite: false,
+  };
+
   function toggle(id: number) {
     setConfig((prev) => {
       const next = new Map(prev);
-      const current = next.get(id) ?? { level: "some_background" as Level, enabled: false, generatesAppliedInsights: true };
+      const current = next.get(id) ?? ROW_DEFAULT;
       next.set(id, { ...current, enabled: !current.enabled });
       return next;
     });
@@ -59,7 +73,7 @@ export function InterestPicker({
   function setLevel(id: number, level: Level) {
     setConfig((prev) => {
       const next = new Map(prev);
-      const current = next.get(id) ?? { level: "some_background" as Level, enabled: true, generatesAppliedInsights: true };
+      const current = next.get(id) ?? ROW_DEFAULT;
       next.set(id, { ...current, level });
       return next;
     });
@@ -68,8 +82,17 @@ export function InterestPicker({
   function toggleAppliedInsights(id: number) {
     setConfig((prev) => {
       const next = new Map(prev);
-      const current = next.get(id) ?? { level: "some_background" as Level, enabled: true, generatesAppliedInsights: true };
+      const current = next.get(id) ?? ROW_DEFAULT;
       next.set(id, { ...current, generatesAppliedInsights: !current.generatesAppliedInsights });
+      return next;
+    });
+  }
+
+  function toggleFavorite(id: number) {
+    setConfig((prev) => {
+      const next = new Map(prev);
+      const current = next.get(id) ?? ROW_DEFAULT;
+      next.set(id, { ...current, isFavorite: !current.isFavorite });
       return next;
     });
   }
@@ -96,6 +119,7 @@ export function InterestPicker({
           level: "some_background",
           enabled: true,
           generatesAppliedInsights: newInterest.generatesAppliedInsights,
+          isFavorite: false,
         });
         return next;
       });
@@ -121,6 +145,7 @@ export function InterestPicker({
             level: c.level,
             enabled: c.enabled,
             generatesAppliedInsights: c.generatesAppliedInsights,
+            isFavorite: c.isFavorite,
           };
         }),
       };
@@ -153,6 +178,7 @@ export function InterestPicker({
             level: "some_background" as Level,
             enabled: false,
             generatesAppliedInsights: interest.generatesAppliedInsights,
+            isFavorite: interest.isFavorite,
           };
           return (
             <div
@@ -198,15 +224,27 @@ export function InterestPicker({
                   </div>
 
                   {mode === "settings" && (
-                    <label className="flex items-center gap-2 text-xs text-brain-muted">
-                      <input
-                        type="checkbox"
-                        checked={c.generatesAppliedInsights}
-                        onChange={() => toggleAppliedInsights(interest.id)}
-                        className="h-3.5 w-3.5 rounded border-brain-border bg-brain-surface2 accent-brain-accent"
-                      />
-                      Generate an Applied Insight card after each deep dive
-                    </label>
+                    <>
+                      <label className="flex items-center gap-2 text-xs text-brain-muted">
+                        <input
+                          type="checkbox"
+                          checked={c.generatesAppliedInsights}
+                          onChange={() => toggleAppliedInsights(interest.id)}
+                          className="h-3.5 w-3.5 rounded border-brain-border bg-brain-surface2 accent-brain-accent"
+                        />
+                        Generate an Applied Insight card after each deep dive
+                      </label>
+                      <label className="flex items-center gap-2 text-xs text-brain-muted">
+                        <input
+                          type="checkbox"
+                          checked={c.isFavorite}
+                          onChange={() => toggleFavorite(interest.id)}
+                          className="h-3.5 w-3.5 rounded border-brain-border bg-brain-surface2 accent-amber-400"
+                        />
+                        ⭐ Passion Mode — more deep dives per cycle, framed a notch deeper, plus Binge
+                        and topic-picking in the feed
+                      </label>
+                    </>
                   )}
                 </div>
               )}

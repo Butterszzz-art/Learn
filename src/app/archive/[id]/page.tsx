@@ -21,7 +21,7 @@ export default async function ArchiveCyclePage({ params }: { params: { id: strin
       <Link href="/archive" className="mb-4 inline-block text-xs text-brain-muted hover:text-brain-text">
         ← Back to archive
       </Link>
-      <Feed feed={feed} />
+      <Feed feed={feed} isArchive />
     </div>
   );
 }

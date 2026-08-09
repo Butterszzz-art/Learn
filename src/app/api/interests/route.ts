@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { ensureDb } from "@/db/bootstrap";
-import { getAllInterests, saveUserInterests, setGeneratesAppliedInsights } from "@/lib/interests";
+import { getAllInterests, saveUserInterests, setGeneratesAppliedInsights, setIsFavorite } from "@/lib/interests";
 import { LEVELS } from "@/db/schema";
 import type { Level } from "@/db/schema";
 
@@ -16,6 +16,7 @@ interface UpdatePayload {
   level: Level;
   enabled: boolean;
   generatesAppliedInsights?: boolean;
+  isFavorite?: boolean;
 }
 
 export async function POST(req: Request) {
@@ -40,6 +41,7 @@ export async function POST(req: Request) {
       enabled: entry.enabled,
       generatesAppliedInsights:
         typeof entry.generatesAppliedInsights === "boolean" ? entry.generatesAppliedInsights : undefined,
+      isFavorite: typeof entry.isFavorite === "boolean" ? entry.isFavorite : undefined,
     });
   }
 
@@ -51,6 +53,9 @@ export async function POST(req: Request) {
   for (const u of updates) {
     if (u.generatesAppliedInsights !== undefined) {
       await setGeneratesAppliedInsights(u.interestId, u.generatesAppliedInsights);
+    }
+    if (u.isFavorite !== undefined) {
+      await setIsFavorite(u.interestId, u.isFavorite);
     }
   }
 

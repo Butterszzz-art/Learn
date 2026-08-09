@@ -45,6 +45,23 @@ No hosting, no email, no account required.
   out of the box on Windows). Nothing leaves your machine except the
   outbound fetches to public feeds/APIs, and — for deep dives, insights,
   and news roundups — requests to the Anthropic API.
+- **Curiosity branching**: every deep dive ends with 2-3 clickable follow-up
+  cards — natural next subtopics it raised, each with a one-line teaser.
+  Clicking one generates and opens that specific entry immediately, for any
+  interest, not waiting for the next cycle.
+- **Passion Mode**: star any interest (feed or Settings) to get more than
+  one deep dive per cycle, framed one notch more advanced than its stored
+  level, plus two on-demand feed controls — **Binge** (algorithm picks,
+  generates now) and **pick your next topic** (see 2-3 candidates, choose
+  one yourself).
+- **Retention tools**: each deep dive ends with a 2-3 question self-check —
+  multiple choice, reveals right/wrong plus a one-line explanation
+  immediately, no score kept or sent anywhere. Topics you've covered
+  resurface later on a simple fixed schedule (3 → 7 → 21 → 60 days) as a
+  "Remember this?" card — a recall prompt first, a refresher from the
+  original entry on request. A plain, non-punitive progress count ("14
+  concepts covered this month across 3 interests") sits at the top of the
+  feed — never a streak, never framed as being "at risk."
 
 ---
 
@@ -184,17 +201,22 @@ browser's share menu for an app-like shortcut.
   1. **News** — curated fetch (dedupe, score, keep the top ~8) for
      interests with a registered source; a Claude+`web_search` Field News
      Roundup (3-5 items, capped) for everything else.
-  2. **Deep Dive** — if this cycle doesn't already have one, Claude picks
-     the next syllabus topic (escalating in depth as the series grows,
-     unless the interest is at research level) and writes the explainer.
-  3. **Applied Insight** — if the interest generates them and a deep dive
-     was just written, one short takeaway card, or nothing if the topic
-     doesn't have a natural everyday application.
+  2. **Deep Dive** — if this cycle hasn't reached its quota yet (1 normally,
+     2 for a favorited/Passion Mode interest), Claude picks the next
+     syllabus topic (escalating in depth as the series grows, unless the
+     interest is at research level) and writes the explainer, plus its
+     follow-up topics and self-check questions.
+  3. **Applied Insight** — one per deep dive written this cycle, for
+     interests that generate them, or nothing if a given topic doesn't have
+     a natural everyday application.
 - **Cycles**: one compiled period — daily or weekly, per Settings.
   Refreshing multiple times within the same day/week adds new News items to
-  the *same* cycle; Deep Dive and Applied Insight are capped at one each per
-  interest per cycle regardless of how many times you refresh. This is what
-  makes "You're caught up" mean something.
+  the *same* cycle; Deep Dive and Applied Insight are capped at their quota
+  per interest per cycle regardless of how many times you refresh (see
+  Passion Mode above for what raises that quota above 1). Curiosity
+  branching, Binge, and pick-your-next-topic all add *extra* dives on top of
+  that quota, on demand — they're not capped by it. This is what makes
+  "You're caught up" mean something even with Passion Mode's larger quota.
 - **Brain Fact of the Day**: a Phase 1 holdover — still shown at the top of
   the feed, but only when Neuroscience & Psychobiology is enabled. Picked
   from a 75+ entry seed bank, rotated once per day; the bank grows by a

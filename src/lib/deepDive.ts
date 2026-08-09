@@ -59,19 +59,35 @@ const SYSTEM_PROMPT =
   "recall — this is a knowledge feed, not a listicle, so favor genuine depth and structure over a " +
   "breezy summary.";
 
-function buildUserPrompt(interestName: string, level: Level, covered: CoveredTopicsInfo): string {
+function buildUserPrompt(
+  interestName: string,
+  level: Level,
+  covered: CoveredTopicsInfo,
+  forcedTopic?: string
+): string {
   const coveredList =
     covered.recent.length > 0
       ? covered.recent.map((t) => `- ${t}`).join("\n")
       : "(none yet — this is the first entry in the series)";
 
+  // Curiosity branching / Passion Mode's Binge & pick-your-next-topic: the
+  // reader chose this exact topic (from a follow-up card or a candidate
+  // list), so skip the "pick the next syllabus topic" instruction entirely
+  // rather than risk the model second-guessing their choice.
+  const topicGuidance = forcedTopic
+    ? `Write specifically about this topic: "${forcedTopic}". The reader chose this one directly ` +
+      "(from a follow-up suggestion or a candidate list) — write about exactly that, even if it seems " +
+      "to overlap with something covered before.\n\n" +
+      `For context, topics already covered in this series:\n${coveredList}\n\n`
+    : "Topics already covered in this series, in the order they were covered — do not repeat any of " +
+      "them, and pick the next topic a well-designed course or syllabus would logically cover next " +
+      "(build on what's already been covered rather than jumping randomly or restarting from scratch, " +
+      `unless the list is empty, in which case start with a genuinely foundational topic):\n${coveredList}\n\n`;
+
   return (
     `Write the next entry in the ${interestName} explainer series.\n\n` +
     `Reader level: ${level}. ${LEVEL_INSTRUCTIONS[level]}${escalationInstruction(level, covered.totalCount)}\n\n` +
-    `Topics already covered in this series, in the order they were covered — do not repeat any of ` +
-    `them, and pick the next topic a well-designed course or syllabus would logically cover next ` +
-    `(build on what's already been covered rather than jumping randomly or restarting from scratch, ` +
-    `unless the list is empty, in which case start with a genuinely foundational topic):\n${coveredList}\n\n` +
+    topicGuidance +
     "Use web search to find real, current, citable material to ground this in — don't rely purely on " +
     "prior knowledge, especially for anything that could have moved on since your training.\n\n" +
     "Respond in EXACTLY this format (the TOPIC line must be the very first line):\n\n" +
@@ -95,13 +111,14 @@ function buildUserPrompt(interestName: string, level: Level, covered: CoveredTop
 export async function generateDeepDive(
   interestName: string,
   level: Level,
-  covered: CoveredTopicsInfo
+  covered: CoveredTopicsInfo,
+  forcedTopic?: string
 ): Promise<DeepDiveResult | null> {
   const anthropic = getAnthropicClient();
   if (!anthropic) return null;
 
   try {
-    const userPrompt = buildUserPrompt(interestName, level, covered);
+    const userPrompt = buildUserPrompt(interestName, level, covered, forcedTopic);
     let messages: Anthropic.MessageParam[] = [{ role: "user", content: userPrompt }];
     let response = await anthropic.messages.create({
       model: MODEL,
@@ -147,7 +164,12 @@ export async function generateDeepDive(
       return null;
     }
 
-    return parseDeepDiveResponse(fullText, response.content);
+    const parsed = parseDeepDiveResponse(fullText, response.content);
+    // If the reader picked this topic directly, use exactly what they saw
+    // rather than trust the model's restated TOPIC line, which occasionally
+    // drifts in phrasing even when told not to.
+    if (forcedTopic) parsed.topic = forcedTopic;
+    return parsed;
   } catch (err) {
     console.error(`[deepDive] Generation failed for "${interestName}":`, err);
     return null;
@@ -260,6 +282,253 @@ export async function generateAppliedInsight(
   } catch (err) {
     console.error(`[deepDive] Applied insight generation failed for "${interestName}":`, err);
     return null;
+  }
+}
+
+export interface FollowUpTopic {
+  topic: string;
+  teaser: string;
+}
+
+/**
+ * Curiosity branching: given a just-written deep dive, proposes 2-3 natural
+ * follow-up subtopics with a one-line teaser each — grounded in what THIS
+ * specific entry raised (a mechanism, an open question, a related idea),
+ * not just "whatever the syllabus would cover next" in general. No web
+ * search needed — this is about framing the existing material, not
+ * researching new material. Returns [] on failure; follow-ups are a nice-to-
+ * have, never blocking.
+ */
+export async function generateFollowUpTopics(
+  interestName: string,
+  deepDiveTopic: string,
+  deepDiveContent: string
+): Promise<FollowUpTopic[]> {
+  const anthropic = getAnthropicClient();
+  if (!anthropic) return [];
+
+  try {
+    const response = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: 1024,
+      output_config: {
+        format: {
+          type: "json_schema",
+          schema: {
+            type: "object",
+            properties: {
+              followUps: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    topic: { type: "string", description: "A concise 3-8 word natural follow-up subtopic." },
+                    teaser: {
+                      type: "string",
+                      description:
+                        "One sentence teasing why it's worth reading next, e.g. 'Next: how prospect " +
+                        "theory explains why losses loom larger than equivalent gains.'",
+                    },
+                  },
+                  required: ["topic", "teaser"],
+                  additionalProperties: false,
+                },
+                minItems: 2,
+                maxItems: 3,
+              },
+            },
+            required: ["followUps"],
+            additionalProperties: false,
+          },
+        },
+      },
+      messages: [
+        {
+          role: "user",
+          content:
+            `You just wrote this deep-dive explainer on "${deepDiveTopic}" for the ${interestName} ` +
+            `series:\n\n---\n${deepDiveContent}\n---\n\n` +
+            "Propose 2-3 natural follow-up subtopics a curious reader would want to explore next, each " +
+            "with a one-line teaser. Branch from what THIS entry specifically raised — a mechanism, an " +
+            "open question, a related idea it touched on — not just the next generic syllabus topic.",
+        },
+      ],
+    });
+
+    const textBlock = response.content.find((b) => b.type === "text");
+    if (!textBlock || textBlock.type !== "text") return [];
+    const parsed = JSON.parse(textBlock.text) as { followUps: FollowUpTopic[] };
+    return parsed.followUps.filter((f) => f.topic?.trim() && f.teaser?.trim());
+  } catch (err) {
+    console.error(`[deepDive] Follow-up topic generation failed for "${interestName}":`, err);
+    return [];
+  }
+}
+
+export interface SelfCheckQuestion {
+  question: string;
+  options: string[]; // exactly 4
+  correctIndex: number; // 0-3
+  explanation: string;
+}
+
+/**
+ * Retrieval-practice self-check: 2-3 multiple-choice questions on a just-
+ * written deep dive's core ideas. Purely for the reader's own recall — no
+ * score is computed or stored anywhere, only the questions themselves.
+ * Returns [] on failure; a self-check is a nice-to-have, never blocking.
+ */
+export async function generateSelfCheckQuestions(
+  interestName: string,
+  deepDiveTopic: string,
+  deepDiveContent: string
+): Promise<SelfCheckQuestion[]> {
+  const anthropic = getAnthropicClient();
+  if (!anthropic) return [];
+
+  try {
+    const response = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: 1536,
+      output_config: {
+        format: {
+          type: "json_schema",
+          schema: {
+            type: "object",
+            properties: {
+              questions: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    question: { type: "string" },
+                    options: {
+                      type: "array",
+                      items: { type: "string" },
+                      minItems: 4,
+                      maxItems: 4,
+                      description: "Exactly 4 options, one of which is correct.",
+                    },
+                    correctIndex: { type: "integer", description: "0-based index of the correct option." },
+                    explanation: {
+                      type: "string",
+                      description: "One line explaining why the correct answer is correct.",
+                    },
+                  },
+                  required: ["question", "options", "correctIndex", "explanation"],
+                  additionalProperties: false,
+                },
+                minItems: 2,
+                maxItems: 3,
+              },
+            },
+            required: ["questions"],
+            additionalProperties: false,
+          },
+        },
+      },
+      messages: [
+        {
+          role: "user",
+          content:
+            `You just wrote this deep-dive explainer on "${deepDiveTopic}" for the ${interestName} ` +
+            `series:\n\n---\n${deepDiveContent}\n---\n\n` +
+            "Write 2-3 multiple-choice questions (4 options each, exactly one correct) testing the " +
+            "entry's core ideas — genuine understanding, not trivia about a specific number or date " +
+            "unless that number is actually central to the idea. Include a one-line explanation of why " +
+            "the correct answer is correct, for after the reader picks.",
+        },
+      ],
+    });
+
+    const textBlock = response.content.find((b) => b.type === "text");
+    if (!textBlock || textBlock.type !== "text") return [];
+    const parsed = JSON.parse(textBlock.text) as { questions: SelfCheckQuestion[] };
+    return parsed.questions.filter(
+      (q) =>
+        q.question?.trim() &&
+        Array.isArray(q.options) &&
+        q.options.length === 4 &&
+        q.correctIndex >= 0 &&
+        q.correctIndex <= 3
+    );
+  } catch (err) {
+    console.error(`[deepDive] Self-check generation failed for "${interestName}":`, err);
+    return [];
+  }
+}
+
+/**
+ * Passion Mode's "pick your next topic": 2-3 candidate next topics for an
+ * interest's series, derived from the same syllabus-progression logic
+ * generateDeepDive uses internally when picking automatically — surfaced
+ * here instead so the reader can choose rather than the algorithm deciding.
+ * No web search — this is about topic selection, not research. Returns []
+ * on failure.
+ */
+export async function generateCandidateTopics(
+  interestName: string,
+  level: Level,
+  covered: CoveredTopicsInfo
+): Promise<FollowUpTopic[]> {
+  const anthropic = getAnthropicClient();
+  if (!anthropic) return [];
+
+  const coveredList =
+    covered.recent.length > 0
+      ? covered.recent.map((t) => `- ${t}`).join("\n")
+      : "(none yet — this would be the first entry in the series)";
+
+  try {
+    const response = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: 1024,
+      output_config: {
+        format: {
+          type: "json_schema",
+          schema: {
+            type: "object",
+            properties: {
+              candidates: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    topic: { type: "string", description: "A concise 3-8 word candidate next topic." },
+                    teaser: { type: "string", description: "One sentence on why it's worth reading next." },
+                  },
+                  required: ["topic", "teaser"],
+                  additionalProperties: false,
+                },
+                minItems: 2,
+                maxItems: 3,
+              },
+            },
+            required: ["candidates"],
+            additionalProperties: false,
+          },
+        },
+      },
+      messages: [
+        {
+          role: "user",
+          content:
+            `For the ${interestName} explainer series (reader level: ${level}), topics already covered ` +
+            `in order:\n${coveredList}\n\n` +
+            "Propose 2-3 candidate next topics a well-designed syllabus could logically cover next, " +
+            "each with a one-line teaser. Don't repeat anything already covered, and don't just pick " +
+            "the single 'most obvious' one — give genuinely distinct options.",
+        },
+      ],
+    });
+
+    const textBlock = response.content.find((b) => b.type === "text");
+    if (!textBlock || textBlock.type !== "text") return [];
+    const parsed = JSON.parse(textBlock.text) as { candidates: FollowUpTopic[] };
+    return parsed.candidates.filter((c) => c.topic?.trim() && c.teaser?.trim());
+  } catch (err) {
+    console.error(`[deepDive] Candidate topic generation failed for "${interestName}":`, err);
+    return [];
   }
 }
 

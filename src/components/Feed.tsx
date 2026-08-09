@@ -3,14 +3,22 @@ import { BrainFactCard } from "./BrainFactCard";
 import { DeepDiveCard } from "./DeepDiveCard";
 import { AppliedInsightCard } from "./AppliedInsightCard";
 import { ItemCard } from "./ItemCard";
+import { FavoriteToggle } from "./FavoriteToggle";
+import { PassionModeControls } from "./PassionModeControls";
+import { RememberThisCard } from "./RememberThisCard";
+import { ProgressIndicator } from "./ProgressIndicator";
 
 function InterestSection({ section }: { section: InterestFeedSection }) {
-  const hasContent = section.news.length > 0 || section.deepDive || section.appliedInsight;
+  const hasContent =
+    section.news.length > 0 || section.deepDives.length > 0 || section.appliedInsights.length > 0;
   if (!hasContent) return null;
 
   return (
     <section className="mb-10">
-      <h2 className="mb-4 font-serif text-xl">{section.interestName}</h2>
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <h2 className="font-serif text-xl">{section.interestName}</h2>
+        <FavoriteToggle interestId={section.interestId} isFavorite={section.isFavorite} />
+      </div>
 
       {section.news.length > 0 && (
         <div className="mb-5">
@@ -25,28 +33,36 @@ function InterestSection({ section }: { section: InterestFeedSection }) {
         </div>
       )}
 
-      {section.deepDive && (
-        <div className="mb-5">
+      {section.deepDives.length > 0 && (
+        <div className="mb-5 space-y-3">
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-brain-muted">
-            📖 Deep Dive
+            📖 Deep Dive{section.deepDives.length > 1 ? "s" : ""}
           </h3>
-          <DeepDiveCard entry={section.deepDive} />
+          {section.deepDives.map((dive) => (
+            <DeepDiveCard key={dive.id} entry={dive} />
+          ))}
         </div>
       )}
 
-      {section.appliedInsight && (
-        <div>
+      {section.appliedInsights.length > 0 && (
+        <div className={section.isFavorite ? "" : "mb-5"}>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-brain-muted">
-            💡 Applied Insight
+            💡 Applied Insight{section.appliedInsights.length > 1 ? "s" : ""}
           </h3>
-          <AppliedInsightCard entry={section.appliedInsight} showLabel={false} />
+          <div className="space-y-3">
+            {section.appliedInsights.map((insight) => (
+              <AppliedInsightCard key={insight.id} entry={insight} showLabel={false} />
+            ))}
+          </div>
         </div>
       )}
+
+      {section.isFavorite && <PassionModeControls interestId={section.interestId} />}
     </section>
   );
 }
 
-export function Feed({ feed }: { feed: CycleFeed }) {
+export function Feed({ feed, isArchive = false }: { feed: CycleFeed; isArchive?: boolean }) {
   const createdAt = new Date(feed.createdAt);
   const createdLabel = isNaN(createdAt.getTime())
     ? ""
@@ -59,7 +75,17 @@ export function Feed({ feed }: { feed: CycleFeed }) {
         <p className="text-xs text-brain-muted">
           {feed.frequency} cycle · {feed.totalEntries} items · last updated {createdLabel}
         </p>
+        {!isArchive && (
+          <div className="mt-1">
+            <ProgressIndicator
+              conceptsThisMonth={feed.progress.conceptsThisMonth}
+              interestsCount={feed.progress.interestsCount}
+            />
+          </div>
+        )}
       </div>
+
+      {!isArchive && feed.dueReview && <RememberThisCard due={feed.dueReview} />}
 
       {feed.showBrainFact && feed.brainFact && (
         <div className="mb-8">

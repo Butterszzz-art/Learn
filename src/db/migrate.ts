@@ -109,6 +109,37 @@ const ADDITIVE_COLUMNS: { table: string; column: string; ddl: string }[] = [
     column: "generates_applied_insights",
     ddl: "ALTER TABLE interests ADD COLUMN generates_applied_insights INTEGER NOT NULL DEFAULT 0;",
   },
+  // --- Phase 4: curiosity branching, Passion Mode, retention tools ---
+  {
+    table: "interests",
+    column: "is_favorite",
+    ddl: "ALTER TABLE interests ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0;",
+  },
+  {
+    table: "deep_dives",
+    column: "follow_up_topics",
+    ddl: "ALTER TABLE deep_dives ADD COLUMN follow_up_topics TEXT NOT NULL DEFAULT '[]';",
+  },
+  {
+    table: "deep_dives",
+    column: "self_check_questions",
+    ddl: "ALTER TABLE deep_dives ADD COLUMN self_check_questions TEXT NOT NULL DEFAULT '[]';",
+  },
+  {
+    table: "covered_topics",
+    column: "deep_dive_id",
+    ddl: "ALTER TABLE covered_topics ADD COLUMN deep_dive_id INTEGER REFERENCES deep_dives(id);",
+  },
+  {
+    table: "covered_topics",
+    column: "next_review_date",
+    ddl: "ALTER TABLE covered_topics ADD COLUMN next_review_date TEXT;",
+  },
+  {
+    table: "covered_topics",
+    column: "review_count",
+    ddl: "ALTER TABLE covered_topics ADD COLUMN review_count INTEGER NOT NULL DEFAULT 0;",
+  },
 ];
 
 /**
@@ -170,6 +201,15 @@ async function rebuildItemsTableIfNeeded() {
 }
 
 export async function runMigrations() {
+  // `next build` prerenders several pages (including the auto-generated
+  // /_not-found) in parallel worker processes, each opening its own
+  // connection to the local SQLite file and independently calling
+  // ensureDb() -> runMigrations() at roughly the same time. Without this,
+  // one worker's write lock makes every other worker fail immediately with
+  // SQLITE_BUSY instead of just waiting a moment — busy_timeout makes
+  // SQLite retry internally instead. Harmless (and irrelevant) against a
+  // hosted Turso database, which handles concurrent writes itself.
+  await client.execute("PRAGMA busy_timeout = 5000;");
   for (const stmt of STATEMENTS) {
     await client.execute(stmt);
   }
@@ -188,6 +228,11 @@ export async function runMigrations() {
   await client.execute(`CREATE UNIQUE INDEX IF NOT EXISTS items_dedupe_key_idx ON items(dedupe_key);`);
   await client.execute(`CREATE INDEX IF NOT EXISTS items_digest_id_idx ON items(digest_id);`);
   await client.execute(`CREATE INDEX IF NOT EXISTS items_interest_id_idx ON items(interest_id);`);
+  // Depends on covered_topics.next_review_date, which is only guaranteed to
+  // exist after the ADDITIVE_COLUMNS loop above has run.
+  await client.execute(
+    `CREATE INDEX IF NOT EXISTS covered_topics_next_review_idx ON covered_topics(next_review_date);`
+  );
 }
 
 // Allow `npm run db:migrate` (tsx src/db/migrate.ts) to run this directly.

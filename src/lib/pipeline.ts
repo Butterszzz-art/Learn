@@ -1,13 +1,19 @@
 import { db, client } from "@/db";
 import { digests, items, settings, deepDives, appliedInsights } from "@/db/schema";
 import type { Category } from "@/db/schema";
+import { bumpLevel } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { fetchForInterest } from "./fetchers/registry";
 import { generateFieldNewsRoundup } from "./newsRoundup";
 import { dedupeItems, dedupeKeyFor } from "./dedupe";
 import { categorizeByKeywords } from "./categorize";
 import { classifyAndSummarizeBatch, summarizeBatch, hasClaudeKey } from "./claude";
-import { generateDeepDive, generateAppliedInsight } from "./deepDive";
+import {
+  generateDeepDive,
+  generateAppliedInsight,
+  generateFollowUpTopics,
+  generateSelfCheckQuestions,
+} from "./deepDive";
 import { scoreItem } from "./score";
 import { pickBrainFactOfTheDay, maybeGenerateWeeklyFacts } from "./brainFact";
 import { getEnabledInterests, getInterestById, getCoveredTopics, addCoveredTopic } from "./interests";
@@ -16,6 +22,10 @@ import type { RawItem, ProcessedItem } from "./types";
 
 const TARGET_ITEMS_PER_INTEREST = 8; // curated (RSS/API) sources
 const TARGET_ROUNDUP_ITEMS = 5; // generated Field News Roundup
+// Passion Mode: favorited interests get this many deep dives per cycle
+// instead of 1. Kept modest (not the full "2-3" range) to bound API cost —
+// see README if you want to raise it.
+const FAVORITE_DEEP_DIVE_QUOTA = 2;
 
 export interface PipelineResult {
   cycleId: number;
@@ -154,43 +164,148 @@ export interface DeepDiveStepResult {
   topic: string | null;
 }
 
-/** One Deep Dive for one interest, for the current cycle — no-op if this cycle already has one. */
+interface DeepDivePersistResult {
+  id: number;
+  topic: string;
+}
+
+/**
+ * Core deep-dive generation + persistence, shared by every path that writes
+ * one: the automatic per-cycle step below, and every on-demand path
+ * (curiosity branching, Passion Mode's Binge button, Passion Mode's pick-
+ * your-next-topic) via generateOnDemandDeepDive. Generates the main entry,
+ * then its follow-up topics and self-check questions (fast, no web_search —
+ * run in parallel), then persists all three plus the covered-topics log
+ * entry that schedules the first spaced review.
+ */
+async function generateAndPersistDeepDive(
+  interest: InterestWithConfig,
+  cycleId: number,
+  opts: { forcedTopic?: string } = {}
+): Promise<DeepDivePersistResult | null> {
+  const covered = await getCoveredTopics(interest.id);
+  // Passion Mode: favorited interests are framed one notch more advanced
+  // than the interest's own stored level, without changing that setting.
+  const level = interest.isFavorite ? bumpLevel(interest.level) : interest.level;
+  const result = await generateDeepDive(interest.name, level, covered, opts.forcedTopic);
+  if (!result) return null;
+
+  const [followUps, selfCheck] = await Promise.all([
+    generateFollowUpTopics(interest.name, result.topic, result.content).catch((err) => {
+      console.error(`[pipeline] Follow-up generation failed for "${interest.name}":`, err);
+      return [];
+    }),
+    generateSelfCheckQuestions(interest.name, result.topic, result.content).catch((err) => {
+      console.error(`[pipeline] Self-check generation failed for "${interest.name}":`, err);
+      return [];
+    }),
+  ]);
+
+  const inserted = await db
+    .insert(deepDives)
+    .values({
+      interestId: interest.id,
+      topic: result.topic,
+      content: result.content,
+      sources: JSON.stringify(result.sources),
+      level,
+      digestId: cycleId,
+      followUpTopics: JSON.stringify(followUps),
+      selfCheckQuestions: JSON.stringify(selfCheck),
+    })
+    .returning({ id: deepDives.id });
+
+  const deepDiveId = inserted[0].id;
+  await addCoveredTopic(interest.id, result.topic, deepDiveId);
+  return { id: deepDiveId, topic: result.topic };
+}
+
+/**
+ * One Deep Dive for one interest, for the current cycle — no-op once this
+ * cycle has reached its quota (1 normally, FAVORITE_DEEP_DIVE_QUOTA for a
+ * favorited/Passion Mode interest). Called once per HTTP request; the
+ * caller loops (see RefreshButton.tsx / runInterestCycle below) to fill a
+ * >1 quota across multiple short requests rather than one long one.
+ */
 export async function refreshDeepDiveForInterest(interestId: number): Promise<DeepDiveStepResult | null> {
   const interest = await getInterestById(interestId);
   if (!interest || !interest.enabled) return null;
   if (!hasClaudeKey()) return { interestId, interestName: interest.name, added: false, topic: null };
 
   const cycleId = await getOrCreateCurrentCycleId();
-
+  const quota = interest.isFavorite ? FAVORITE_DEEP_DIVE_QUOTA : 1;
   const existing = await db
-    .select()
+    .select({ topic: deepDives.topic })
     .from(deepDives)
-    .where(and(eq(deepDives.interestId, interest.id), eq(deepDives.digestId, cycleId)))
-    .limit(1);
-  if (existing.length > 0) {
-    return { interestId, interestName: interest.name, added: false, topic: existing[0].topic };
+    .where(and(eq(deepDives.interestId, interest.id), eq(deepDives.digestId, cycleId)));
+  if (existing.length >= quota) {
+    return {
+      interestId,
+      interestName: interest.name,
+      added: false,
+      topic: existing[existing.length - 1]?.topic ?? null,
+    };
   }
 
   try {
-    const covered = await getCoveredTopics(interest.id);
-    const result = await generateDeepDive(interest.name, interest.level, covered);
+    const result = await generateAndPersistDeepDive(interest, cycleId);
     if (!result) {
       console.error(`[pipeline] generateDeepDive returned null for "${interest.name}" — see [deepDive] log above.`);
       return { interestId, interestName: interest.name, added: false, topic: null };
     }
-    await db.insert(deepDives).values({
-      interestId: interest.id,
-      topic: result.topic,
-      content: result.content,
-      sources: JSON.stringify(result.sources),
-      level: interest.level,
-      digestId: cycleId,
-    });
-    await addCoveredTopic(interest.id, result.topic);
     return { interestId, interestName: interest.name, added: true, topic: result.topic };
   } catch (err) {
     console.error(`[pipeline] Deep dive failed for "${interest.name}":`, err);
     return { interestId, interestName: interest.name, added: false, topic: null };
+  }
+}
+
+export interface OnDemandDeepDiveResult {
+  interestId: number;
+  interestName: string;
+  added: boolean;
+  topic: string | null;
+  deepDiveId: number | null;
+}
+
+/**
+ * Generates one additional deep dive right now, outside the per-cycle
+ * quota entirely — the shared mechanism behind curiosity branching
+ * (forcedTopic = the follow-up card clicked), Passion Mode's Binge button
+ * (no forcedTopic — algorithm picks), and Passion Mode's pick-your-next-
+ * topic (forcedTopic = the chosen candidate). Works for any enabled
+ * interest, not just favorited ones — branching isn't gated on favorite
+ * status. Unlike the per-cycle step above, this is NOT idempotent-safe to
+ * blindly retry: a retry generates another dive, not a no-op, so the UI
+ * should disable the triggering button while a request is in flight.
+ */
+export async function generateOnDemandDeepDive(
+  interestId: number,
+  forcedTopic?: string
+): Promise<OnDemandDeepDiveResult | null> {
+  const interest = await getInterestById(interestId);
+  if (!interest || !interest.enabled) return null;
+  if (!hasClaudeKey()) {
+    return { interestId, interestName: interest.name, added: false, topic: null, deepDiveId: null };
+  }
+
+  const cycleId = await getOrCreateCurrentCycleId();
+  try {
+    const result = await generateAndPersistDeepDive(interest, cycleId, { forcedTopic });
+    if (!result) {
+      return { interestId, interestName: interest.name, added: false, topic: null, deepDiveId: null };
+    }
+
+    if (interest.generatesAppliedInsights) {
+      await generateInsightForDive(interest, result.id).catch((err) => {
+        console.error(`[pipeline] On-demand applied insight failed for "${interest.name}":`, err);
+      });
+    }
+
+    return { interestId, interestName: interest.name, added: true, topic: result.topic, deepDiveId: result.id };
+  } catch (err) {
+    console.error(`[pipeline] On-demand deep dive failed for "${interest.name}":`, err);
+    return { interestId, interestName: interest.name, added: false, topic: null, deepDiveId: null };
   }
 }
 
@@ -200,7 +315,34 @@ export interface InsightStepResult {
   added: boolean;
 }
 
-/** One Applied Insight for one interest, off this cycle's deep dive — no-op if not applicable/already exists/no dive yet. */
+/** Generates + persists an Applied Insight for one specific deep dive, if the
+ * interest generates them and one doesn't already exist for it. Shared by
+ * the per-cycle step below (looped over the cycle's dives) and the on-demand
+ * path above (a single freshly-written dive). Returns whether one was added. */
+async function generateInsightForDive(interest: InterestWithConfig, deepDiveId: number): Promise<boolean> {
+  const existingInsight = await db
+    .select({ id: appliedInsights.id })
+    .from(appliedInsights)
+    .where(eq(appliedInsights.deepDiveId, deepDiveId))
+    .limit(1);
+  if (existingInsight.length > 0) return false;
+
+  const diveRows = await db.select().from(deepDives).where(eq(deepDives.id, deepDiveId)).limit(1);
+  const dive = diveRows[0];
+  if (!dive) return false;
+
+  const content = await generateAppliedInsight(interest.name, dive.topic, dive.content);
+  if (!content) return false;
+
+  await db.insert(appliedInsights).values({ interestId: interest.id, deepDiveId: dive.id, content });
+  return true;
+}
+
+/** Applied Insights for every one of this cycle's deep dives for one interest
+ * that don't have one yet — no-op if the interest doesn't generate them, has
+ * no key configured, or has no dives yet this cycle. With Passion Mode's
+ * multi-dive quota, a cycle can have more than one dive per interest, so
+ * this loops rather than assuming just one. */
 export async function refreshInsightForInterest(interestId: number): Promise<InsightStepResult | null> {
   const interest = await getInterestById(interestId);
   if (!interest || !interest.enabled) return null;
@@ -210,30 +352,20 @@ export async function refreshInsightForInterest(interestId: number): Promise<Ins
 
   const cycleId = await getOrCreateCurrentCycleId();
   const diveRows = await db
-    .select()
+    .select({ id: deepDives.id })
     .from(deepDives)
-    .where(and(eq(deepDives.interestId, interest.id), eq(deepDives.digestId, cycleId)))
-    .limit(1);
-  const deepDiveRow = diveRows[0];
-  if (!deepDiveRow) return { interestId, interestName: interest.name, added: false }; // nothing to base an insight on yet
+    .where(and(eq(deepDives.interestId, interest.id), eq(deepDives.digestId, cycleId)));
+  if (diveRows.length === 0) return { interestId, interestName: interest.name, added: false };
 
-  try {
-    const existingInsight = await db
-      .select({ id: appliedInsights.id })
-      .from(appliedInsights)
-      .where(eq(appliedInsights.deepDiveId, deepDiveRow.id))
-      .limit(1);
-    if (existingInsight.length > 0) return { interestId, interestName: interest.name, added: false };
-
-    const content = await generateAppliedInsight(interest.name, deepDiveRow.topic, deepDiveRow.content);
-    if (!content) return { interestId, interestName: interest.name, added: false };
-
-    await db.insert(appliedInsights).values({ interestId: interest.id, deepDiveId: deepDiveRow.id, content });
-    return { interestId, interestName: interest.name, added: true };
-  } catch (err) {
-    console.error(`[pipeline] Applied insight failed for "${interest.name}":`, err);
-    return { interestId, interestName: interest.name, added: false };
+  let anyAdded = false;
+  for (const dive of diveRows) {
+    try {
+      if (await generateInsightForDive(interest, dive.id)) anyAdded = true;
+    } catch (err) {
+      console.error(`[pipeline] Applied insight failed for "${interest.name}" dive #${dive.id}:`, err);
+    }
   }
+  return { interestId, interestName: interest.name, added: anyAdded };
 }
 
 // ---------------------------------------------------------------------------
@@ -286,15 +418,26 @@ export async function runDigestPipeline(): Promise<PipelineResult> {
   };
 }
 
-/** News + Deep Dive + Applied Insight for one interest, built from the granular step functions above. */
+/** News + Deep Dive(s) + Applied Insight(s) for one interest, built from the
+ * granular step functions above. Loops the deep-dive step to fill a
+ * favorited interest's full per-cycle quota (>1) — safe because
+ * refreshDeepDiveForInterest no-ops once quota is reached, so the loop just
+ * stops early for a non-favorited (quota 1) interest. */
 async function runInterestCycle(interest: InterestWithConfig): Promise<InterestCycleResult> {
   const news = await refreshNewsForInterest(interest.id);
-  const dive = await refreshDeepDiveForInterest(interest.id);
+
+  let deepDiveAdded = false;
+  for (let i = 0; i < FAVORITE_DEEP_DIVE_QUOTA; i++) {
+    const dive = await refreshDeepDiveForInterest(interest.id);
+    if (dive?.added) deepDiveAdded = true;
+    else break;
+  }
+
   const insight = await refreshInsightForInterest(interest.id);
   return {
     newsAdded: news?.added ?? 0,
     fetched: news?.fetched ?? 0,
-    deepDiveAdded: dive?.added ?? false,
+    deepDiveAdded,
     insightAdded: insight?.added ?? false,
   };
 }
