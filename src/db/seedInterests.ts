@@ -12,15 +12,27 @@ export async function seedInterests(): Promise<number> {
   let inserted = 0;
   for (const interest of INTERESTS_SEED) {
     if (existing.has(interest.slug)) continue;
-    await db.insert(interests).values({
-      slug: interest.slug,
-      name: interest.name,
-      description: interest.description,
-      hasCuratedSource: interest.hasCuratedSource,
-      isCustom: false,
-      generatesAppliedInsights: interest.generatesAppliedInsights,
-    });
-    inserted++;
+    try {
+      await db.insert(interests).values({
+        slug: interest.slug,
+        name: interest.name,
+        description: interest.description,
+        hasCuratedSource: interest.hasCuratedSource,
+        isCustom: false,
+        generatesAppliedInsights: interest.generatesAppliedInsights,
+      });
+      inserted++;
+    } catch (err) {
+      // Same class of race as migrate.ts's ADDITIVE_COLUMNS loop: against a
+      // hosted Turso database, multiple processes (next build's parallel
+      // workers, or two serverless cold starts right after a fresh deploy)
+      // can both fetch the existing-slugs snapshot before either commits an
+      // insert, so both attempt to add a brand-new interest. A UNIQUE
+      // constraint violation on slug unambiguously means another process
+      // already added it — treat that as success, not a failure.
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/unique constraint failed/i.test(message)) throw err;
+    }
   }
 
   await backfillNeuroscienceInterest();
