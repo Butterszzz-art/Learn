@@ -37,11 +37,19 @@ No hosting, no email, no account required.
   daily-life takeaway is generated off each deep dive — skipped entirely
   when a topic genuinely doesn't have a natural one. Quality over
   completeness.
-- **Bounded feed**: the home page groups content by interest, and within
-  each interest into three clearly labeled sections — News, Deep Dive,
-  Applied Insight — most substantial first. Once you've seen everything in
-  the current cycle, you get a clear "You're caught up" end state. Nothing
-  lazy-loads just to keep you scrolling.
+- **Unified swipe stream**: the home page is a single-focus, swipeable
+  reading stream — one item fully occupies the screen at a time, no
+  auto-advance or timer ever, just swipe/scroll or arrow/j·k keys to move on
+  at your own pace. Due "Remember this?" cards surface early, favorited
+  interests' content is woven in more densely, and long-form Deep Dive hooks
+  are spaced out so they don't cluster. A one-click **Overview** toggle
+  switches to a scannable list of everything in the cycle to jump straight
+  to any item; optional interest pills above the stream narrow it
+  temporarily. Once you've seen everything, you get a clear "You're caught
+  up" end state — no infinite backfill. Drills and Library chapters get a
+  short pointer card in the stream instead of being embedded — they're
+  denser formats with their own dedicated tabs (see below). Archive's past
+  cycles use the exact same Focus/Overview reader.
 - **Storage**: a single SQLite file at `./data/neuro-digest.db` (via
   `@libsql/client` + Drizzle ORM — no native build tools required, works
   out of the box on Windows). Nothing leaves your machine except the
@@ -73,7 +81,10 @@ No hosting, no email, no account required.
   for Critical Thinking & Argumentation and/or Logic, which share drill
   material rather than repeating each other. Same instant-feedback,
   nothing-persisted UI as the self-check questions; drilled concepts feed
-  into the same spaced-resurfacing system as deep-dive topics.
+  into the same spaced-resurfacing system as deep-dive topics. Drills have
+  their own dedicated **Drills** tab (a single-focus, one-question-at-a-time
+  view, separate from the reading stream) — a short pointer card in the
+  stream ("N drills ready") links there when any are due.
 - **Explain it back**: every deep dive ends with a box to explain it in
   your own words (or, occasionally on advanced/research-level interests, a
   real open essay question instead) — submit it and get brief, specific,

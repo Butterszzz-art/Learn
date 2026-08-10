@@ -2,13 +2,14 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { hasCompletedOnboarding, getEnabledInterests } from "@/lib/interests";
 import { getCurrentFeed } from "@/lib/digest";
-import { Feed } from "@/components/Feed";
+import { buildReadingStream } from "@/lib/stream";
+import { StreamContainer } from "@/components/stream/StreamContainer";
 import { RefreshButton } from "@/components/RefreshButton";
 import { hasClaudeKey } from "@/lib/claude";
 
 export const dynamic = "force-dynamic";
 
-export default async function HomePage() {
+export default async function HomePage({ searchParams }: { searchParams: { at?: string } }) {
   const onboarded = await hasCompletedOnboarding();
   if (!onboarded) redirect("/onboarding");
 
@@ -35,7 +36,15 @@ export default async function HomePage() {
       </div>
 
       {feed ? (
-        <Feed feed={feed} />
+        <StreamContainer
+          cards={buildReadingStream(feed, false)}
+          interestPills={feed.sections.map((s) => ({ id: s.interestId, name: s.interestName, isFavorite: s.isFavorite }))}
+          periodLabel={feed.periodLabel}
+          frequency={feed.frequency}
+          totalEntries={feed.totalEntries}
+          createdLabel={formatCreatedLabel(feed.createdAt)}
+          initialCardId={searchParams.at}
+        />
       ) : (
         <div className="card text-center">
           <p className="mb-2 text-lg font-medium">No cycle yet</p>
@@ -46,4 +55,9 @@ export default async function HomePage() {
       )}
     </div>
   );
+}
+
+function formatCreatedLabel(iso: string): string {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? "" : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }

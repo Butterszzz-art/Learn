@@ -11,7 +11,13 @@ import { ExplainItBack } from "@/components/ExplainItBack";
 
 export const dynamic = "force-dynamic";
 
-export default async function DeepDivePage({ params }: { params: { id: string } }) {
+export default async function DeepDivePage({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  searchParams: { from?: string; next?: string };
+}) {
   const id = Number(params.id);
   if (!Number.isFinite(id)) notFound();
 
@@ -23,9 +29,13 @@ export default async function DeepDivePage({ params }: { params: { id: string } 
     ? ""
     : createdAt.toLocaleDateString(undefined, { dateStyle: "medium" });
 
+  // Opened as a hook card from the reading stream (Phase 8): closing this
+  // should return to the stream at the NEXT card, not back at this same hook.
+  const backHref = searchParams.from === "stream" && searchParams.next ? `/?at=${encodeURIComponent(searchParams.next)}` : "/";
+
   return (
     <div>
-      <Link href="/" className="mb-4 inline-block text-xs text-neuron-muted hover:text-neuron-text">
+      <Link href={backHref} className="mb-4 inline-block text-xs text-neuron-muted hover:text-neuron-text">
         ← Back to feed
       </Link>
 

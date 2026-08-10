@@ -5,7 +5,12 @@ function formatDate(iso: string | null): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  // Fixed locale/timezone (not the runtime default) — this card now renders
+  // inside the client-hydrated reading stream (Phase 8), not just server-
+  // side, so an environment-dependent format here caused a real
+  // server/client hydration mismatch (Node's vs. the browser's default
+  // Intl locale disagreeing on date order).
+  return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
 }
 
 export function ItemCard({ item }: { item: NewsItem }) {
