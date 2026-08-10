@@ -56,6 +56,14 @@ export function RememberThisCard({ due }: { due: DueReviewTopic }) {
               Read the full entry again →
             </Link>
           )}
+          {due.chapterId && (
+            <Link
+              href={`/library/chapter/${due.chapterId}`}
+              className="inline-block text-xs text-neuron-accent hover:underline"
+            >
+              Read the full chapter again →
+            </Link>
+          )}
         </div>
       )}
     </div>

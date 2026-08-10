@@ -100,6 +100,16 @@ No hosting, no email, no account required.
   that this style of game is a fun break, not a proven way to improve
   general thinking — a different evidence tier than the content-grounded
   Drills above.
+- **Library**: upload a book (PDF) and get a detailed chapter-by-chapter
+  notebook — summary, key concepts, notable arguments, a handful of short
+  quotes — read natively by Claude (no separate text-extraction library),
+  processed once per book. Chapters drip-feed into your daily/weekly rhythm
+  at whatever pace you set ("finish in about __ weeks"), one chapter-ready
+  card in the main feed per cycle, while the Library page always shows the
+  full table of contents so you can jump ahead or reread anytime. Wired
+  into everything else: chapter concepts feed spaced resurfacing, notable
+  arguments ground Drills, chapters are eligible for Mental Model of the
+  Day lenses, and each chapter gets its own explain-it-back box.
 
 ---
 

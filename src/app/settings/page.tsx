@@ -7,7 +7,10 @@ import { BrainGamesToggle } from "@/components/BrainGamesToggle";
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
-  const [settings, interests] = await Promise.all([getAppSettings(), getAllInterests()]);
+  const [settings, allInterests] = await Promise.all([getAppSettings(), getAllInterests()]);
+  // Library books get a hidden pseudo-interest (see getOrCreateLibraryInterest)
+  // purely for spaced-resurfacing plumbing — never shown as a pickable interest.
+  const interests = allInterests.filter((i) => !i.isLibraryBook);
 
   return (
     <div className="space-y-8">

@@ -3,16 +3,20 @@
 import { useState } from "react";
 import type { ExplainBackEntry } from "@/lib/digest";
 
-/** Retrieval practice via free-form writing: explain the deep dive back in
- * your own words (or answer an essay prompt for advanced/research_level
- * interests), get brief supportive feedback — never a score or grade. Past
- * attempts on this dive are shown above the input, most recent first. */
+type Source = { type: "deepDive"; id: number } | { type: "chapter"; id: number };
+
+/** Retrieval practice via free-form writing: explain the content back in
+ * your own words (or answer an essay prompt, for advanced/research_level
+ * deep dives), get brief supportive feedback — never a score or grade.
+ * Works for either a deep dive or a Library book chapter (Phase 7) — same
+ * UI, different API endpoint underneath. Past attempts on this entry are
+ * shown above the input, most recent first. */
 export function ExplainItBack({
-  deepDiveId,
+  source,
   prompt,
   initialEntries,
 }: {
-  deepDiveId: number;
+  source: Source;
   prompt: string;
   initialEntries: ExplainBackEntry[];
 }) {
@@ -27,10 +31,15 @@ export function ExplainItBack({
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch("/api/deep-dive/explain-back", {
+      const path = source.type === "deepDive" ? "/api/deep-dive/explain-back" : "/api/library/chapter/explain-back";
+      const body =
+        source.type === "deepDive"
+          ? { deepDiveId: source.id, userExplanation: trimmed }
+          : { chapterId: source.id, userExplanation: trimmed };
+      const res = await fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deepDiveId, userExplanation: trimmed }),
+        body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error ?? "Couldn't generate feedback");

@@ -92,9 +92,12 @@ const STATEMENTS = [
     created_at TEXT NOT NULL DEFAULT (current_timestamp)
   );`,
   // Phase 6 — explain-it-back, mental models, rabbit hole, brain games.
+  // deep_dive_id is nullable here (Phase 7) — see
+  // rebuildExplainBacksTableIfNeeded() below for the migration path from
+  // Phase 6's NOT NULL version, once a chapter can be the source instead.
   `CREATE TABLE IF NOT EXISTS explain_backs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    deep_dive_id INTEGER NOT NULL REFERENCES deep_dives(id),
+    deep_dive_id INTEGER REFERENCES deep_dives(id),
     user_explanation TEXT NOT NULL,
     feedback TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (current_timestamp)
@@ -130,6 +133,34 @@ const STATEMENTS = [
     answer TEXT NOT NULL,
     last_shown_at TEXT
   );`,
+  // Phase 7 — Library: upload a book, get a drip-fed chapter notebook.
+  `CREATE TABLE IF NOT EXISTS books (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    author TEXT,
+    original_filename TEXT NOT NULL,
+    total_chapters INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'processing',
+    error_message TEXT,
+    pace_chapters_per_cycle INTEGER NOT NULL DEFAULT 1,
+    pace_weeks_requested INTEGER,
+    file_base64 TEXT NOT NULL,
+    upload_date TEXT NOT NULL DEFAULT (current_timestamp)
+  );`,
+  `CREATE TABLE IF NOT EXISTS book_chapters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id),
+    chapter_number INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    start_page INTEGER,
+    end_page INTEGER,
+    summary TEXT,
+    key_concepts TEXT NOT NULL DEFAULT '[]',
+    notable_arguments TEXT NOT NULL DEFAULT '[]',
+    quotes TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'pending',
+    digest_id INTEGER REFERENCES digests(id)
+  );`,
   `CREATE TABLE IF NOT EXISTS settings (
     id INTEGER PRIMARY KEY DEFAULT 1,
     frequency TEXT NOT NULL DEFAULT 'daily',
@@ -148,11 +179,16 @@ const STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS drills_interest_idx ON drills(interest_id);`,
   `CREATE INDEX IF NOT EXISTS drills_digest_idx ON drills(digest_id);`,
   `CREATE INDEX IF NOT EXISTS drills_source_dive_idx ON drills(source_deep_dive_id);`,
-  `CREATE INDEX IF NOT EXISTS explain_backs_deep_dive_idx ON explain_backs(deep_dive_id);`,
+  // Note: explain_backs' indexes are created after rebuildExplainBacksTableIfNeeded()
+  // runs below, not here — same reasoning as items' indexes above, and for
+  // the same table-rebuild-race reason, protected there too.
   `CREATE INDEX IF NOT EXISTS model_usage_model_idx ON model_usage(model_id);`,
   `CREATE INDEX IF NOT EXISTS model_usage_digest_idx ON model_usage(digest_id);`,
   `CREATE INDEX IF NOT EXISTS rabbit_holes_digest_idx ON rabbit_holes(digest_id);`,
   `CREATE INDEX IF NOT EXISTS brain_games_last_shown_idx ON brain_games(last_shown_at);`,
+  `CREATE INDEX IF NOT EXISTS book_chapters_book_idx ON book_chapters(book_id);`,
+  `CREATE INDEX IF NOT EXISTS book_chapters_status_idx ON book_chapters(status);`,
+  `CREATE INDEX IF NOT EXISTS book_chapters_digest_idx ON book_chapters(digest_id);`,
   `INSERT OR IGNORE INTO settings (id, frequency, muted_categories) VALUES (1, 'daily', '[]');`,
 ];
 
@@ -223,6 +259,27 @@ const ADDITIVE_COLUMNS: { table: string; column: string; ddl: string }[] = [
     column: "include_brain_games",
     ddl: "ALTER TABLE settings ADD COLUMN include_brain_games INTEGER NOT NULL DEFAULT 0;",
   },
+  // --- Phase 7: Library ---
+  {
+    table: "interests",
+    column: "is_library_book",
+    ddl: "ALTER TABLE interests ADD COLUMN is_library_book INTEGER NOT NULL DEFAULT 0;",
+  },
+  {
+    table: "drills",
+    column: "source_chapter_id",
+    ddl: "ALTER TABLE drills ADD COLUMN source_chapter_id INTEGER REFERENCES book_chapters(id);",
+  },
+  {
+    table: "explain_backs",
+    column: "chapter_id",
+    ddl: "ALTER TABLE explain_backs ADD COLUMN chapter_id INTEGER REFERENCES book_chapters(id);",
+  },
+  {
+    table: "covered_topics",
+    column: "chapter_id",
+    ddl: "ALTER TABLE covered_topics ADD COLUMN chapter_id INTEGER REFERENCES book_chapters(id);",
+  },
 ];
 
 /**
@@ -283,6 +340,74 @@ async function rebuildItemsTableIfNeeded() {
   console.log("[migrate] Rebuilt items table for Phase 2 (category is now nullable, interest_id added).");
 }
 
+/**
+ * Phase 6 created `explain_backs.deep_dive_id` as NOT NULL. Phase 7 needs it
+ * nullable (a book chapter can be the source instead, via the new
+ * chapter_id column). Same rebuild-in-place pattern as
+ * rebuildItemsTableIfNeeded above, for the same reason (SQLite can't relax
+ * NOT NULL via ALTER TABLE). Safe to re-run — a no-op once nullable. Must
+ * run after the ADDITIVE_COLUMNS loop has added chapter_id, so there's
+ * something to carry over in the copy.
+ */
+async function rebuildExplainBacksTableIfNeeded() {
+  const info = await client.execute("PRAGMA table_info(explain_backs)");
+  const deepDiveCol = info.rows.find((r: any) => r.name === "deep_dive_id") as
+    | { notnull: number }
+    | undefined;
+  if (!deepDiveCol || deepDiveCol.notnull === 0) return; // already migrated or fresh table
+
+  // Against a hosted Turso database, multiple build workers (or two
+  // serverless cold starts) can reach this "needs rebuild" check at once —
+  // the same class of race as the ADDITIVE_COLUMNS/seed-script fixes
+  // elsewhere in this file, but sharper here because a table rebuild has a
+  // real window where `explain_backs` doesn't exist at all (between the
+  // RENAME and the CREATE). If another worker is already mid-rebuild, any
+  // statement in that window fails with "no such table: explain_backs" —
+  // caught below and treated as "someone else is handling it", not an error.
+  try {
+    await client.execute("ALTER TABLE explain_backs RENAME TO explain_backs_old_phase6;");
+  } catch (err) {
+    if (isMissingTableError(err, "explain_backs")) return; // another worker already renamed it away
+    throw err;
+  }
+
+  await client.execute(`CREATE TABLE explain_backs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    deep_dive_id INTEGER REFERENCES deep_dives(id),
+    chapter_id INTEGER REFERENCES book_chapters(id),
+    user_explanation TEXT NOT NULL,
+    feedback TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (current_timestamp)
+  );`);
+  // chapter_id was added to the old table by the ADDITIVE_COLUMNS loop
+  // above (which runs before this), so it's carried over too, just in case.
+  await client.execute(`INSERT INTO explain_backs
+    (id, deep_dive_id, chapter_id, user_explanation, feedback, created_at)
+    SELECT id, deep_dive_id, chapter_id, user_explanation, feedback, created_at
+    FROM explain_backs_old_phase6;`);
+  await client.execute("DROP TABLE explain_backs_old_phase6;");
+  console.log("[migrate] Rebuilt explain_backs table for Phase 7 (deep_dive_id is now nullable, chapter_id added).");
+}
+
+/** True if `err` is SQLite/Turso's "no such table: <name>" error for the
+ * given table — the signal that another concurrent process already moved
+ * or dropped it, not a genuine problem. */
+function isMissingTableError(err: unknown, tableName: string): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return new RegExp(`no such table:\\s*${tableName}\\b`, "i").test(message);
+}
+
+/** Runs a statement, swallowing only a "no such table: <tableName>" error —
+ * see rebuildExplainBacksTableIfNeeded's comment for why that specific
+ * error is expected and harmless during a concurrent table rebuild. */
+async function execIgnoringMissingTable(sql: string, tableName: string) {
+  try {
+    await client.execute(sql);
+  } catch (err) {
+    if (!isMissingTableError(err, tableName)) throw err;
+  }
+}
+
 export async function runMigrations() {
   // `next build` prerenders several pages (including the auto-generated
   // /_not-found) in parallel worker processes, each opening its own
@@ -332,10 +457,27 @@ export async function runMigrations() {
     }
   }
   await rebuildItemsTableIfNeeded();
-  // Re-create indexes in case the rebuild just dropped them along with the table.
-  await client.execute(`CREATE UNIQUE INDEX IF NOT EXISTS items_dedupe_key_idx ON items(dedupe_key);`);
-  await client.execute(`CREATE INDEX IF NOT EXISTS items_digest_id_idx ON items(digest_id);`);
-  await client.execute(`CREATE INDEX IF NOT EXISTS items_interest_id_idx ON items(interest_id);`);
+  await rebuildExplainBacksTableIfNeeded();
+  // Re-create indexes in case the rebuilds just dropped them along with the
+  // tables. Protected against the same concurrent-rebuild race as
+  // rebuildExplainBacksTableIfNeeded itself — if another worker is mid-
+  // rebuild right now, the table can be momentarily missing; that worker
+  // will create these same indexes once it finishes, so it's safe for this
+  // one to just skip rather than error.
+  await execIgnoringMissingTable(`CREATE UNIQUE INDEX IF NOT EXISTS items_dedupe_key_idx ON items(dedupe_key);`, "items");
+  await execIgnoringMissingTable(`CREATE INDEX IF NOT EXISTS items_digest_id_idx ON items(digest_id);`, "items");
+  await execIgnoringMissingTable(`CREATE INDEX IF NOT EXISTS items_interest_id_idx ON items(interest_id);`, "items");
+  await execIgnoringMissingTable(
+    `CREATE INDEX IF NOT EXISTS explain_backs_deep_dive_idx ON explain_backs(deep_dive_id);`,
+    "explain_backs"
+  );
+  await execIgnoringMissingTable(
+    `CREATE INDEX IF NOT EXISTS explain_backs_chapter_idx ON explain_backs(chapter_id);`,
+    "explain_backs"
+  );
+  // source_chapter_id only exists on `drills` after the ADDITIVE_COLUMNS
+  // loop above has run — same reasoning as covered_topics_next_review_idx.
+  await client.execute(`CREATE INDEX IF NOT EXISTS drills_source_chapter_idx ON drills(source_chapter_id);`);
   // Depends on covered_topics.next_review_date, which is only guaranteed to
   // exist after the ADDITIVE_COLUMNS loop above has run.
   await client.execute(

@@ -73,7 +73,7 @@ export default async function DeepDivePage({ params }: { params: { id: string } 
 
       <SelfCheckQuiz questions={deepDive.selfCheckQuestions} />
       <ExplainItBack
-        deepDiveId={deepDive.id}
+        source={{ type: "deepDive", id: deepDive.id }}
         prompt={deepDive.essayPrompt || "Explain this back in your own words."}
         initialEntries={deepDive.explainBacks}
       />

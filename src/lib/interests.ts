@@ -12,11 +12,20 @@ export interface InterestWithConfig {
   isCustom: boolean;
   generatesAppliedInsights: boolean;
   isFavorite: boolean;
+  // Phase 7: a hidden pseudo-interest auto-created per uploaded Library
+  // book. Never gets a userInterests row (so getEnabledInterests already
+  // excludes it naturally), but getAllInterests still returns it — callers
+  // that build a user-facing interest list (onboarding, Settings) must
+  // filter this out explicitly. Kept visible here rather than filtered at
+  // the source since the Library pipeline needs to look these rows up too.
+  isLibraryBook: boolean;
   level: Level;
   enabled: boolean;
 }
 
-/** Every interest in the catalog, joined with the user's config (defaults applied if unset). */
+/** Every interest in the catalog, joined with the user's config (defaults applied if unset).
+ * Includes hidden Library-book pseudo-interests (see isLibraryBook) — filter
+ * those out at the call site for any user-facing interest list. */
 export async function getAllInterests(): Promise<InterestWithConfig[]> {
   const allInterests = await db.select().from(interests).orderBy(asc(interests.id));
   const configs = await db.select().from(userInterests);
@@ -33,6 +42,7 @@ export async function getAllInterests(): Promise<InterestWithConfig[]> {
       isCustom: i.isCustom,
       generatesAppliedInsights: i.generatesAppliedInsights,
       isFavorite: i.isFavorite,
+      isLibraryBook: i.isLibraryBook,
       level: config?.level ?? "some_background",
       enabled: config?.enabled ?? false,
     };
@@ -117,6 +127,62 @@ export async function createCustomInterest(
     isCustom: row.isCustom,
     generatesAppliedInsights: row.generatesAppliedInsights,
     isFavorite: row.isFavorite,
+    isLibraryBook: row.isLibraryBook,
+    level: "some_background",
+    enabled: false,
+  };
+}
+
+/**
+ * Finds or creates the hidden pseudo-interest for a Library book ("Library:
+ * <title>") — purely so coveredTopics.interestId has a valid row to attach
+ * book-chapter concepts to, letting the existing spaced-resurfacing system
+ * pick them up exactly like interest content. Never gets a userInterests
+ * row and is filtered out of every user-facing interest list.
+ */
+export async function getOrCreateLibraryInterest(bookId: number, bookTitle: string): Promise<InterestWithConfig> {
+  const slug = `library-book-${bookId}`;
+  const existing = await db.select().from(interests).where(eq(interests.slug, slug)).limit(1);
+  if (existing[0]) {
+    const row = existing[0];
+    return {
+      id: row.id,
+      slug: row.slug,
+      name: row.name,
+      description: row.description,
+      hasCuratedSource: row.hasCuratedSource,
+      isCustom: row.isCustom,
+      generatesAppliedInsights: row.generatesAppliedInsights,
+      isFavorite: row.isFavorite,
+      isLibraryBook: row.isLibraryBook,
+      level: "some_background",
+      enabled: false,
+    };
+  }
+
+  const inserted = await db
+    .insert(interests)
+    .values({
+      slug,
+      name: `Library: ${bookTitle}`,
+      description: null,
+      hasCuratedSource: false,
+      isCustom: false,
+      generatesAppliedInsights: false,
+      isLibraryBook: true,
+    })
+    .returning();
+  const row = inserted[0];
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    description: row.description,
+    hasCuratedSource: row.hasCuratedSource,
+    isCustom: row.isCustom,
+    generatesAppliedInsights: row.generatesAppliedInsights,
+    isFavorite: row.isFavorite,
+    isLibraryBook: row.isLibraryBook,
     level: "some_background",
     enabled: false,
   };
@@ -211,6 +277,19 @@ export async function addCoveredTopic(interestId: number, topic: string, deepDiv
     interestId,
     topic,
     deepDiveId,
+    nextReviewDate: daysFromNowSqlite(REVIEW_SCHEDULE_DAYS[0]),
+    reviewCount: 0,
+  });
+}
+
+/** Same as addCoveredTopic, but for a Library book chapter's key concept
+ * instead of a deep-dive topic — chapterId lets a later "Remember this?"
+ * card pull its refresher from the chapter summary. */
+export async function addCoveredTopicFromChapter(interestId: number, topic: string, chapterId: number) {
+  await db.insert(coveredTopics).values({
+    interestId,
+    topic,
+    chapterId,
     nextReviewDate: daysFromNowSqlite(REVIEW_SCHEDULE_DAYS[0]),
     reviewCount: 0,
   });

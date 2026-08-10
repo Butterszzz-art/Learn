@@ -11,6 +11,7 @@ import { ProgressIndicator } from "./ProgressIndicator";
 import { MentalModelCard } from "./MentalModelCard";
 import { RabbitHoleCard } from "./RabbitHoleCard";
 import { BrainGamesSection } from "./BrainGamesSection";
+import { BookChapterPointerCard } from "./BookChapterPointerCard";
 
 function InterestSection({ section }: { section: InterestFeedSection }) {
   const hasContent =
@@ -115,6 +116,9 @@ export function Feed({ feed, isArchive = false }: { feed: CycleFeed; isArchive?:
 
       {feed.mentalModelOfTheDay && <MentalModelCard entry={feed.mentalModelOfTheDay} />}
       {feed.rabbitHoleOfTheDay && <RabbitHoleCard entry={feed.rabbitHoleOfTheDay} />}
+      {feed.bookChaptersOfTheDay.map((entry) => (
+        <BookChapterPointerCard key={entry.bookId} entry={entry} />
+      ))}
 
       {feed.sections.length === 0 ? (
         <div className="card text-center">

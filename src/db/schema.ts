@@ -78,6 +78,13 @@ export const interests = sqliteTable("interests", {
   // Passion Mode (Phase 4): more deep dives per cycle, framed one notch more
   // advanced, plus the Binge/pick-your-next-topic affordances in the feed.
   isFavorite: integer("is_favorite", { mode: "boolean" }).notNull().default(false),
+  // Library (Phase 7): a hidden pseudo-interest auto-created per uploaded
+  // book ("Library: <title>"), purely so coveredTopics.interestId has a
+  // valid row to attach book-chapter concepts to for spaced resurfacing.
+  // Never has a userInterests row, never shown in onboarding/Settings'
+  // interest picker, never touched by the News/Deep-Dive refresh pipeline
+  // — getAllInterests()/getEnabledInterests() filter these out explicitly.
+  isLibraryBook: integer("is_library_book", { mode: "boolean" }).notNull().default(false),
 });
 
 // ---------------------------------------------------------------------------
@@ -109,6 +116,11 @@ export const coveredTopics = sqliteTable("covered_topics", {
   // card show a refresher pulled from the original entry. Nullable so rows
   // written before this column existed don't break.
   deepDiveId: integer("deep_dive_id").references(() => deepDives.id),
+  // Phase 7: a covered topic can instead come from a Library book chapter's
+  // key_concepts — lets "Remember this?" pull a refresher from the chapter
+  // summary the same way it does for a deep dive. At most one of
+  // deepDiveId/chapterId is set per row.
+  chapterId: integer("chapter_id").references(() => bookChapters.id),
   // Spaced resurfacing (Phase 4): simple fixed schedule (3 -> 7 -> 21 -> 60
   // days), not a full SM-2 implementation. Null until the first deep dive on
   // this topic is written, which schedules the first review.
@@ -155,9 +167,12 @@ export const deepDives = sqliteTable("deep_dives", {
 // ---------------------------------------------------------------------------
 export const explainBacks = sqliteTable("explain_backs", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  deepDiveId: integer("deep_dive_id")
-    .notNull()
-    .references(() => deepDives.id),
+  // Phase 7: an explain-it-back entry can now ground in a book chapter
+  // instead of a deep dive — deepDiveId relaxed to nullable (was NOT NULL;
+  // see rebuildExplainBacksTableIfNeeded in migrate.ts), chapterId added.
+  // Exactly one of the two is set per row, never both.
+  deepDiveId: integer("deep_dive_id").references(() => deepDives.id),
+  chapterId: integer("chapter_id").references(() => bookChapters.id),
   userExplanation: text("user_explanation").notNull(),
   feedback: text("feedback").notNull(),
   createdAt: text("created_at")
@@ -200,6 +215,10 @@ export const drills = sqliteTable("drills", {
     .notNull()
     .references(() => interests.id),
   sourceDeepDiveId: integer("source_deep_dive_id").references(() => deepDives.id),
+  // Phase 7: a grounded drill can also come from a book chapter's
+  // notable_arguments instead of a deep dive. At most one of
+  // sourceDeepDiveId/sourceChapterId is set per row.
+  sourceChapterId: integer("source_chapter_id").references(() => bookChapters.id),
   drillType: text("drill_type").$type<DrillType>().notNull(),
   promptContent: text("prompt_content").notNull(), // the argument/scenario/question text shown to the reader
   options: text("options").notNull().default("[]"), // JSON array of strings, exactly 4
@@ -240,7 +259,11 @@ export const modelUsage = sqliteTable("model_usage", {
   dateUsed: text("date_used")
     .notNull()
     .default(sql`(current_timestamp)`),
-  linkedItemIds: text("linked_item_ids").notNull().default("[]"), // JSON array of items.id
+  // JSON array. Phase 6 shape was plain items.id numbers; Phase 7 widened it
+  // to {type: "item" | "chapter", id}[] so a lens can also reference a book
+  // chapter — parsing code treats a bare number as {type:"item", id} for
+  // backward compatibility with rows written before this change.
+  linkedItemIds: text("linked_item_ids").notNull().default("[]"),
   // The generated 2-3 sentence card connecting the model to today's items —
   // not in the original spec's column list, but needed to store what was
   // actually written (linkedItemIds alone is just references, no prose).
@@ -286,6 +309,67 @@ export const brainGames = sqliteTable("brain_games", {
   content: text("content").notNull(), // the puzzle/question text shown to the reader
   answer: text("answer").notNull(), // revealed on request — self-checked, nothing persisted
   lastShownAt: text("last_shown_at"), // mirrors brainFacts' rotation pattern
+});
+
+// ---------------------------------------------------------------------------
+// books / bookChapters (Phase 7) — upload a PDF, get a detailed chapter
+// notebook, drip-fed into the daily/weekly rhythm instead of dumped at once.
+// ---------------------------------------------------------------------------
+export const BOOK_STATUSES = ["processing", "ready", "error"] as const;
+export type BookStatus = (typeof BOOK_STATUSES)[number];
+
+export const books = sqliteTable("books", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  title: text("title").notNull(), // "Untitled" until the structure pass identifies it
+  author: text("author"),
+  originalFilename: text("original_filename").notNull(),
+  totalChapters: integer("total_chapters").notNull().default(0), // 0 until the structure pass completes
+  status: text("status").$type<BookStatus>().notNull().default("processing"),
+  errorMessage: text("error_message"), // set when status="error" — e.g. "no extractable text layer"
+  paceChaptersPerCycle: integer("pace_chapters_per_cycle").notNull().default(1),
+  // The user's raw "finish in about __ weeks" input, kept to (re)compute
+  // paceChaptersPerCycle once totalChapters is known post-structure-pass —
+  // not itself a spec column, but needed to bridge upload-time input to a
+  // value that can only be computed after that later step.
+  paceWeeksRequested: integer("pace_weeks_requested"),
+  // The PDF itself, base64-encoded, stored in the DB rather than on local
+  // disk as literally specified — Vercel's serverless filesystem is
+  // ephemeral (same reasoning as src/db/index.ts's local-vs-hosted split),
+  // so a file written during one request isn't guaranteed to exist for the
+  // next. Cleared (set to "") once processing finishes — Claude has already
+  // read everything it needs to by then, and there's no reason to keep
+  // holding a multi-MB blob in every row indefinitely.
+  fileBase64: text("file_base64").notNull(),
+  uploadDate: text("upload_date")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+});
+
+export const CHAPTER_STATUSES = ["pending", "surfaced"] as const;
+export type ChapterStatus = (typeof CHAPTER_STATUSES)[number];
+
+export const bookChapters = sqliteTable("book_chapters", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  bookId: integer("book_id")
+    .notNull()
+    .references(() => books.id),
+  chapterNumber: integer("chapter_number").notNull(),
+  title: text("title").notNull(),
+  // Approximate page range from the structure pass — not itself a spec
+  // column, but needed to drive the later per-chapter content pass (and
+  // its long-chapter windowing) without re-identifying structure each time.
+  startPage: integer("start_page"),
+  endPage: integer("end_page"),
+  // Null until the per-chapter content pass runs (structure-pass rows start
+  // as placeholders — title/number only). Non-null is this app's signal
+  // for "content generated", independent of `status` below, which tracks
+  // "has it been drip-fed to the reader yet" instead.
+  summary: text("summary"),
+  keyConcepts: text("key_concepts").notNull().default("[]"), // JSON array of {term, definition}
+  notableArguments: text("notable_arguments").notNull().default("[]"), // JSON array of strings — grounds drills
+  quotes: text("quotes").notNull().default("[]"), // JSON array of short strings — a handful of words each, never long passages
+  status: text("status").$type<ChapterStatus>().notNull().default("pending"),
+  digestId: integer("digest_id").references(() => digests.id), // which cycle this chapter was surfaced in, once surfaced
 });
 
 // ---------------------------------------------------------------------------

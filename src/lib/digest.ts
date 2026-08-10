@@ -13,8 +13,10 @@ import {
   mentalModels,
   modelUsage,
   rabbitHoles,
+  books,
+  bookChapters,
 } from "@/db/schema";
-import type { Category, Level, DrillType } from "@/db/schema";
+import type { Category, Level, DrillType, BookStatus } from "@/db/schema";
 import { eq, desc, and, or, inArray, isNotNull, lte, asc } from "drizzle-orm";
 import { pickBrainGames, type BrainGamePick } from "./brainGames";
 
@@ -83,6 +85,7 @@ export interface DueReviewTopic {
   interestName: string;
   topic: string;
   deepDiveId: number | null;
+  chapterId: number | null; // Phase 7: set instead of deepDiveId for a Library concept
   contentPreview: string;
   coveredDaysAgo: number;
 }
@@ -102,6 +105,13 @@ export interface RabbitHoleOfTheDay {
   url: string;
   sourceName: string;
   topicArea: string;
+}
+
+export interface BookChapterPointer {
+  bookId: number;
+  bookTitle: string;
+  chapterIds: number[];
+  chapterNumbers: number[];
 }
 
 export interface CycleFeed {
@@ -125,6 +135,9 @@ export interface CycleFeed {
   // Null when the "Include brain games" setting is off — distinct from an
   // empty array, which would mean the setting is on but the bank is empty.
   brainGames: BrainGamePick[] | null;
+  // One pointer per book that surfaced chapter(s) this cycle — a short
+  // "Chapter N of [Book] is ready" card, not the chapter content itself.
+  bookChaptersOfTheDay: BookChapterPointer[];
 }
 
 function stripMarkdown(md: string): string {
@@ -169,6 +182,7 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
       mentalModelOfTheDay: null,
       rabbitHoleOfTheDay: null,
       brainGames: await getBrainGamesIfEnabled(),
+      bookChaptersOfTheDay: await getBookChaptersOfTheDay(cycleId),
     };
   }
 
@@ -305,19 +319,30 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
   const neuroInterest = allInterests.find((i) => i.slug === "neuroscience");
   const showBrainFact = !!neuroInterest && enabledSet.has(neuroInterest.id);
 
+  // Library books' hidden pseudo-interests (see getOrCreateLibraryInterest)
+  // never appear in enabledInterestIds — they never get a userInterests row
+  // — but their covered concepts should still count toward progress and be
+  // eligible for spaced resurfacing, same as any interest's. Included here,
+  // not in enabledSet above, so they don't spawn a phantom section in the
+  // main feed (Library content has its own dedicated space).
+  const libraryInterestIds = allInterests.filter((i) => i.isLibraryBook).map((i) => i.id);
+  const progressInterestIds = [...enabledInterestIds, ...libraryInterestIds];
+
   // Plain progress count: how many topics have been covered this calendar
-  // month across the enabled interests, and how many distinct interests
-  // that spans. Deliberately not a streak — see ProgressIndicator.tsx.
-  const progress = await getMonthlyProgress(enabledInterestIds);
+  // month across the enabled interests (+ any Library books), and how many
+  // distinct interests that spans. Deliberately not a streak — see
+  // ProgressIndicator.tsx.
+  const progress = await getMonthlyProgress(progressInterestIds);
 
   // At most one topic due for spaced review, earliest-due first. Computed
   // for every cycle load (cheap, single-user dataset) but only rendered on
   // the live feed, not archive views — see Feed.tsx's isArchive prop.
-  const dueReview = await getDueReviewTopic(enabledInterestIds, interestById);
+  const dueReview = await getDueReviewTopic(progressInterestIds, interestById);
 
   const mentalModelOfTheDay = await getMentalModelOfTheDay(cycleId);
   const rabbitHoleOfTheDay = await getRabbitHoleOfTheDay(cycleId);
   const brainGamesList = await getBrainGamesIfEnabled();
+  const bookChaptersOfTheDay = await getBookChaptersOfTheDay(cycleId);
 
   return {
     cycleId: cycle.id,
@@ -333,7 +358,31 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
     mentalModelOfTheDay,
     rabbitHoleOfTheDay,
     brainGames: brainGamesList,
+    bookChaptersOfTheDay,
   };
+}
+
+/** One pointer card per book that surfaced chapter(s) this cycle — see
+ * BookChapterPointer. Chapters themselves render in Library, not here. */
+async function getBookChaptersOfTheDay(cycleId: number): Promise<BookChapterPointer[]> {
+  const rows = await db
+    .select({ chapter: bookChapters, book: books })
+    .from(bookChapters)
+    .innerJoin(books, eq(bookChapters.bookId, books.id))
+    .where(eq(bookChapters.digestId, cycleId))
+    .orderBy(asc(bookChapters.chapterNumber));
+
+  const byBook = new Map<number, BookChapterPointer>();
+  for (const { chapter, book } of rows) {
+    let entry = byBook.get(book.id);
+    if (!entry) {
+      entry = { bookId: book.id, bookTitle: book.title, chapterIds: [], chapterNumbers: [] };
+      byBook.set(book.id, entry);
+    }
+    entry.chapterIds.push(chapter.id);
+    entry.chapterNumbers.push(chapter.chapterNumber);
+  }
+  return [...byBook.values()];
 }
 
 async function getMentalModelOfTheDay(cycleId: number): Promise<MentalModelOfTheDay | null> {
@@ -346,25 +395,45 @@ async function getMentalModelOfTheDay(cycleId: number): Promise<MentalModelOfThe
   const row = rows[0];
   if (!row) return null;
 
-  let linkedIds: number[] = [];
+  // Phase 7 widened this from plain number[] (always an item) to
+  // {type, id}[] (item or book chapter) — a bare number in an older row
+  // means {type: "item", id: number}.
+  let rawRefs: unknown[] = [];
   try {
-    linkedIds = JSON.parse(row.usage.linkedItemIds);
+    rawRefs = JSON.parse(row.usage.linkedItemIds);
   } catch {
-    linkedIds = [];
+    rawRefs = [];
   }
+  const refs = rawRefs.map((r) =>
+    typeof r === "number" ? { type: "item" as const, id: r } : (r as { type: "item" | "chapter"; id: number })
+  );
+  const itemIds = refs.filter((r) => r.type === "item").map((r) => r.id);
+  const chapterIds = refs.filter((r) => r.type === "chapter").map((r) => r.id);
 
-  let linkedItems: { id: number; title: string; interestName: string }[] = [];
-  if (linkedIds.length > 0) {
+  const linkedItems: { id: number; title: string; interestName: string }[] = [];
+  if (itemIds.length > 0) {
     const itemRows = await db
       .select({ item: items, interest: interests })
       .from(items)
       .leftJoin(interests, eq(items.interestId, interests.id))
-      .where(inArray(items.id, linkedIds));
-    linkedItems = itemRows.map((r) => ({
-      id: r.item.id,
-      title: r.item.title,
-      interestName: r.interest?.name ?? "Unknown",
-    }));
+      .where(inArray(items.id, itemIds));
+    linkedItems.push(
+      ...itemRows.map((r) => ({ id: r.item.id, title: r.item.title, interestName: r.interest?.name ?? "Unknown" }))
+    );
+  }
+  if (chapterIds.length > 0) {
+    const chapterRows = await db
+      .select({ chapter: bookChapters, book: books })
+      .from(bookChapters)
+      .innerJoin(books, eq(bookChapters.bookId, books.id))
+      .where(inArray(bookChapters.id, chapterIds));
+    linkedItems.push(
+      ...chapterRows.map((r) => ({
+        id: r.chapter.id,
+        title: r.chapter.title,
+        interestName: `Library: ${r.book.title}`,
+      }))
+    );
   }
 
   return {
@@ -436,9 +505,10 @@ async function getDueReviewTopic(
 
   const nowSqlite = new Date().toISOString().slice(0, 19).replace("T", " ");
   const dueRows = await db
-    .select({ ct: coveredTopics, dive: deepDives })
+    .select({ ct: coveredTopics, dive: deepDives, chapter: bookChapters })
     .from(coveredTopics)
     .leftJoin(deepDives, eq(coveredTopics.deepDiveId, deepDives.id))
+    .leftJoin(bookChapters, eq(coveredTopics.chapterId, bookChapters.id))
     .where(
       and(
         inArray(coveredTopics.interestId, enabledInterestIds),
@@ -457,13 +527,20 @@ async function getDueReviewTopic(
     ? 0
     : Math.max(0, Math.round((Date.now() - coveredAt.getTime()) / 86400000));
 
+  const contentPreview = due.dive
+    ? previewOf(due.dive.content, 400)
+    : due.chapter?.summary
+      ? previewOf(due.chapter.summary, 400)
+      : "";
+
   return {
     coveredTopicId: due.ct.id,
     interestId: due.ct.interestId,
     interestName: interestById.get(due.ct.interestId)?.name ?? "Unknown",
     topic: due.ct.topic,
     deepDiveId: due.dive?.id ?? null,
-    contentPreview: due.dive ? previewOf(due.dive.content, 400) : "",
+    chapterId: due.chapter?.id ?? null,
+    contentPreview,
     coveredDaysAgo,
   };
 }
@@ -635,4 +712,149 @@ export async function updateAppSettings(update: { frequency?: "daily" | "weekly"
   if (typeof update.includeBrainGames === "boolean") patch.includeBrainGames = update.includeBrainGames;
   if (Object.keys(patch).length === 0) return;
   await db.update(settings).set(patch).where(eq(settings.id, 1));
+}
+
+// ---------------------------------------------------------------------------
+// Library (Phase 7) — read-side queries for the book list, table of
+// contents, and chapter notebook views.
+// ---------------------------------------------------------------------------
+
+export interface BookListEntry {
+  id: number;
+  title: string;
+  author: string | null;
+  status: BookStatus;
+  errorMessage: string | null;
+  totalChapters: number;
+  chaptersProcessed: number; // have content generated, regardless of surfaced yet
+  chaptersSurfaced: number;
+  paceChaptersPerCycle: number;
+  uploadDate: string;
+}
+
+/** Every uploaded book, newest first, with processing/drip-feed progress —
+ * for the Library page's list. */
+export async function getLibraryBooks(): Promise<BookListEntry[]> {
+  const rows = await db.select().from(books).orderBy(desc(books.uploadDate));
+  const out: BookListEntry[] = [];
+  for (const b of rows) {
+    const chapterRows = await db
+      .select({ summary: bookChapters.summary, status: bookChapters.status })
+      .from(bookChapters)
+      .where(eq(bookChapters.bookId, b.id));
+    out.push({
+      id: b.id,
+      title: b.title,
+      author: b.author,
+      status: b.status,
+      errorMessage: b.errorMessage,
+      totalChapters: b.totalChapters,
+      chaptersProcessed: chapterRows.filter((c) => c.summary != null).length,
+      chaptersSurfaced: chapterRows.filter((c) => c.status === "surfaced").length,
+      paceChaptersPerCycle: b.paceChaptersPerCycle,
+      uploadDate: b.uploadDate,
+    });
+  }
+  return out;
+}
+
+export interface BookChapterListEntry {
+  id: number;
+  chapterNumber: number;
+  title: string;
+  status: "pending" | "surfaced";
+  hasContent: boolean; // content generated, regardless of surfaced yet
+}
+
+export interface BookDetail {
+  id: number;
+  title: string;
+  author: string | null;
+  status: BookStatus;
+  errorMessage: string | null;
+  totalChapters: number;
+  paceChaptersPerCycle: number;
+  chapters: BookChapterListEntry[];
+}
+
+/** One book's full table of contents — the Library always shows every
+ * chapter, surfaced or not, so the reader can jump ahead or reread any time. */
+export async function getBookById(id: number): Promise<BookDetail | null> {
+  const rows = await db.select().from(books).where(eq(books.id, id)).limit(1);
+  const book = rows[0];
+  if (!book) return null;
+
+  const chapterRows = await db
+    .select()
+    .from(bookChapters)
+    .where(eq(bookChapters.bookId, id))
+    .orderBy(asc(bookChapters.chapterNumber));
+
+  return {
+    id: book.id,
+    title: book.title,
+    author: book.author,
+    status: book.status,
+    errorMessage: book.errorMessage,
+    totalChapters: book.totalChapters,
+    paceChaptersPerCycle: book.paceChaptersPerCycle,
+    chapters: chapterRows.map((c) => ({
+      id: c.id,
+      chapterNumber: c.chapterNumber,
+      title: c.title,
+      status: c.status,
+      hasContent: c.summary != null,
+    })),
+  };
+}
+
+export interface ChapterDetail {
+  id: number;
+  bookId: number;
+  bookTitle: string;
+  chapterNumber: number;
+  title: string;
+  summary: string | null;
+  keyConcepts: { term: string; definition: string }[];
+  notableArguments: string[];
+  quotes: string[];
+  explainBacks: ExplainBackEntry[];
+}
+
+/** One chapter's full notebook entry — the "read it in Library" destination
+ * for the main feed's pointer card, and for jumping ahead from the table of
+ * contents. Null if the chapter's content hasn't been generated yet. */
+export async function getChapterById(id: number): Promise<ChapterDetail | null> {
+  const rows = await db
+    .select({ chapter: bookChapters, book: books })
+    .from(bookChapters)
+    .innerJoin(books, eq(bookChapters.bookId, books.id))
+    .where(eq(bookChapters.id, id))
+    .limit(1);
+  const row = rows[0];
+  if (!row || row.chapter.summary == null) return null;
+
+  const explainBackRows = await db
+    .select()
+    .from(explainBacks)
+    .where(eq(explainBacks.chapterId, id))
+    .orderBy(desc(explainBacks.createdAt));
+
+  return {
+    id: row.chapter.id,
+    bookId: row.book.id,
+    bookTitle: row.book.title,
+    chapterNumber: row.chapter.chapterNumber,
+    title: row.chapter.title,
+    summary: row.chapter.summary,
+    keyConcepts: parseJsonArray(row.chapter.keyConcepts),
+    notableArguments: parseJsonArray(row.chapter.notableArguments),
+    quotes: parseJsonArray(row.chapter.quotes),
+    explainBacks: explainBackRows.map((r) => ({
+      id: r.id,
+      userExplanation: r.userExplanation,
+      feedback: r.feedback,
+      createdAt: r.createdAt,
+    })),
+  };
 }

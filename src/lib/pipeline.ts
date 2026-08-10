@@ -10,6 +10,8 @@ import {
   mentalModels,
   modelUsage,
   rabbitHoles,
+  books,
+  bookChapters,
 } from "@/db/schema";
 import type { Category, Level } from "@/db/schema";
 import { bumpLevel } from "@/db/schema";
@@ -38,6 +40,8 @@ import {
   getInterestBySlug,
   getCoveredTopics,
   addCoveredTopic,
+  addCoveredTopicFromChapter,
+  getOrCreateLibraryInterest,
 } from "./interests";
 import type { InterestWithConfig } from "./interests";
 import type { RawItem, ProcessedItem } from "./types";
@@ -74,6 +78,11 @@ const STEELMAN_CANDIDATE_POOL = 8;
 // Rabbit Hole: how many recently-shown topic areas to avoid repeating.
 const RABBIT_HOLE_AVOID_LOOKBACK = 20;
 
+// Phase 7 (Library) — modelUsage.linkedItemIds entry shape. Widened from
+// Phase 6's plain number[] to also reference a book chapter, not just a
+// News item.
+type LinkedItemRef = { type: "item" | "chapter"; id: number };
+
 export interface PipelineResult {
   cycleId: number;
   newsAdded: number;
@@ -82,6 +91,7 @@ export interface PipelineResult {
   drillsAdded: number;
   mentalModelAdded: boolean;
   rabbitHoleAdded: boolean;
+  chaptersSurfaced: number;
   fetchedCount: number;
   usedClaude: boolean;
   newBrainFacts: number;
@@ -364,6 +374,35 @@ export async function submitExplainBack(deepDiveId: number, userExplanation: str
   const inserted = await db
     .insert(explainBacks)
     .values({ deepDiveId, userExplanation: trimmed, feedback })
+    .returning({ id: explainBacks.id });
+
+  return { id: inserted[0].id, feedback };
+}
+
+/** Same as submitExplainBack, but for a Library book chapter's notebook
+ * entry instead of a deep dive — the chapter's summary stands in for the
+ * "original content", and there's no essay-prompt variant (chapters always
+ * use the default "explain this back" framing). */
+export async function submitChapterExplainBack(chapterId: number, userExplanation: string): Promise<ExplainBackResult | null> {
+  if (!hasClaudeKey()) return null;
+  const trimmed = userExplanation.trim();
+  if (!trimmed) return null;
+
+  const chapterRows = await db.select().from(bookChapters).where(eq(bookChapters.id, chapterId)).limit(1);
+  const chapter = chapterRows[0];
+  if (!chapter || !chapter.summary) return null;
+
+  const feedback = await generateExplainBackFeedback(
+    chapter.title,
+    chapter.summary,
+    "Explain this chapter back in your own words.",
+    trimmed
+  );
+  if (!feedback) return null;
+
+  const inserted = await db
+    .insert(explainBacks)
+    .values({ chapterId, userExplanation: trimmed, feedback })
     .returning({ id: explainBacks.id });
 
   return { id: inserted[0].id, feedback };
@@ -681,8 +720,9 @@ export async function refreshMentalModelForCycle(): Promise<boolean> {
   const existing = await db.select({ id: modelUsage.id }).from(modelUsage).where(eq(modelUsage.digestId, cycleId)).limit(1);
   if (existing.length > 0) return false;
 
+  // Not gated on enabledInterests.length: a Library book's chapters (below)
+  // are eligible candidates independent of whether any interest is enabled.
   const enabledInterests = await getEnabledInterests();
-  if (enabledInterests.length === 0) return false;
   const interestNameById = new Map(enabledInterests.map((i) => [i.id, i.name]));
 
   const itemRows = await db
@@ -691,15 +731,38 @@ export async function refreshMentalModelForCycle(): Promise<boolean> {
     .where(eq(items.digestId, cycleId))
     .orderBy(desc(items.score))
     .limit(MENTAL_MODEL_ITEM_CANDIDATES);
-  const candidates = itemRows
+  const itemCandidates = itemRows
     .filter((r) => r.interestId != null && interestNameById.has(r.interestId))
-    .map((r, idx) => ({
-      index: idx + 1,
+    .map((r) => ({
       title: r.title,
       summary: r.summary,
       interestName: interestNameById.get(r.interestId!)!,
-      itemId: r.id,
+      ref: { type: "item" as const, id: r.id },
     }));
+
+  // Library chapters surfaced THIS cycle are eligible too, same as any
+  // interest content — see refreshBookChapterForCycle, which runs before
+  // this step (both are called from the same cycle-steps sequence).
+  const chapterRows = await db
+    .select({ id: bookChapters.id, title: bookChapters.title, summary: bookChapters.summary, bookId: bookChapters.bookId })
+    .from(bookChapters)
+    .where(and(eq(bookChapters.digestId, cycleId), isNotNull(bookChapters.summary)));
+  const bookTitleById = new Map<number, string>();
+  for (const row of chapterRows) {
+    if (!bookTitleById.has(row.bookId)) {
+      const b = await db.select({ title: books.title }).from(books).where(eq(books.id, row.bookId)).limit(1);
+      bookTitleById.set(row.bookId, b[0]?.title ?? "Library book");
+    }
+  }
+  const chapterCandidates = chapterRows.map((r) => ({
+    title: r.title,
+    summary: r.summary ?? "",
+    interestName: `Library: ${bookTitleById.get(r.bookId) ?? "book"}`,
+    ref: { type: "chapter" as const, id: r.id },
+  }));
+
+  const merged = [...itemCandidates, ...chapterCandidates];
+  const candidates = merged.map((c, idx) => ({ index: idx + 1, ...c }));
   if (candidates.length === 0) return false;
 
   // Recently-used models (by most recent dateUsed), excluded from selection
@@ -732,9 +795,9 @@ export async function refreshMentalModelForCycle(): Promise<boolean> {
       );
       if (!lens) continue;
 
-      const linkedItemIds = lens.usedIndexes
-        .map((i) => candidates.find((c) => c.index === i)?.itemId)
-        .filter((id): id is number => id != null);
+      const linkedItemIds: LinkedItemRef[] = lens.usedIndexes
+        .map((i) => candidates.find((c) => c.index === i)?.ref)
+        .filter((ref): ref is LinkedItemRef => ref != null);
       if (linkedItemIds.length === 0) continue;
 
       await db.insert(modelUsage).values({
@@ -790,6 +853,105 @@ export async function refreshRabbitHoleForCycle(): Promise<boolean> {
     console.error("[pipeline] Rabbit hole generation failed:", err);
     return false;
   }
+}
+
+export interface BookChapterStepResult {
+  chaptersSurfaced: number;
+}
+
+/**
+ * Cycle-level Library drip-feed step: for every "ready" book, surfaces its
+ * next pace_chapters_per_cycle pending chapters this cycle (idempotent —
+ * tops up to the pace target, so a retry never surfaces extras), then for
+ * each newly-surfaced chapter: logs its key concepts into covered_topics
+ * under that book's hidden pseudo-interest (feeding the existing spaced-
+ * resurfacing system) and attempts one grounded drill from its
+ * notable_arguments (reusing Phase 5's generateGroundedDrill, same
+ * "decline rather than force" contract). Processing (Claude reading the
+ * PDF) already happened at upload time — this step only governs *when* an
+ * already-written chapter becomes visible.
+ */
+export async function refreshBookChapterForCycle(): Promise<BookChapterStepResult> {
+  const cycleId = await getOrCreateCurrentCycleId();
+  const readyBooks = await db.select().from(books).where(eq(books.status, "ready"));
+  if (readyBooks.length === 0) return { chaptersSurfaced: 0 };
+
+  let chaptersSurfaced = 0;
+  for (const book of readyBooks) {
+    try {
+      const alreadyThisCycle = await db
+        .select({ id: bookChapters.id })
+        .from(bookChapters)
+        .where(and(eq(bookChapters.bookId, book.id), eq(bookChapters.digestId, cycleId)));
+      const needed = book.paceChaptersPerCycle - alreadyThisCycle.length;
+      if (needed <= 0) continue;
+
+      const pending = await db
+        .select()
+        .from(bookChapters)
+        .where(and(eq(bookChapters.bookId, book.id), eq(bookChapters.status, "pending"), isNotNull(bookChapters.summary)))
+        .orderBy(bookChapters.chapterNumber)
+        .limit(needed);
+      if (pending.length === 0) continue;
+
+      const libraryInterest = await getOrCreateLibraryInterest(book.id, book.title);
+
+      for (const chapter of pending) {
+        await db
+          .update(bookChapters)
+          .set({ status: "surfaced", digestId: cycleId })
+          .where(eq(bookChapters.id, chapter.id));
+        chaptersSurfaced++;
+
+        let keyConcepts: { term: string; definition: string }[] = [];
+        let notableArguments: string[] = [];
+        try {
+          keyConcepts = JSON.parse(chapter.keyConcepts);
+        } catch {
+          keyConcepts = [];
+        }
+        try {
+          notableArguments = JSON.parse(chapter.notableArguments);
+        } catch {
+          notableArguments = [];
+        }
+
+        for (const concept of keyConcepts) {
+          await addCoveredTopicFromChapter(libraryInterest.id, concept.term, chapter.id).catch((err) => {
+            console.error(`[pipeline] Covered-topic logging failed for chapter #${chapter.id}:`, err);
+          });
+        }
+
+        if (notableArguments.length > 0 && chapter.summary) {
+          try {
+            const groundingContent = `${chapter.summary}\n\nArguments this chapter makes:\n${notableArguments
+              .map((a) => `- ${a}`)
+              .join("\n")}`;
+            const drillResult = await generateGroundedDrill(libraryInterest.name, chapter.title, groundingContent);
+            if (drillResult) {
+              await db.insert(drills).values({
+                interestId: libraryInterest.id,
+                sourceChapterId: chapter.id,
+                drillType: drillResult.drillType,
+                promptContent: drillResult.promptContent,
+                options: JSON.stringify(drillResult.options),
+                correctOption: drillResult.correctOption,
+                explanation: drillResult.explanation,
+                conceptLabel: drillResult.conceptLabel,
+                digestId: cycleId,
+              });
+            }
+          } catch (err) {
+            console.error(`[pipeline] Chapter-grounded drill failed for chapter #${chapter.id}:`, err);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`[pipeline] Book chapter drip-feed failed for book #${book.id}:`, err);
+    }
+  }
+
+  return { chaptersSurfaced };
 }
 
 /**
@@ -862,6 +1024,12 @@ export async function runDigestPipeline(): Promise<PipelineResult> {
   const enabledInterests = await getEnabledInterests();
 
   if (enabledInterests.length === 0) {
+    // Library books are read independently of the interests system — still
+    // drip-feed a chapter even if the reader has no interests enabled.
+    const bookChapterResult = await refreshBookChapterForCycle().catch((err) => {
+      console.error("[pipeline] Book chapter drip-feed step failed:", err);
+      return { chaptersSurfaced: 0 };
+    });
     return {
       cycleId,
       newsAdded: 0,
@@ -870,6 +1038,7 @@ export async function runDigestPipeline(): Promise<PipelineResult> {
       drillsAdded: 0,
       mentalModelAdded: false,
       rabbitHoleAdded: false,
+      chaptersSurfaced: bookChapterResult.chaptersSurfaced,
       fetchedCount: 0,
       usedClaude: hasClaudeKey(),
       newBrainFacts: 0,
@@ -882,7 +1051,13 @@ export async function runDigestPipeline(): Promise<PipelineResult> {
   // Drills and Mental Model both scan across ALL interests' fresh content,
   // so they run once, after every interest's News/Deep Dive/Applied Insight
   // steps above have settled. Rabbit Hole doesn't depend on that content
-  // but is cycle-level too, so it runs alongside them.
+  // but is cycle-level too, so it runs alongside them. Book chapters run
+  // BEFORE Mental Model specifically, since a chapter surfaced this cycle
+  // is only eligible as a lens candidate once it's actually surfaced.
+  const bookChapterResult = await refreshBookChapterForCycle().catch((err) => {
+    console.error("[pipeline] Book chapter drip-feed step failed:", err);
+    return { chaptersSurfaced: 0 };
+  });
   const drillsResult = await refreshDrillsForCycle().catch((err) => {
     console.error("[pipeline] Drills step failed:", err);
     return { groundedAdded: 0, standaloneAdded: false };
@@ -909,6 +1084,7 @@ export async function runDigestPipeline(): Promise<PipelineResult> {
     drillsAdded: drillsResult.groundedAdded + (drillsResult.standaloneAdded ? 1 : 0),
     mentalModelAdded,
     rabbitHoleAdded,
+    chaptersSurfaced: bookChapterResult.chaptersSurfaced,
     fetchedCount: results.reduce((sum, r) => sum + r.fetched, 0),
     usedClaude: hasClaudeKey(),
     newBrainFacts,

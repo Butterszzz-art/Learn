@@ -4,7 +4,9 @@ import { InterestPicker } from "@/components/InterestPicker";
 export const dynamic = "force-dynamic";
 
 export default async function OnboardingPage() {
-  const interests = await getAllInterests();
+  // Library books get a hidden pseudo-interest (see getOrCreateLibraryInterest)
+  // purely for spaced-resurfacing plumbing — never shown as a pickable interest.
+  const interests = (await getAllInterests()).filter((i) => !i.isLibraryBook);
 
   return (
     <div>

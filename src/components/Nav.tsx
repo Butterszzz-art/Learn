@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 // Home is the logo/wordmark itself — no separate "Home" nav item duplicating it.
 const LINKS = [
+  { href: "/library", label: "Library" },
   { href: "/archive", label: "Archive" },
   { href: "/settings", label: "Settings" },
 ];
