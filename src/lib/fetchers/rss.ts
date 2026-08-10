@@ -1,6 +1,7 @@
 import { XMLParser } from "fast-xml-parser";
 import type { RawItem } from "../types";
 import type { SourceType } from "@/db/schema";
+import { decodeEntities } from "../htmlEntities";
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -16,15 +17,9 @@ const parser = new XMLParser({
 
 function stripHtml(input: string | undefined | null): string {
   if (!input) return "";
-  return input
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#0?39;/g, "'")
+  return decodeEntities(
+    input.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1").replace(/<[^>]+>/g, " ")
+  )
     .replace(/\s+/g, " ")
     .trim();
 }

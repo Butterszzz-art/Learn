@@ -9,6 +9,8 @@
 // extractor isn't needed since Claude does the actual reading; this just
 // needs to hand it real article text instead of boilerplate.
 
+import { decodeEntities } from "./htmlEntities";
+
 const FETCH_TIMEOUT_MS = 12_000;
 const MAX_HTML_CHARS = 500_000; // safety cap before regex processing
 const MAX_EXTRACTED_CHARS = 6000;
@@ -25,33 +27,6 @@ function stripBlocks(html: string, tags: string[]): string {
     out = out.replace(new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, "gi"), " ");
   }
   return out;
-}
-
-function decodeEntities(input: string): string {
-  return input
-    .replace(/&nbsp;/g, " ")
-    .replace(/&quot;/g, '"')
-    .replace(/&mdash;/g, "—")
-    .replace(/&ndash;/g, "–")
-    .replace(/&rsquo;/g, "’")
-    .replace(/&lsquo;/g, "‘")
-    .replace(/&rdquo;/g, "”")
-    .replace(/&ldquo;/g, "“")
-    .replace(/&hellip;/g, "…")
-    // Numeric character references (&#8220; and &#x2018; forms) — real-world
-    // sites (WordPress in particular) lean on these heavily for curly
-    // quotes/ampersands/dashes rather than named entities, so a fixed list
-    // alone leaves a lot of `&#8220;`-style junk in the extracted text.
-    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
-    // &amp;/&lt;/&gt; last — decoding &amp; earlier would turn a literal
-    // "&amp;lt;" into "&lt;" and then wrongly decode it to "<" on a second
-    // pass; there is no second pass here, but keeping this order is the
-    // standard safe convention (browsers decode &amp; last too).
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&#0?39;/g, "'")
-    .replace(/&amp;/g, "&");
 }
 
 function htmlToText(html: string): string {
