@@ -26,6 +26,17 @@ No hosting, no email, no account required.
   yourself — gets a Claude-generated **Field News Roundup** instead: 3-5
   real, current, web-search-verified developments, each with a genuine
   source link, summarized in the app's own words.
+- **Real abstracts, not blurbs**: News summaries are a genuine ~120-200 word
+  abstract — substantial enough to learn the actual finding from the card
+  itself, real numbers/statistics/effect sizes carried over when the source
+  gives them, always in the app's own phrasing. Academic sources (PubMed,
+  arXiv, bioRxiv) already return a real structured abstract, so that's
+  summarized directly; everything else (RSS-sourced journalism and
+  web-search-grounded Field News Roundup items) has its linked article page
+  fetched and its main text extracted first, since the RSS snippet alone is
+  too thin to build a real summary from. A "Read source" link to the
+  original always follows. Falls back gracefully to a short snippet if a
+  page fetch or the summarization call fails.
 - **Deep dives**: once per digest cycle, per enabled interest, Claude — with
   the `web_search` tool — writes one genuinely thorough, several-hundred-word
   explainer on the next logical syllabus topic, grounded in real current

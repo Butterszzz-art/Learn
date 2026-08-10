@@ -68,6 +68,9 @@ export async function fetchPubMed(days = 3, retmax = 25): Promise<RawItem[]> {
         publishedAt: normalizePubDate(pubDateRaw),
         sourceName: "PubMed",
         sourceType: "academic",
+        // A real structured abstract from efetch — see hasFullAbstract's
+        // doc comment in types.ts.
+        hasFullAbstract: true,
       });
     }
     return items;
@@ -109,7 +112,10 @@ async function fetchAbstracts(ids: string[]): Promise<Map<string, string>> {
         .replace(/&gt;/g, ">")
         .replace(/\s+/g, " ")
         .trim();
-      if (abstract) map.set(pmid, abstract.slice(0, 800));
+      // Phase 10: raised from 800 — News summaries now write a thorough
+      // ~120-200 word abstract-style summary and need the real abstract's
+      // full substance, not a truncated fragment of it.
+      if (abstract) map.set(pmid, abstract.slice(0, 3000));
     }
   } catch (err) {
     console.error("[pubmed] efetch error:", err);

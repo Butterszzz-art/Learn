@@ -62,6 +62,19 @@ export async function classifyAndSummarizeBatch(
   return results;
 }
 
+// Phase 10: News summaries widened from a 2-3 sentence blurb to a genuine
+// abstract-style summary — substantial enough to learn the actual finding
+// from the card itself. Applies uniformly to every News source; what
+// differs per source is the *input* text (a real structured abstract for
+// academic sources, a fetched-and-extracted article page for everything
+// else — see buildSummaryTexts in pipeline.ts), not this target.
+const SUMMARY_LENGTH_INSTRUCTION =
+  "A thorough abstract-style summary, roughly 120-200 words, written in your own words — cover " +
+  "what was studied (and methodology/sample size, if given), the key findings, and why it matters. " +
+  "Carry over real numbers, statistics, effect sizes, and percentages from the source when present " +
+  "— factual data points are expected and fine to include. What must be original is the phrasing " +
+  "and structure: never mirror the source text's sentence structure, and never lift phrases from it.";
+
 async function classifyChunk(
   anthropic: Anthropic,
   chunk: RawItem[]
@@ -70,12 +83,12 @@ async function classifyChunk(
     index: i,
     title: item.title,
     source: item.sourceName,
-    text: (item.snippet || "").slice(0, 1200),
+    text: (item.snippet || "").slice(0, 6000),
   }));
 
   const response = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 4096,
+    max_tokens: 8192,
     output_config: {
       format: {
         type: "json_schema",
@@ -91,8 +104,7 @@ async function classifyChunk(
                   category: { type: "string", enum: [...CATEGORIES] },
                   summary: {
                     type: "string",
-                    description:
-                      "A 2-3 sentence plain-language summary written in the app's own words, never copied verbatim from the source text.",
+                    description: SUMMARY_LENGTH_INSTRUCTION,
                   },
                 },
                 required: ["index", "category", "summary"],
@@ -110,8 +122,10 @@ async function classifyChunk(
         role: "user",
         content:
           "You are helping compile a personal neuroscience news digest. For each item below, " +
-          "classify it into exactly one category and write a plain-language 2-3 sentence summary " +
-          "in your own words (never copy sentences verbatim from the provided text).\n\n" +
+          "classify it into exactly one category and write a summary in your own words. " +
+          `${SUMMARY_LENGTH_INSTRUCTION} The provided text may be a real abstract, or text ` +
+          "auto-extracted from a webpage that can still contain some navigation/boilerplate — " +
+          "focus only on the actual article content.\n\n" +
           `Categories: ${CATEGORIES.join(" | ")}\n\n` +
           "Items:\n" +
           JSON.stringify(itemsForPrompt, null, 2),
@@ -135,8 +149,9 @@ async function classifyChunk(
 }
 
 /**
- * Plain 2-3 sentence summarization for interests that don't use the fixed
- * neuroscience category taxonomy — every interest other than Neuroscience.
+ * Abstract-style summarization (see SUMMARY_LENGTH_INSTRUCTION) for
+ * interests that don't use the fixed neuroscience category taxonomy —
+ * every interest other than Neuroscience, plus Field News Roundup items.
  * Same batching/fallback contract as classifyAndSummarizeBatch: returns an
  * empty map on no-key or failure, caller falls back to a truncated snippet.
  */
@@ -168,12 +183,12 @@ async function summarizeChunk(anthropic: Anthropic, chunk: RawItem[]): Promise<M
     index: i,
     title: item.title,
     source: item.sourceName,
-    text: (item.snippet || "").slice(0, 1200),
+    text: (item.snippet || "").slice(0, 6000),
   }));
 
   const response = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 4096,
+    max_tokens: 8192,
     output_config: {
       format: {
         type: "json_schema",
@@ -188,8 +203,7 @@ async function summarizeChunk(anthropic: Anthropic, chunk: RawItem[]): Promise<M
                   index: { type: "integer" },
                   summary: {
                     type: "string",
-                    description:
-                      "A 2-3 sentence plain-language summary written in the app's own words, never copied verbatim from the source text.",
+                    description: SUMMARY_LENGTH_INSTRUCTION,
                   },
                 },
                 required: ["index", "summary"],
@@ -207,8 +221,9 @@ async function summarizeChunk(anthropic: Anthropic, chunk: RawItem[]): Promise<M
         role: "user",
         content:
           "You are helping compile a personal knowledge digest. For each item below, write a " +
-          "plain-language 2-3 sentence summary in your own words (never copy sentences verbatim " +
-          "from the provided text).\n\nItems:\n" +
+          `summary in your own words. ${SUMMARY_LENGTH_INSTRUCTION} The provided text may be a ` +
+          "real abstract, or text auto-extracted from a webpage that can still contain some " +
+          "navigation/boilerplate — focus only on the actual article content.\n\nItems:\n" +
           JSON.stringify(itemsForPrompt, null, 2),
       },
     ],

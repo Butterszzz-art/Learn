@@ -72,11 +72,17 @@ export async function queryArxiv(searchQuery: string, maxResults: number): Promi
     items.push({
       title,
       authors: authors || undefined,
-      snippet: summary.slice(0, 800),
+      // Phase 10: raised from 800 — the real abstract's full substance is
+      // needed now that News summaries target ~120-200 words, not a
+      // truncated fragment of it.
+      snippet: summary.slice(0, 3000),
       url: link,
       publishedAt: published,
       sourceName: "arXiv",
       sourceType: "academic",
+      // A real structured abstract from arXiv's API — see hasFullAbstract's
+      // doc comment in types.ts.
+      hasFullAbstract: true,
     });
   }
   return items;

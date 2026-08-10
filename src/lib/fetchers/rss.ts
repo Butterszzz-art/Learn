@@ -59,9 +59,9 @@ export async function fetchRssFeed(
   url: string,
   sourceName: string,
   sourceType: SourceType = "journalism",
-  opts: { timeoutMs?: number; maxItems?: number } = {}
+  opts: { timeoutMs?: number; maxItems?: number; snippetMaxChars?: number } = {}
 ): Promise<RawItem[]> {
-  const { timeoutMs = 15000, maxItems = 30 } = opts;
+  const { timeoutMs = 15000, maxItems = 30, snippetMaxChars = 500 } = opts;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -112,7 +112,7 @@ export async function fetchRssFeed(
     if (!title || !link) continue;
     items.push({
       title,
-      snippet: truncate(description),
+      snippet: truncate(description, snippetMaxChars),
       url: link,
       publishedAt: normalizeDate(pubDate),
       sourceName,
@@ -134,7 +134,7 @@ export async function fetchRssFeed(
     if (!title || !link) continue;
     items.push({
       title,
-      snippet: truncate(description),
+      snippet: truncate(description, snippetMaxChars),
       url: link,
       publishedAt: normalizeDate(pubDate),
       sourceName,

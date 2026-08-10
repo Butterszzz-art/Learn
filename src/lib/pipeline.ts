@@ -21,6 +21,7 @@ import { generateFieldNewsRoundup } from "./newsRoundup";
 import { dedupeItems, dedupeKeyFor } from "./dedupe";
 import { categorizeByKeywords } from "./categorize";
 import { classifyAndSummarizeBatch, summarizeBatch, hasClaudeKey } from "./claude";
+import { fetchArticleText } from "./articleFetch";
 import {
   generateDeepDive,
   generateAppliedInsight,
@@ -123,6 +124,33 @@ function cleanSummary(summary: string | undefined | null, fallbackSnippet: strin
     return truncateSnippet(fallbackSnippet) || "No summary available yet — check the source directly.";
   }
   return s;
+}
+
+/**
+ * Phase 10: builds the text actually fed to Claude for each item's News
+ * summary. Sources with a real structured abstract (hasFullAbstract —
+ * PubMed, arXiv, bioRxiv) use that abstract directly, already substantial
+ * enough. Everything else — plain RSS feeds (including NBER's, which is
+ * tagged sourceType "academic" but has no real abstract) and web-search-
+ * grounded Field News Roundup items — gets its linked article page fetched
+ * and its main text extracted first, since the raw snippet alone is too
+ * thin to build a genuine abstract-style summary from. Falls back to the
+ * item's original snippet on any fetch/extraction failure — one flaky page
+ * should never block the whole News refresh.
+ */
+async function buildSummaryTexts(items: RawItem[]): Promise<string[]> {
+  return Promise.all(
+    items.map(async (item) => {
+      if (item.hasFullAbstract) return item.snippet;
+      try {
+        const fetched = await fetchArticleText(item.url);
+        return fetched ?? item.snippet;
+      } catch (err) {
+        console.error(`[pipeline] Article fetch failed for "${item.title}":`, err);
+        return item.snippet;
+      }
+    })
+  );
 }
 
 async function getFrequency(): Promise<"daily" | "weekly"> {
@@ -1186,8 +1214,14 @@ async function runCuratedNews(
   // curated interest just gets a plain summary (no forced category).
   const isNeuro = interest.slug === "neuroscience";
   const items_ = candidates.map((c) => c.item);
-  const neuroResults = isNeuro ? await classifyAndSummarizeBatch(items_) : null;
-  const otherResults = isNeuro ? null : await summarizeBatch(items_);
+  // Phase 10: summarize from a real abstract or a fetched article page
+  // (see buildSummaryTexts), not the thin RSS/API snippet directly — the
+  // original items_ (and their short snippets) are untouched for
+  // scoring/rawSnippet/cleanSummary-fallback purposes below.
+  const summaryTexts = await buildSummaryTexts(items_);
+  const itemsForSummary = items_.map((item, i) => ({ ...item, snippet: summaryTexts[i] }));
+  const neuroResults = isNeuro ? await classifyAndSummarizeBatch(itemsForSummary) : null;
+  const otherResults = isNeuro ? null : await summarizeBatch(itemsForSummary);
 
   const processed: ProcessedItem[] = candidates.map(({ item, score }, idx) => {
     let category: Category | null = null;
@@ -1221,8 +1255,11 @@ const ROUNDUP_FOCUS_OVERRIDES: Record<string, string> = {
  * News for an interest with no registered fetcher (any custom interest,
  * Business/Political Science/Philosophy of Science, or Critical Thinking &
  * Argumentation): a Claude-generated, web-search-grounded Field News
- * Roundup. Items arrive already summarized in the app's own words, so —
- * unlike curated items — they skip the summarize step entirely.
+ * Roundup. Items arrive with a short 2-3 sentence summary from the roundup
+ * generation itself (see newsRoundup.ts) — Phase 10 fetches each item's
+ * real linked article page and re-summarizes from that fuller content into
+ * the same ~120-200 word abstract-style target as every other News source,
+ * falling back to the roundup's own inline summary if that fetch fails.
  */
 async function runRoundupNews(
   interest: InterestWithConfig,
@@ -1237,10 +1274,14 @@ async function runRoundupNews(
   const fresh = await filterFresh(rawItems);
   if (fresh.length === 0) return { added: 0, fetched: fetchedCount };
 
-  const processed: ProcessedItem[] = fresh.map((item) => ({
+  const summaryTexts = await buildSummaryTexts(fresh);
+  const itemsForSummary = fresh.map((item, i) => ({ ...item, snippet: summaryTexts[i] }));
+  const roundupResults = await summarizeBatch(itemsForSummary);
+
+  const processed: ProcessedItem[] = fresh.map((item, idx) => ({
     ...item,
     category: null,
-    summary: item.snippet, // already Claude-authored, in the app's own words — see newsRoundup.ts
+    summary: cleanSummary(roundupResults.get(idx), item.snippet),
     score: scoreItem(item),
     dedupeKey: dedupeKeyFor(item),
   }));
