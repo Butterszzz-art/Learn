@@ -140,6 +140,29 @@ export const deepDives = sqliteTable("deep_dives", {
   // JSON array of {question, options: string[4], correctIndex, explanation}.
   // Answers are never persisted — this is retrieval practice, not a quiz score.
   selfCheckQuestions: text("self_check_questions").notNull().default("[]"),
+  // Explain-it-back (Phase 6): normally null, meaning the reading view shows
+  // the default "explain this back in your own words" prompt. Occasionally
+  // (advanced/research_level interests, ~weekly) set to a real open
+  // question drawn from the interest's recent covered topics instead.
+  essayPrompt: text("essay_prompt"),
+});
+
+// ---------------------------------------------------------------------------
+// explainBacks (Phase 6) — retrieval practice via free-form writing, not
+// just multiple choice: the reader explains a deep dive back in their own
+// words (or answers an essayPrompt), and gets brief supportive feedback —
+// never a score or grade.
+// ---------------------------------------------------------------------------
+export const explainBacks = sqliteTable("explain_backs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  deepDiveId: integer("deep_dive_id")
+    .notNull()
+    .references(() => deepDives.id),
+  userExplanation: text("user_explanation").notNull(),
+  feedback: text("feedback").notNull(),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
 });
 
 // ---------------------------------------------------------------------------
@@ -193,6 +216,79 @@ export const drills = sqliteTable("drills", {
 });
 
 // ---------------------------------------------------------------------------
+// mentalModels (Phase 6) — a cross-cutting library of ~40 general-purpose
+// thinking tools, seeded once (mentalModelsSeed.ts), not tied to any
+// interest. modelUsage tracks which have been shown and to which content,
+// mirroring coveredTopics' no-repeat logic.
+// ---------------------------------------------------------------------------
+export const MENTAL_MODEL_CATEGORIES = ["probabilistic", "economic", "systems", "logic", "general"] as const;
+export type MentalModelCategory = (typeof MENTAL_MODEL_CATEGORIES)[number];
+
+export const mentalModels = sqliteTable("mental_models", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  category: text("category").$type<MentalModelCategory>().notNull(),
+  description: text("description").notNull(), // the model itself, explained — prompt context for the lens card
+});
+
+export const modelUsage = sqliteTable("model_usage", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  modelId: integer("model_id")
+    .notNull()
+    .references(() => mentalModels.id),
+  digestId: integer("digest_id").references(() => digests.id), // which cycle this "Mental Model of the Day" belongs to
+  dateUsed: text("date_used")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+  linkedItemIds: text("linked_item_ids").notNull().default("[]"), // JSON array of items.id
+  // The generated 2-3 sentence card connecting the model to today's items —
+  // not in the original spec's column list, but needed to store what was
+  // actually written (linkedItemIds alone is just references, no prose).
+  lensText: text("lens_text").notNull(),
+});
+
+// ---------------------------------------------------------------------------
+// rabbitHoles (Phase 6) — one item per cycle, deliberately OUTSIDE the
+// reader's active interests. Its own table (not `items`) since it has no
+// interestId, isn't part of any interest's News section, and carries an
+// extra topicArea field for the "add this as an interest" action.
+// ---------------------------------------------------------------------------
+export const rabbitHoles = sqliteTable("rabbit_holes", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  title: text("title").notNull(),
+  summary: text("summary").notNull(),
+  url: text("url").notNull(),
+  sourceName: text("source_name").notNull(),
+  topicArea: text("topic_area").notNull(), // e.g. "Volcanology" — the field this came from, and the suggested interest name
+  digestId: integer("digest_id").references(() => digests.id),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+});
+
+// ---------------------------------------------------------------------------
+// brainGames (Phase 6) — opt-in, clearly-separate "for fun" bank. Static/
+// randomized, seeded once (brainGamesSeed.ts) rather than generated fresh
+// every cycle, to keep API cost down — this is deliberately not another
+// subject to master, so it doesn't need topical grounding.
+// ---------------------------------------------------------------------------
+export const BRAIN_GAME_TYPES = [
+  "pattern_completion",
+  "working_memory_span",
+  "quick_math",
+  "mini_logic_puzzle",
+] as const;
+export type BrainGameType = (typeof BRAIN_GAME_TYPES)[number];
+
+export const brainGames = sqliteTable("brain_games", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  gameType: text("game_type").$type<BrainGameType>().notNull(),
+  content: text("content").notNull(), // the puzzle/question text shown to the reader
+  answer: text("answer").notNull(), // revealed on request — self-checked, nothing persisted
+  lastShownAt: text("last_shown_at"), // mirrors brainFacts' rotation pattern
+});
+
+// ---------------------------------------------------------------------------
 // items — every fetched article/preprint/paper, deduped, categorized, scored.
 // ---------------------------------------------------------------------------
 export const items = sqliteTable("items", {
@@ -216,6 +312,12 @@ export const items = sqliteTable("items", {
     .default(sql`(current_timestamp)`),
   score: real("score").notNull().default(0),
   digestId: integer("digest_id").references(() => digests.id),
+  // Steelman companion (Phase 6): the strongest good-faith counterargument
+  // to this item's actual thesis, web-search-grounded, in the app's own
+  // words. Null for most items — only generated when an item presents a
+  // genuine arguable thesis (skipped for purely descriptive/discovery
+  // news), and capped to ~1-2 per interest per cycle.
+  steelmanContent: text("steelman_content"),
 });
 
 // ---------------------------------------------------------------------------
@@ -257,4 +359,7 @@ export const settings = sqliteTable("settings", {
   mutedCategories: text("muted_categories").notNull().default("[]"), // JSON string array
   lastRefreshAt: text("last_refresh_at"),
   lastFactGenAt: text("last_fact_gen_at"), // when new candidate brain facts were last generated
+  // Brain Games (Phase 6): opt-in, off by default — deliberately not part
+  // of the interests system, since it's a "for fun" break, not a subject.
+  includeBrainGames: integer("include_brain_games", { mode: "boolean" }).notNull().default(false),
 });

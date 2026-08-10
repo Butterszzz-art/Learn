@@ -2,6 +2,7 @@ import { getAppSettings } from "@/lib/digest";
 import { getAllInterests } from "@/lib/interests";
 import { InterestPicker } from "@/components/InterestPicker";
 import { FrequencyForm } from "@/components/FrequencyForm";
+import { BrainGamesToggle } from "@/components/BrainGamesToggle";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,13 @@ export default async function SettingsPage() {
           Interests
         </h2>
         <InterestPicker initial={interests} mode="settings" />
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neuron-muted">
+          For fun
+        </h2>
+        <BrainGamesToggle initial={settings.includeBrainGames} />
       </section>
     </div>
   );

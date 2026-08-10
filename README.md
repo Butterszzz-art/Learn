@@ -74,6 +74,32 @@ No hosting, no email, no account required.
   material rather than repeating each other. Same instant-feedback,
   nothing-persisted UI as the self-check questions; drilled concepts feed
   into the same spaced-resurfacing system as deep-dive topics.
+- **Explain it back**: every deep dive ends with a box to explain it in
+  your own words (or, occasionally on advanced/research-level interests, a
+  real open essay question instead) — submit it and get brief, specific,
+  supportive feedback, never a score. Past attempts stay visible if you
+  want to try again.
+- **Mental Model of the Day**: once per cycle, one of ~40 general-purpose
+  thinking tools (base rates, opportunity cost, second-order effects,
+  Occam's razor, inversion, and more) gets connected concretely to one or
+  two of that day's actual items — ideally from different interests, so it
+  doesn't feel like a coincidence.
+- **Steelman companion**: for interests where argument is central
+  (Political Science, Economics, Philosophy, Critical Thinking &
+  Argumentation, and custom interests), qualifying News items — the ones
+  actually making an arguable claim, not discovery news — get a collapsed
+  "See the other side" toggle with the strongest good-faith counterargument,
+  web-search-grounded.
+- **Rabbit Hole of the Day**: once per cycle, one genuinely interesting,
+  current item from entirely outside your active interests — visually
+  distinct, clearly labeled, with a one-click "follow up on this" button
+  that adds it as a real interest if it hooks you.
+- **Brain Games**: opt-in (off by default, one settings toggle), fully
+  separate from the interests system — quick pattern/memory/math/logic
+  puzzles from a static bank, not freshly generated, with an honest note
+  that this style of game is a fun break, not a proven way to improve
+  general thinking — a different evidence tier than the content-grounded
+  Drills above.
 
 ---
 
@@ -82,9 +108,11 @@ No hosting, no email, no account required.
 ```bash
 cd neuro-digest
 npm install
-npm run db:migrate         # creates/updates the SQLite schema in ./data/neuro-digest.db
-npm run db:seed-interests  # loads the 9 seed interests
-npm run db:seed            # loads the curated brain-fact bank
+npm run db:migrate              # creates/updates the SQLite schema in ./data/neuro-digest.db
+npm run db:seed-interests       # loads the 17 seed interests
+npm run db:seed                 # loads the curated brain-fact bank
+npm run db:seed-mental-models   # loads the ~40 mental models
+npm run db:seed-brain-games     # loads the brain-games bank
 npm run dev
 ```
 

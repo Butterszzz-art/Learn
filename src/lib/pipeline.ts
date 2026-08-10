@@ -1,8 +1,19 @@
 import { db, client } from "@/db";
-import { digests, items, settings, deepDives, appliedInsights, drills } from "@/db/schema";
-import type { Category } from "@/db/schema";
+import {
+  digests,
+  items,
+  settings,
+  deepDives,
+  appliedInsights,
+  drills,
+  explainBacks,
+  mentalModels,
+  modelUsage,
+  rabbitHoles,
+} from "@/db/schema";
+import type { Category, Level } from "@/db/schema";
 import { bumpLevel } from "@/db/schema";
-import { eq, and, gte, desc, isNotNull } from "drizzle-orm";
+import { eq, and, gte, desc, isNotNull, isNull, notInArray } from "drizzle-orm";
 import { fetchForInterest } from "./fetchers/registry";
 import { generateFieldNewsRoundup } from "./newsRoundup";
 import { dedupeItems, dedupeKeyFor } from "./dedupe";
@@ -15,6 +26,10 @@ import {
   generateSelfCheckQuestions,
 } from "./deepDive";
 import { generateGroundedDrill, generateStandaloneLogicDrill } from "./drills";
+import { generateExplainBackFeedback, generateEssayPrompt } from "./explainBack";
+import { generateMentalModelLens } from "./mentalModelLens";
+import { generateSteelmans } from "./steelman";
+import { generateRabbitHole } from "./rabbitHole";
 import { scoreItem } from "./score";
 import { pickBrainFactOfTheDay, maybeGenerateWeeklyFacts } from "./brainFact";
 import {
@@ -39,12 +54,34 @@ const GROUNDED_DRILL_TARGET = 2;
 const GROUNDED_DRILL_LOOKBACK_DAYS = 4;
 const GROUNDED_DRILL_MAX_CANDIDATES = 5; // bounds Claude calls even with a large recent-dive pool
 
+// Phase 6 constants.
+// Explain-it-back: for advanced/research_level interests, roughly 1 in 7
+// deep dives gets a real essay-style open question instead of the default
+// "explain this back" prompt — matches the spec's "roughly weekly" for a
+// daily cycle without needing extra state to track elapsed time.
+const ESSAY_PROMPT_CHANCE = 1 / 7;
+const ESSAY_PROMPT_LEVELS: Level[] = ["advanced", "research_level"];
+// Mental Model of the Day: how many recent usages to look back on when
+// picking an unused-recently model, and how many of today's items to offer
+// as candidates for the lens to connect to.
+const MODEL_USAGE_LOOKBACK = 15;
+const MENTAL_MODEL_ITEM_CANDIDATES = 12;
+// Steelman: only for interests where argument is central, capped per cycle
+// to control API cost (each generation call uses web_search).
+const STEELMAN_ELIGIBLE_SLUGS = new Set(["political-science", "economics", "philosophy", "critical-thinking"]);
+const STEELMAN_TARGET_PER_INTEREST = 2;
+const STEELMAN_CANDIDATE_POOL = 8;
+// Rabbit Hole: how many recently-shown topic areas to avoid repeating.
+const RABBIT_HOLE_AVOID_LOOKBACK = 20;
+
 export interface PipelineResult {
   cycleId: number;
   newsAdded: number;
   deepDivesAdded: number;
   appliedInsightsAdded: number;
   drillsAdded: number;
+  mentalModelAdded: boolean;
+  rabbitHoleAdded: boolean;
   fetchedCount: number;
   usedClaude: boolean;
   newBrainFacts: number;
@@ -167,6 +204,14 @@ export async function refreshNewsForInterest(interestId: number): Promise<NewsSt
     await db.update(settings).set({ lastRefreshAt: new Date().toISOString() }).where(eq(settings.id, 1));
   }
 
+  // Steelman companion: only for argument-central interests, capped per
+  // cycle — see addSteelmansForInterest. Runs regardless of whether items
+  // were just added, since it self-tops-up (idempotent) against whatever
+  // this cycle already has.
+  await addSteelmansForInterest(interest, cycleId).catch((err) => {
+    console.error(`[pipeline] Steelman step failed for "${interest.name}":`, err);
+  });
+
   return { interestId, interestName: interest.name, ...result };
 }
 
@@ -203,7 +248,12 @@ async function generateAndPersistDeepDive(
   const result = await generateDeepDive(interest.name, level, covered, opts.forcedTopic);
   if (!result) return null;
 
-  const [followUps, selfCheck] = await Promise.all([
+  // Explain-it-back essay prompt: only for advanced/research_level
+  // interests, and only occasionally — see ESSAY_PROMPT_CHANCE. Uses the
+  // covered-topics list already fetched above.
+  const rollsEssayPrompt = ESSAY_PROMPT_LEVELS.includes(level) && Math.random() < ESSAY_PROMPT_CHANCE;
+
+  const [followUps, selfCheck, essayPrompt] = await Promise.all([
     generateFollowUpTopics(interest.name, result.topic, result.content).catch((err) => {
       console.error(`[pipeline] Follow-up generation failed for "${interest.name}":`, err);
       return [];
@@ -212,6 +262,12 @@ async function generateAndPersistDeepDive(
       console.error(`[pipeline] Self-check generation failed for "${interest.name}":`, err);
       return [];
     }),
+    rollsEssayPrompt
+      ? generateEssayPrompt(interest.name, [...covered.recent, result.topic]).catch((err) => {
+          console.error(`[pipeline] Essay prompt generation failed for "${interest.name}":`, err);
+          return null;
+        })
+      : Promise.resolve(null),
   ]);
 
   const inserted = await db
@@ -225,6 +281,7 @@ async function generateAndPersistDeepDive(
       digestId: cycleId,
       followUpTopics: JSON.stringify(followUps),
       selfCheckQuestions: JSON.stringify(selfCheck),
+      essayPrompt,
     })
     .returning({ id: deepDives.id });
 
@@ -278,6 +335,38 @@ export async function refreshDeepDiveForInterest(interestId: number): Promise<De
     console.error(`[pipeline] Deep dive failed for "${interest.name}":`, err);
     return { interestId, interestName: interest.name, added: false, topic: null };
   }
+}
+
+export interface ExplainBackResult {
+  id: number;
+  feedback: string;
+}
+
+/**
+ * Live, on-demand user action (not part of any refresh cycle): the reader
+ * submits their own-words explanation (or essay response) of a deep dive,
+ * Claude gives brief supportive feedback, and both are stored. Returns null
+ * if the dive doesn't exist, no key is configured, or generation fails.
+ */
+export async function submitExplainBack(deepDiveId: number, userExplanation: string): Promise<ExplainBackResult | null> {
+  if (!hasClaudeKey()) return null;
+  const trimmed = userExplanation.trim();
+  if (!trimmed) return null;
+
+  const diveRows = await db.select().from(deepDives).where(eq(deepDives.id, deepDiveId)).limit(1);
+  const dive = diveRows[0];
+  if (!dive) return null;
+
+  const prompt = dive.essayPrompt || "Explain this back in your own words.";
+  const feedback = await generateExplainBackFeedback(dive.topic, dive.content, prompt, trimmed);
+  if (!feedback) return null;
+
+  const inserted = await db
+    .insert(explainBacks)
+    .values({ deepDiveId, userExplanation: trimmed, feedback })
+    .returning({ id: explainBacks.id });
+
+  return { id: inserted[0].id, feedback };
 }
 
 export interface OnDemandDeepDiveResult {
@@ -578,6 +667,182 @@ async function addStandaloneLogicDrill(cycleId: number): Promise<boolean> {
   }
 }
 
+/**
+ * Cycle-level Mental Model of the Day step — picks one mental model not
+ * used recently, gathers today's fetched items across enabled interests,
+ * and asks Claude to connect the model to one or two of them concretely.
+ * Idempotent: no-ops if this cycle already has one. Declines (no row
+ * added) if nothing today fits any recently-unused model naturally.
+ */
+export async function refreshMentalModelForCycle(): Promise<boolean> {
+  if (!hasClaudeKey()) return false;
+
+  const cycleId = await getOrCreateCurrentCycleId();
+  const existing = await db.select({ id: modelUsage.id }).from(modelUsage).where(eq(modelUsage.digestId, cycleId)).limit(1);
+  if (existing.length > 0) return false;
+
+  const enabledInterests = await getEnabledInterests();
+  if (enabledInterests.length === 0) return false;
+  const interestNameById = new Map(enabledInterests.map((i) => [i.id, i.name]));
+
+  const itemRows = await db
+    .select({ id: items.id, title: items.title, summary: items.summary, interestId: items.interestId })
+    .from(items)
+    .where(eq(items.digestId, cycleId))
+    .orderBy(desc(items.score))
+    .limit(MENTAL_MODEL_ITEM_CANDIDATES);
+  const candidates = itemRows
+    .filter((r) => r.interestId != null && interestNameById.has(r.interestId))
+    .map((r, idx) => ({
+      index: idx + 1,
+      title: r.title,
+      summary: r.summary,
+      interestName: interestNameById.get(r.interestId!)!,
+      itemId: r.id,
+    }));
+  if (candidates.length === 0) return false;
+
+  // Recently-used models (by most recent dateUsed), excluded from selection
+  // so the feature doesn't repeat the same lens over and over.
+  const recentUsageRows = await db
+    .select({ modelId: modelUsage.modelId })
+    .from(modelUsage)
+    .orderBy(desc(modelUsage.dateUsed))
+    .limit(MODEL_USAGE_LOOKBACK);
+  const recentlyUsedIds = recentUsageRows.map((r) => r.modelId);
+
+  const availableModels =
+    recentlyUsedIds.length > 0
+      ? await db.select().from(mentalModels).where(notInArray(mentalModels.id, recentlyUsedIds))
+      : await db.select().from(mentalModels);
+  const pool = availableModels.length > 0 ? availableModels : await db.select().from(mentalModels);
+  if (pool.length === 0) return false;
+
+  // Try a few random models (not just one) in case the first pick doesn't
+  // cleanly apply to today's actual items — generateMentalModelLens
+  // declines rather than forcing a strained connection.
+  const shuffled = [...pool].sort(() => Math.random() - 0.5).slice(0, 3);
+
+  for (const model of shuffled) {
+    try {
+      const lens = await generateMentalModelLens(
+        model.name,
+        model.description,
+        candidates.map(({ index, title, summary, interestName }) => ({ index, title, summary, interestName }))
+      );
+      if (!lens) continue;
+
+      const linkedItemIds = lens.usedIndexes
+        .map((i) => candidates.find((c) => c.index === i)?.itemId)
+        .filter((id): id is number => id != null);
+      if (linkedItemIds.length === 0) continue;
+
+      await db.insert(modelUsage).values({
+        modelId: model.id,
+        digestId: cycleId,
+        linkedItemIds: JSON.stringify(linkedItemIds),
+        lensText: lens.lensText,
+      });
+      return true;
+    } catch (err) {
+      console.error(`[pipeline] Mental model lens failed for "${model.name}":`, err);
+    }
+  }
+  return false;
+}
+
+/**
+ * Cycle-level Rabbit Hole of the Day step — one item entirely outside the
+ * reader's active interests, via web search. Idempotent: no-ops if this
+ * cycle already has one.
+ */
+export async function refreshRabbitHoleForCycle(): Promise<boolean> {
+  if (!hasClaudeKey()) return false;
+
+  const cycleId = await getOrCreateCurrentCycleId();
+  const existing = await db.select({ id: rabbitHoles.id }).from(rabbitHoles).where(eq(rabbitHoles.digestId, cycleId)).limit(1);
+  if (existing.length > 0) return false;
+
+  const enabledInterests = await getEnabledInterests();
+  const activeNames = enabledInterests.map((i) => i.name);
+
+  const recentRows = await db
+    .select({ topicArea: rabbitHoles.topicArea })
+    .from(rabbitHoles)
+    .orderBy(desc(rabbitHoles.createdAt))
+    .limit(RABBIT_HOLE_AVOID_LOOKBACK);
+  const avoidTopics = recentRows.map((r) => r.topicArea);
+
+  try {
+    const result = await generateRabbitHole(activeNames, avoidTopics);
+    if (!result) return false;
+
+    await db.insert(rabbitHoles).values({
+      title: result.title,
+      summary: result.summary,
+      url: result.url,
+      sourceName: result.sourceName,
+      topicArea: result.topicArea,
+      digestId: cycleId,
+    });
+    return true;
+  } catch (err) {
+    console.error("[pipeline] Rabbit hole generation failed:", err);
+    return false;
+  }
+}
+
+/**
+ * Steelman companion: for interests where argument is central (a fixed
+ * slug list, plus any custom interest), generates up to
+ * STEELMAN_TARGET_PER_INTEREST counterarguments per cycle for this
+ * interest's freshly-fetched items that present a genuine arguable thesis.
+ * One combined Claude call (with web_search) covers up to
+ * STEELMAN_CANDIDATE_POOL candidates, rather than one call per item, to
+ * bound cost. Idempotent: only tops up to the per-cycle target, so a retry
+ * never re-generates items that already have one.
+ */
+async function addSteelmansForInterest(interest: InterestWithConfig, cycleId: number): Promise<number> {
+  if (!hasClaudeKey()) return 0;
+  const eligible = STEELMAN_ELIGIBLE_SLUGS.has(interest.slug) || interest.isCustom;
+  if (!eligible) return 0;
+
+  const existingCount = await db
+    .select({ id: items.id })
+    .from(items)
+    .where(and(eq(items.interestId, interest.id), eq(items.digestId, cycleId), isNotNull(items.steelmanContent)));
+  const needed = STEELMAN_TARGET_PER_INTEREST - existingCount.length;
+  if (needed <= 0) return 0;
+
+  const candidateRows = await db
+    .select({ id: items.id, title: items.title, summary: items.summary })
+    .from(items)
+    .where(and(eq(items.interestId, interest.id), eq(items.digestId, cycleId), isNull(items.steelmanContent)))
+    .orderBy(desc(items.score))
+    .limit(STEELMAN_CANDIDATE_POOL);
+  if (candidateRows.length === 0) return 0;
+
+  try {
+    const results = await generateSteelmans(
+      interest.name,
+      candidateRows.map((c, idx) => ({ index: idx + 1, title: c.title, summary: c.summary }))
+    );
+
+    let added = 0;
+    for (const r of results) {
+      if (added >= needed) break;
+      const candidate = candidateRows[r.index - 1];
+      if (!candidate) continue;
+      await db.update(items).set({ steelmanContent: r.steelman }).where(eq(items.id, candidate.id));
+      added++;
+    }
+    return added;
+  } catch (err) {
+    console.error(`[pipeline] Steelman generation failed for "${interest.name}":`, err);
+    return 0;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // All-at-once pipeline — used by the standalone `npm run fetch` CLI script,
 // which runs locally with no HTTP function time limit. The web UI instead
@@ -603,6 +868,8 @@ export async function runDigestPipeline(): Promise<PipelineResult> {
       deepDivesAdded: 0,
       appliedInsightsAdded: 0,
       drillsAdded: 0,
+      mentalModelAdded: false,
+      rabbitHoleAdded: false,
       fetchedCount: 0,
       usedClaude: hasClaudeKey(),
       newBrainFacts: 0,
@@ -612,11 +879,21 @@ export async function runDigestPipeline(): Promise<PipelineResult> {
 
   const results = await Promise.all(enabledInterests.map((interest) => runInterestCycle(interest)));
 
-  // Drills scan across ALL interests' deep dives, so this runs once, after
-  // every interest's News/Deep Dive/Applied Insight steps above have settled.
+  // Drills and Mental Model both scan across ALL interests' fresh content,
+  // so they run once, after every interest's News/Deep Dive/Applied Insight
+  // steps above have settled. Rabbit Hole doesn't depend on that content
+  // but is cycle-level too, so it runs alongside them.
   const drillsResult = await refreshDrillsForCycle().catch((err) => {
     console.error("[pipeline] Drills step failed:", err);
     return { groundedAdded: 0, standaloneAdded: false };
+  });
+  const mentalModelAdded = await refreshMentalModelForCycle().catch((err) => {
+    console.error("[pipeline] Mental model step failed:", err);
+    return false;
+  });
+  const rabbitHoleAdded = await refreshRabbitHoleForCycle().catch((err) => {
+    console.error("[pipeline] Rabbit hole step failed:", err);
+    return false;
   });
 
   const newBrainFacts = await maybeGenerateWeeklyFacts().catch((err) => {
@@ -630,6 +907,8 @@ export async function runDigestPipeline(): Promise<PipelineResult> {
     deepDivesAdded: results.filter((r) => r.deepDiveAdded).length,
     appliedInsightsAdded: results.filter((r) => r.insightAdded).length,
     drillsAdded: drillsResult.groundedAdded + (drillsResult.standaloneAdded ? 1 : 0),
+    mentalModelAdded,
+    rabbitHoleAdded,
     fetchedCount: results.reduce((sum, r) => sum + r.fetched, 0),
     usedClaude: hasClaudeKey(),
     newBrainFacts,

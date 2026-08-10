@@ -1,4 +1,5 @@
 import type { NewsItem } from "@/lib/digest";
+import { SteelmanToggle } from "./SteelmanToggle";
 
 function formatDate(iso: string | null): string {
   if (!iso) return "";
@@ -32,6 +33,7 @@ export function ItemCard({ item }: { item: NewsItem }) {
       >
         Read source →
       </a>
+      {item.steelmanContent && <SteelmanToggle content={item.steelmanContent} />}
     </article>
   );
 }

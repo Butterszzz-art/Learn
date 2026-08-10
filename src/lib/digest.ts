@@ -9,9 +9,14 @@ import {
   interests,
   coveredTopics,
   drills,
+  explainBacks,
+  mentalModels,
+  modelUsage,
+  rabbitHoles,
 } from "@/db/schema";
 import type { Category, Level, DrillType } from "@/db/schema";
 import { eq, desc, and, or, inArray, isNotNull, lte, asc } from "drizzle-orm";
+import { pickBrainGames, type BrainGamePick } from "./brainGames";
 
 export interface NewsItem {
   id: number;
@@ -24,6 +29,9 @@ export interface NewsItem {
   url: string;
   publishedAt: string | null;
   score: number;
+  // Steelman companion (Phase 6): the strongest good-faith counterargument
+  // to this item's thesis, if one was generated — null for most items.
+  steelmanContent: string | null;
 }
 
 export interface DeepDiveSummary {
@@ -79,6 +87,23 @@ export interface DueReviewTopic {
   coveredDaysAgo: number;
 }
 
+export interface MentalModelOfTheDay {
+  id: number; // model_usage row id
+  modelName: string;
+  category: string;
+  lensText: string;
+  linkedItems: { id: number; title: string; interestName: string }[];
+}
+
+export interface RabbitHoleOfTheDay {
+  id: number;
+  title: string;
+  summary: string;
+  url: string;
+  sourceName: string;
+  topicArea: string;
+}
+
 export interface CycleFeed {
   cycleId: number;
   periodLabel: string;
@@ -94,6 +119,12 @@ export interface CycleFeed {
   // At most one topic due for spaced review, surfaced as a "Remember this?"
   // card. Only rendered on the live/current feed, not archive views.
   dueReview: DueReviewTopic | null;
+  // Once per cycle each, visually distinct from the per-interest sections.
+  mentalModelOfTheDay: MentalModelOfTheDay | null;
+  rabbitHoleOfTheDay: RabbitHoleOfTheDay | null;
+  // Null when the "Include brain games" setting is off — distinct from an
+  // empty array, which would mean the setting is on but the bank is empty.
+  brainGames: BrainGamePick[] | null;
 }
 
 function stripMarkdown(md: string): string {
@@ -135,6 +166,9 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
       totalEntries: 0,
       progress: { conceptsThisMonth: 0, interestsCount: 0 },
       dueReview: null,
+      mentalModelOfTheDay: null,
+      rabbitHoleOfTheDay: null,
+      brainGames: await getBrainGamesIfEnabled(),
     };
   }
 
@@ -196,6 +230,7 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
       url: r.url,
       publishedAt: r.publishedAt,
       score: r.score,
+      steelmanContent: r.steelmanContent,
     });
   }
 
@@ -280,6 +315,10 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
   // the live feed, not archive views — see Feed.tsx's isArchive prop.
   const dueReview = await getDueReviewTopic(enabledInterestIds, interestById);
 
+  const mentalModelOfTheDay = await getMentalModelOfTheDay(cycleId);
+  const rabbitHoleOfTheDay = await getRabbitHoleOfTheDay(cycleId);
+  const brainGamesList = await getBrainGamesIfEnabled();
+
   return {
     cycleId: cycle.id,
     periodLabel: cycle.periodLabel,
@@ -291,7 +330,73 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
     totalEntries,
     progress,
     dueReview,
+    mentalModelOfTheDay,
+    rabbitHoleOfTheDay,
+    brainGames: brainGamesList,
   };
+}
+
+async function getMentalModelOfTheDay(cycleId: number): Promise<MentalModelOfTheDay | null> {
+  const rows = await db
+    .select({ usage: modelUsage, model: mentalModels })
+    .from(modelUsage)
+    .innerJoin(mentalModels, eq(modelUsage.modelId, mentalModels.id))
+    .where(eq(modelUsage.digestId, cycleId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+
+  let linkedIds: number[] = [];
+  try {
+    linkedIds = JSON.parse(row.usage.linkedItemIds);
+  } catch {
+    linkedIds = [];
+  }
+
+  let linkedItems: { id: number; title: string; interestName: string }[] = [];
+  if (linkedIds.length > 0) {
+    const itemRows = await db
+      .select({ item: items, interest: interests })
+      .from(items)
+      .leftJoin(interests, eq(items.interestId, interests.id))
+      .where(inArray(items.id, linkedIds));
+    linkedItems = itemRows.map((r) => ({
+      id: r.item.id,
+      title: r.item.title,
+      interestName: r.interest?.name ?? "Unknown",
+    }));
+  }
+
+  return {
+    id: row.usage.id,
+    modelName: row.model.name,
+    category: row.model.category,
+    lensText: row.usage.lensText,
+    linkedItems,
+  };
+}
+
+async function getRabbitHoleOfTheDay(cycleId: number): Promise<RabbitHoleOfTheDay | null> {
+  const rows = await db.select().from(rabbitHoles).where(eq(rabbitHoles.digestId, cycleId)).limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    title: row.title,
+    summary: row.summary,
+    url: row.url,
+    sourceName: row.sourceName,
+    topicArea: row.topicArea,
+  };
+}
+
+/** Null (not shown) unless the "Include brain games" setting is on —
+ * distinct from an empty array. Picking is cheap and idempotent per day
+ * (see pickBrainGames), so it's safe to call on every feed read. */
+async function getBrainGamesIfEnabled(): Promise<BrainGamePick[] | null> {
+  const rows = await db.select({ includeBrainGames: settings.includeBrainGames }).from(settings).where(eq(settings.id, 1)).limit(1);
+  if (!rows[0]?.includeBrainGames) return null;
+  return pickBrainGames();
 }
 
 /** Parses SQLite's `current_timestamp` text shape ("YYYY-MM-DD HH:MM:SS",
@@ -418,6 +523,13 @@ export async function listCycles(): Promise<CycleListEntry[]> {
   return out;
 }
 
+export interface ExplainBackEntry {
+  id: number;
+  userExplanation: string;
+  feedback: string;
+  createdAt: string;
+}
+
 export interface DeepDiveDetail {
   id: number;
   interestId: number;
@@ -436,6 +548,11 @@ export interface DeepDiveDetail {
     correctIndex: number;
     explanation: string;
   }[];
+  // Explain-it-back (Phase 6): null means the default "explain this back in
+  // your own words" prompt; set to a real open question for occasional
+  // essay-style prompts on advanced/research_level interests.
+  essayPrompt: string | null;
+  explainBacks: ExplainBackEntry[];
 }
 
 function parseJsonArray<T>(raw: string): T[] {
@@ -465,6 +582,12 @@ export async function getDeepDiveById(id: number): Promise<DeepDiveDetail | null
     .where(eq(appliedInsights.deepDiveId, id))
     .limit(1);
 
+  const explainBackRows = await db
+    .select()
+    .from(explainBacks)
+    .where(eq(explainBacks.deepDiveId, id))
+    .orderBy(desc(explainBacks.createdAt));
+
   return {
     id: row.id,
     interestId: row.interestId,
@@ -478,12 +601,22 @@ export async function getDeepDiveById(id: number): Promise<DeepDiveDetail | null
     appliedInsight: insightRows[0]?.content ?? null,
     followUpTopics: parseJsonArray(row.followUpTopics),
     selfCheckQuestions: parseJsonArray(row.selfCheckQuestions),
+    essayPrompt: row.essayPrompt,
+    explainBacks: explainBackRows.map((r) => ({
+      id: r.id,
+      userExplanation: r.userExplanation,
+      feedback: r.feedback,
+      createdAt: r.createdAt,
+    })),
   };
 }
 
 export interface AppSettings {
   frequency: "daily" | "weekly";
   lastRefreshAt: string | null;
+  // Brain Games (Phase 6): opt-in, off by default — not part of the
+  // interests system.
+  includeBrainGames: boolean;
 }
 
 export async function getAppSettings(): Promise<AppSettings> {
@@ -492,12 +625,14 @@ export async function getAppSettings(): Promise<AppSettings> {
   return {
     frequency: (row?.frequency as "daily" | "weekly") ?? "daily",
     lastRefreshAt: row?.lastRefreshAt ?? null,
+    includeBrainGames: row?.includeBrainGames ?? false,
   };
 }
 
-export async function updateAppSettings(update: { frequency?: "daily" | "weekly" }) {
+export async function updateAppSettings(update: { frequency?: "daily" | "weekly"; includeBrainGames?: boolean }) {
   const patch: Record<string, unknown> = {};
   if (update.frequency) patch.frequency = update.frequency;
+  if (typeof update.includeBrainGames === "boolean") patch.includeBrainGames = update.includeBrainGames;
   if (Object.keys(patch).length === 0) return;
   await db.update(settings).set(patch).where(eq(settings.id, 1));
 }

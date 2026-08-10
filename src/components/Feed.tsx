@@ -8,6 +8,9 @@ import { FavoriteToggle } from "./FavoriteToggle";
 import { PassionModeControls } from "./PassionModeControls";
 import { RememberThisCard } from "./RememberThisCard";
 import { ProgressIndicator } from "./ProgressIndicator";
+import { MentalModelCard } from "./MentalModelCard";
+import { RabbitHoleCard } from "./RabbitHoleCard";
+import { BrainGamesSection } from "./BrainGamesSection";
 
 function InterestSection({ section }: { section: InterestFeedSection }) {
   const hasContent =
@@ -110,6 +113,9 @@ export function Feed({ feed, isArchive = false }: { feed: CycleFeed; isArchive?:
         </div>
       )}
 
+      {feed.mentalModelOfTheDay && <MentalModelCard entry={feed.mentalModelOfTheDay} />}
+      {feed.rabbitHoleOfTheDay && <RabbitHoleCard entry={feed.rabbitHoleOfTheDay} />}
+
       {feed.sections.length === 0 ? (
         <div className="card text-center">
           <p className="mb-1 text-lg font-medium">Nothing here yet</p>
@@ -120,6 +126,10 @@ export function Feed({ feed, isArchive = false }: { feed: CycleFeed; isArchive?:
       ) : (
         feed.sections.map((section) => <InterestSection key={section.interestId} section={section} />)
       )}
+
+      {/* Brain Games are "live" (today's picks), not tied to a specific
+          past cycle's stored content — only shown on the live feed. */}
+      {!isArchive && feed.brainGames && <BrainGamesSection games={feed.brainGames} />}
 
       {feed.totalEntries > 0 && (
         <div className="mt-10 border-t border-neuron-border pt-6 text-center">

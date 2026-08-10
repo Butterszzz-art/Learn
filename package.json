@@ -11,6 +11,8 @@
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
     "db:seed-interests": "tsx src/db/seedInterests.ts",
+    "db:seed-mental-models": "tsx src/db/seedMentalModels.ts",
+    "db:seed-brain-games": "tsx src/db/seedBrainGames.ts",
     "fetch": "tsx scripts/fetch.ts"
   },
   "dependencies": {

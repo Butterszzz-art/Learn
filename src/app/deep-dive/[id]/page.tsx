@@ -7,6 +7,7 @@ import { LEVEL_LABELS } from "@/db/schema";
 import { AppliedInsightCard } from "@/components/AppliedInsightCard";
 import { FollowUpCards } from "@/components/FollowUpCards";
 import { SelfCheckQuiz } from "@/components/SelfCheckQuiz";
+import { ExplainItBack } from "@/components/ExplainItBack";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +72,11 @@ export default async function DeepDivePage({ params }: { params: { id: string } 
       )}
 
       <SelfCheckQuiz questions={deepDive.selfCheckQuestions} />
+      <ExplainItBack
+        deepDiveId={deepDive.id}
+        prompt={deepDive.essayPrompt || "Explain this back in your own words."}
+        initialEntries={deepDive.explainBacks}
+      />
       <FollowUpCards interestId={deepDive.interestId} topics={deepDive.followUpTopics} />
     </div>
   );

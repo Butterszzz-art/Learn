@@ -91,6 +91,45 @@ const STATEMENTS = [
     content TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (current_timestamp)
   );`,
+  // Phase 6 — explain-it-back, mental models, rabbit hole, brain games.
+  `CREATE TABLE IF NOT EXISTS explain_backs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    deep_dive_id INTEGER NOT NULL REFERENCES deep_dives(id),
+    user_explanation TEXT NOT NULL,
+    feedback TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (current_timestamp)
+  );`,
+  `CREATE TABLE IF NOT EXISTS mental_models (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    description TEXT NOT NULL
+  );`,
+  `CREATE TABLE IF NOT EXISTS model_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id INTEGER NOT NULL REFERENCES mental_models(id),
+    digest_id INTEGER REFERENCES digests(id),
+    date_used TEXT NOT NULL DEFAULT (current_timestamp),
+    linked_item_ids TEXT NOT NULL DEFAULT '[]',
+    lens_text TEXT NOT NULL
+  );`,
+  `CREATE TABLE IF NOT EXISTS rabbit_holes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    url TEXT NOT NULL,
+    source_name TEXT NOT NULL,
+    topic_area TEXT NOT NULL,
+    digest_id INTEGER REFERENCES digests(id),
+    created_at TEXT NOT NULL DEFAULT (current_timestamp)
+  );`,
+  `CREATE TABLE IF NOT EXISTS brain_games (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    last_shown_at TEXT
+  );`,
   `CREATE TABLE IF NOT EXISTS settings (
     id INTEGER PRIMARY KEY DEFAULT 1,
     frequency TEXT NOT NULL DEFAULT 'daily',
@@ -109,6 +148,11 @@ const STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS drills_interest_idx ON drills(interest_id);`,
   `CREATE INDEX IF NOT EXISTS drills_digest_idx ON drills(digest_id);`,
   `CREATE INDEX IF NOT EXISTS drills_source_dive_idx ON drills(source_deep_dive_id);`,
+  `CREATE INDEX IF NOT EXISTS explain_backs_deep_dive_idx ON explain_backs(deep_dive_id);`,
+  `CREATE INDEX IF NOT EXISTS model_usage_model_idx ON model_usage(model_id);`,
+  `CREATE INDEX IF NOT EXISTS model_usage_digest_idx ON model_usage(digest_id);`,
+  `CREATE INDEX IF NOT EXISTS rabbit_holes_digest_idx ON rabbit_holes(digest_id);`,
+  `CREATE INDEX IF NOT EXISTS brain_games_last_shown_idx ON brain_games(last_shown_at);`,
   `INSERT OR IGNORE INTO settings (id, frequency, muted_categories) VALUES (1, 'daily', '[]');`,
 ];
 
@@ -162,6 +206,22 @@ const ADDITIVE_COLUMNS: { table: string; column: string; ddl: string }[] = [
     table: "applied_insights",
     column: "drill_id",
     ddl: "ALTER TABLE applied_insights ADD COLUMN drill_id INTEGER REFERENCES drills(id);",
+  },
+  // --- Phase 6: explain-it-back, mental models, steelman, brain games ---
+  {
+    table: "deep_dives",
+    column: "essay_prompt",
+    ddl: "ALTER TABLE deep_dives ADD COLUMN essay_prompt TEXT;",
+  },
+  {
+    table: "items",
+    column: "steelman_content",
+    ddl: "ALTER TABLE items ADD COLUMN steelman_content TEXT;",
+  },
+  {
+    table: "settings",
+    column: "include_brain_games",
+    ddl: "ALTER TABLE settings ADD COLUMN include_brain_games INTEGER NOT NULL DEFAULT 0;",
   },
 ];
 
@@ -281,6 +341,19 @@ export async function runMigrations() {
   await client.execute(
     `CREATE INDEX IF NOT EXISTS covered_topics_next_review_idx ON covered_topics(next_review_date);`
   );
+
+  // mental_models/brain_games were seeded without a UNIQUE constraint, so
+  // the same concurrent-seeding race that ERRORS on interests.slug (which
+  // IS unique — see seedInterests.ts) instead silently DUPLICATED rows here
+  // on a hosted Turso database: multiple build workers each saw an empty
+  // "already seeded" check and each inserted the full seed set, with
+  // nothing to reject the second insert. Deduping first (keep the
+  // lowest-id row per name/content) makes CREATE UNIQUE INDEX safe to run
+  // even on a DB that already accumulated duplicates before this fix.
+  await client.execute(`DELETE FROM mental_models WHERE id NOT IN (SELECT MIN(id) FROM mental_models GROUP BY name);`);
+  await client.execute(`DELETE FROM brain_games WHERE id NOT IN (SELECT MIN(id) FROM brain_games GROUP BY content);`);
+  await client.execute(`CREATE UNIQUE INDEX IF NOT EXISTS mental_models_name_idx ON mental_models(name);`);
+  await client.execute(`CREATE UNIQUE INDEX IF NOT EXISTS brain_games_content_idx ON brain_games(content);`);
 }
 
 // Allow `npm run db:migrate` (tsx src/db/migrate.ts) to run this directly.

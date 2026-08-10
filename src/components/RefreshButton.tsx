@@ -67,12 +67,22 @@ async function runInterest(
   return { newsAdded: news.added ?? 0, deepDiveAdded, insightAdded: !!insight.added };
 }
 
+// Cycle-level steps (not per-interest): Drills, Mental Model of the Day,
+// Rabbit Hole of the Day. All three scan/use this cycle's already-settled
+// content, so they run once, after every interest's steps above finish.
+const CYCLE_STEPS = [
+  { key: "drills", label: "Drills", path: "/api/refresh/drills" },
+  { key: "mental-model", label: "Mental Model", path: "/api/refresh/mental-model" },
+  { key: "rabbit-hole", label: "Rabbit Hole", path: "/api/refresh/rabbit-hole" },
+] as const;
+type CycleStepStatus = "running" | "done" | "error";
+
 export function RefreshButton() {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<InterestProgress[]>([]);
-  const [drillsStatus, setDrillsStatus] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [cycleStepStatus, setCycleStepStatus] = useState<Record<string, CycleStepStatus>>({});
   const [summary, setSummary] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -110,21 +120,29 @@ export function RefreshButton() {
       const deepDivesAdded = results.filter((r) => r.deepDiveAdded).length;
       const insightsAdded = results.filter((r) => r.insightAdded).length;
 
-      // Drills scan across ALL interests' deep dives, so this runs once,
-      // after every interest's steps above have settled — not per-interest.
-      setDrillsStatus("running");
-      let drillsFailed = false;
-      const drillsResult = await postCycleStep("/api/refresh/drills").catch((err) => {
-        console.error(err);
-        drillsFailed = true;
-        return { groundedAdded: 0, standaloneAdded: false };
-      });
-      setDrillsStatus(drillsFailed ? "error" : "done");
-      const drillsAdded = (drillsResult.groundedAdded ?? 0) + (drillsResult.standaloneAdded ? 1 : 0);
+      let drillsAdded = 0;
+      let mentalModelAdded = false;
+      let rabbitHoleAdded = false;
+      for (const step of CYCLE_STEPS) {
+        setCycleStepStatus((prev) => ({ ...prev, [step.key]: "running" }));
+        let failed = false;
+        const result = await postCycleStep(step.path).catch((err) => {
+          console.error(err);
+          failed = true;
+          return null;
+        });
+        setCycleStepStatus((prev) => ({ ...prev, [step.key]: failed ? "error" : "done" }));
+        if (!result) continue;
+        if (step.key === "drills") drillsAdded = (result.groundedAdded ?? 0) + (result.standaloneAdded ? 1 : 0);
+        if (step.key === "mental-model") mentalModelAdded = !!result.added;
+        if (step.key === "rabbit-hole") rabbitHoleAdded = !!result.added;
+      }
 
       const parts = [`+${newsAdded} news`, `+${deepDivesAdded} deep dives`];
       if (insightsAdded > 0) parts.push(`+${insightsAdded} insights`);
       if (drillsAdded > 0) parts.push(`+${drillsAdded} drills`);
+      if (mentalModelAdded) parts.push("+1 mental model");
+      if (rabbitHoleAdded) parts.push("+1 rabbit hole");
       setSummary(parts.join(", ") + ".");
 
       startTransition(() => router.refresh());
@@ -134,7 +152,7 @@ export function RefreshButton() {
       setLoading(false);
       setTimeout(() => {
         setProgress([]);
-        setDrillsStatus("idle");
+        setCycleStepStatus({});
       }, 2000);
     }
   }
@@ -161,12 +179,16 @@ export function RefreshButton() {
               <StatusBadge status={p.status} />
             </li>
           ))}
-          {drillsStatus !== "idle" && (
-            <li className="flex items-center justify-end gap-1.5">
-              <span>Drills</span>
-              <StatusBadge status={drillsStatus === "running" ? "waiting" : drillsStatus} />
-            </li>
-          )}
+          {CYCLE_STEPS.map((step) => {
+            const status = cycleStepStatus[step.key];
+            if (!status) return null;
+            return (
+              <li key={step.key} className="flex items-center justify-end gap-1.5">
+                <span>{step.label}</span>
+                <StatusBadge status={status === "running" ? "waiting" : status} />
+              </li>
+            );
+          })}
         </ul>
       )}
 
