@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { SearchOverlay } from "./SearchOverlay";
 
 // Home is the logo/wordmark itself — no separate "Home" nav item duplicating it.
 const LINKS = [
@@ -22,7 +23,8 @@ export function Nav() {
             🧠 Neuron
           </span>
         </Link>
-        <nav className="flex gap-2">
+        <nav className="flex items-center gap-2">
+          <SearchOverlay />
           {LINKS.map((link) => {
             const active = pathname.startsWith(link.href);
             return (

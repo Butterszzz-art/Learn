@@ -122,16 +122,34 @@ No hosting, no email, no account required.
   that this style of game is a fun break, not a proven way to improve
   general thinking — a different evidence tier than the content-grounded
   Drills above.
-- **Library**: upload a book (PDF) and get a detailed chapter-by-chapter
-  notebook — summary, key concepts, notable arguments, a handful of short
-  quotes — read natively by Claude (no separate text-extraction library),
-  processed once per book. Chapters drip-feed into your daily/weekly rhythm
-  at whatever pace you set ("finish in about __ weeks"), one chapter-ready
-  card in the main feed per cycle, while the Library page always shows the
-  full table of contents so you can jump ahead or reread anytime. Wired
-  into everything else: chapter concepts feed spaced resurfacing, notable
-  arguments ground Drills, chapters are eligible for Mental Model of the
-  Day lenses, and each chapter gets its own explain-it-back box.
+- **Library**: three ways in — upload a PDF (read natively by Claude, no
+  separate text-extraction library), upload an EPUB (parsed locally into
+  per-chapter text, using its own table of contents for real chapter
+  titles), or paste an article URL (fetched and turned into a one-chapter
+  note, titled from the page itself). Every format gets the same detailed
+  notebook per chapter — summary, key concepts, notable arguments, a
+  handful of short quotes — processed once. Multi-chapter books drip-feed
+  into your daily/weekly rhythm at whatever pace you set ("finish in about
+  __ weeks"), one chapter-ready card in the main feed per cycle, while the
+  Library page always shows the full table of contents so you can jump
+  ahead or reread anytime. Wired into everything else: chapter concepts
+  feed spaced resurfacing, notable arguments ground Drills, chapters are
+  eligible for Mental Model of the Day lenses, and each chapter gets its
+  own explain-it-back box.
+- **Search everything**: a search bar reachable from any page (or
+  Cmd/Ctrl+K) full-text-searches every News item, Deep Dive, Applied
+  Insight, Drill, Explain It Back, Mental Model lens, Rabbit Hole, and
+  Library chapter you've ever generated — SQLite FTS5 under the hood,
+  ranked by relevance with recency as the tiebreaker, results grouped by
+  content type and linking straight back into the reading view. Kept
+  up to date incrementally as each cycle generates new content.
+- **Export your knowledge**: any Deep Dive, Library chapter, or
+  explain-it-back entry exports as Markdown or PDF from its own page. A
+  one-click "Export everything" in Settings produces a zip of every Deep
+  Dive and Library chapter as markdown files, organized by interest/book
+  and date, with `[[wiki-links]]` between notes that share a topic or key
+  concept — drop the whole zip into a notes app like Obsidian as a ready-
+  made vault.
 
 ---
 

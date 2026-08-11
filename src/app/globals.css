@@ -37,4 +37,10 @@
   .nav-link-active {
     @apply rounded-full bg-gradient-to-r from-neuron-accent to-neuron-accent2 px-3 py-1.5 text-sm font-bold text-neuron-bg;
   }
+  /* Search result snippet highlighting (Phase 11) — FTS5's snippet()
+     wraps matched terms in <mark>, rendered via dangerouslySetInnerHTML
+     in SearchOverlay.tsx. */
+  mark {
+    @apply rounded bg-neuron-accent/30 text-neuron-text;
+  }
 }

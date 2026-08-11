@@ -16,7 +16,7 @@ import {
   books,
   bookChapters,
 } from "@/db/schema";
-import type { Category, Level, DrillType, BookStatus } from "@/db/schema";
+import type { Category, Level, DrillType, BookStatus, BookSourceType } from "@/db/schema";
 import { eq, desc, and, or, inArray, isNotNull, lte, asc } from "drizzle-orm";
 import { pickBrainGames, type BrainGamePick } from "./brainGames";
 
@@ -730,6 +730,7 @@ export interface BookListEntry {
   chaptersSurfaced: number;
   paceChaptersPerCycle: number;
   uploadDate: string;
+  sourceType: BookSourceType;
 }
 
 /** Every uploaded book, newest first, with processing/drip-feed progress —
@@ -753,6 +754,7 @@ export async function getLibraryBooks(): Promise<BookListEntry[]> {
       chaptersSurfaced: chapterRows.filter((c) => c.status === "surfaced").length,
       paceChaptersPerCycle: b.paceChaptersPerCycle,
       uploadDate: b.uploadDate,
+      sourceType: b.sourceType,
     });
   }
   return out;
@@ -857,4 +859,36 @@ export async function getChapterById(id: number): Promise<ChapterDetail | null> 
       createdAt: r.createdAt,
     })),
   };
+}
+
+export interface ExplainBackDetail {
+  entry: ExplainBackEntry;
+  parentTitle: string;
+  parentType: "deepDive" | "chapter";
+  parentId: number;
+}
+
+/** One explain-it-back entry with enough of its parent's identity to export
+ * or link back to it — Phase 11's single-item export destination. */
+export async function getExplainBackById(id: number): Promise<ExplainBackDetail | null> {
+  const rows = await db.select().from(explainBacks).where(eq(explainBacks.id, id)).limit(1);
+  const row = rows[0];
+  if (!row) return null;
+
+  const entry: ExplainBackEntry = {
+    id: row.id,
+    userExplanation: row.userExplanation,
+    feedback: row.feedback,
+    createdAt: row.createdAt,
+  };
+
+  if (row.deepDiveId) {
+    const diveRows = await db.select({ topic: deepDives.topic }).from(deepDives).where(eq(deepDives.id, row.deepDiveId)).limit(1);
+    return { entry, parentTitle: diveRows[0]?.topic ?? "Untitled", parentType: "deepDive", parentId: row.deepDiveId };
+  }
+  if (row.chapterId) {
+    const chapterRows = await db.select({ title: bookChapters.title }).from(bookChapters).where(eq(bookChapters.id, row.chapterId)).limit(1);
+    return { entry, parentTitle: chapterRows[0]?.title ?? "Untitled", parentType: "chapter", parentId: row.chapterId };
+  }
+  return null;
 }

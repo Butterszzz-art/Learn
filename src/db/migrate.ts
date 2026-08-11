@@ -168,6 +168,26 @@ const STATEMENTS = [
     last_refresh_at TEXT,
     last_fact_gen_at TEXT
   );`,
+  // Phase 11 — unified full-text search. One FTS5 virtual table spanning
+  // every content type, rather than per-table search (News, Deep Dives,
+  // Applied Insights, Drills, Explain-Backs, Mental Model lenses, Rabbit
+  // Holes, Library chapters). `title`/`body` are the only indexed (searched)
+  // columns; everything else is UNINDEXED metadata carried along for
+  // display/linking. `dedupe_key` (content_type:source_id) is how callers
+  // upsert — FTS5's own rowid can't safely be shared across many source
+  // tables with overlapping ids, so this app manages its own dedupe instead
+  // — see src/lib/searchIndex.ts.
+  `CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
+    title,
+    body,
+    content_type UNINDEXED,
+    source_id UNINDEXED,
+    interest_label UNINDEXED,
+    interest_id UNINDEXED,
+    date UNINDEXED,
+    url UNINDEXED,
+    dedupe_key UNINDEXED
+  );`,
   // Note: items_* indexes are created after rebuildItemsTableIfNeeded() runs
   // below, not here — on an existing Phase 1 DB, `items` doesn't have
   // interest_id yet at this point in the migration.
@@ -279,6 +299,22 @@ const ADDITIVE_COLUMNS: { table: string; column: string; ddl: string }[] = [
     table: "covered_topics",
     column: "chapter_id",
     ddl: "ALTER TABLE covered_topics ADD COLUMN chapter_id INTEGER REFERENCES book_chapters(id);",
+  },
+  // --- Phase 11: Search, Export, and More Library Formats ---
+  {
+    table: "books",
+    column: "source_type",
+    ddl: "ALTER TABLE books ADD COLUMN source_type TEXT NOT NULL DEFAULT 'pdf';",
+  },
+  {
+    table: "books",
+    column: "source_url",
+    ddl: "ALTER TABLE books ADD COLUMN source_url TEXT;",
+  },
+  {
+    table: "book_chapters",
+    column: "raw_text",
+    ddl: "ALTER TABLE book_chapters ADD COLUMN raw_text TEXT;",
   },
 ];
 
@@ -408,6 +444,200 @@ async function execIgnoringMissingTable(sql: string, tableName: string) {
   }
 }
 
+/**
+ * One-time backfill of every piece of content that existed before Phase 11
+ * into the new search_index — ongoing content is indexed incrementally at
+ * generation time from here on (see src/lib/searchIndex.ts), but anything
+ * already in the DB needs a first pass. Guarded by search_index being
+ * completely empty, so this never re-runs (and never fights with) the
+ * incremental indexing once it's caught up. URL-building here intentionally
+ * mirrors (rather than imports) the per-call-site logic in searchIndex.ts's
+ * callers — this runs exactly once per database, ever, so a shared
+ * abstraction would add more indirection than it saves.
+ */
+async function backfillSearchIndex() {
+  const countRes = await client.execute("SELECT COUNT(*) as n FROM search_index");
+  const alreadyIndexed = Number((countRes.rows[0] as any)?.n ?? 0);
+  if (alreadyIndexed > 0) return;
+
+  const rows: {
+    title: string;
+    body: string;
+    contentType: string;
+    sourceId: number;
+    interestLabel: string;
+    interestId: number | null;
+    date: string;
+    url: string;
+  }[] = [];
+
+  const interestNameRes = await client.execute("SELECT id, name FROM interests");
+  const interestName = new Map<number, string>(
+    interestNameRes.rows.map((r: any) => [r.id as number, r.name as string])
+  );
+  const bookTitleRes = await client.execute("SELECT id, title FROM books");
+  const bookTitle = new Map<number, string>(bookTitleRes.rows.map((r: any) => [r.id as number, r.title as string]));
+
+  const itemRes = await client.execute("SELECT id, title, summary, interest_id, digest_id, fetched_at FROM items");
+  for (const r of itemRes.rows as any[]) {
+    if (r.interest_id == null) continue;
+    rows.push({
+      title: r.title,
+      body: r.summary ?? "",
+      contentType: "news",
+      sourceId: r.id,
+      interestLabel: interestName.get(r.interest_id) ?? "Unknown",
+      interestId: r.interest_id,
+      date: r.fetched_at,
+      url: r.digest_id ? `/archive/${r.digest_id}?at=news-${r.id}` : "/archive",
+    });
+  }
+
+  const diveRes = await client.execute("SELECT id, topic, content, interest_id, created_at FROM deep_dives");
+  for (const r of diveRes.rows as any[]) {
+    rows.push({
+      title: r.topic,
+      body: r.content ?? "",
+      contentType: "deep_dive",
+      sourceId: r.id,
+      interestLabel: interestName.get(r.interest_id) ?? "Unknown",
+      interestId: r.interest_id,
+      date: r.created_at,
+      url: `/deep-dive/${r.id}`,
+    });
+  }
+
+  const insightRes = await client.execute(
+    `SELECT ai.id, ai.content, ai.interest_id, ai.created_at, ai.deep_dive_id, d.digest_id as drill_digest_id
+     FROM applied_insights ai LEFT JOIN drills d ON ai.drill_id = d.id`
+  );
+  for (const r of insightRes.rows as any[]) {
+    rows.push({
+      title: `Applied Insight — ${interestName.get(r.interest_id) ?? "Unknown"}`,
+      body: r.content ?? "",
+      contentType: "applied_insight",
+      sourceId: r.id,
+      interestLabel: interestName.get(r.interest_id) ?? "Unknown",
+      interestId: r.interest_id,
+      date: r.created_at,
+      url: r.deep_dive_id
+        ? `/deep-dive/${r.deep_dive_id}`
+        : r.drill_digest_id
+          ? `/archive/${r.drill_digest_id}`
+          : "/drills",
+    });
+  }
+
+  const drillRes = await client.execute(
+    "SELECT id, concept_label, prompt_content, explanation, interest_id, created_at FROM drills"
+  );
+  for (const r of drillRes.rows as any[]) {
+    rows.push({
+      title: `Drill — ${r.concept_label}`,
+      body: `${r.prompt_content ?? ""}\n\n${r.explanation ?? ""}`,
+      contentType: "drill",
+      sourceId: r.id,
+      interestLabel: interestName.get(r.interest_id) ?? "Unknown",
+      interestId: r.interest_id,
+      date: r.created_at,
+      url: "/drills",
+    });
+  }
+
+  const explainRes = await client.execute(
+    `SELECT eb.id, eb.user_explanation, eb.feedback, eb.created_at, eb.deep_dive_id, eb.chapter_id,
+            d.topic as dive_topic, d.interest_id as dive_interest_id,
+            c.title as chapter_title, c.book_id as chapter_book_id
+     FROM explain_backs eb
+     LEFT JOIN deep_dives d ON eb.deep_dive_id = d.id
+     LEFT JOIN book_chapters c ON eb.chapter_id = c.id`
+  );
+  for (const r of explainRes.rows as any[]) {
+    const isChapter = r.chapter_id != null;
+    rows.push({
+      title: `Explain it back — ${isChapter ? r.chapter_title : r.dive_topic ?? "Untitled"}`,
+      body: `${r.user_explanation ?? ""}\n\n${r.feedback ?? ""}`,
+      contentType: "explain_back",
+      sourceId: r.id,
+      interestLabel: isChapter ? `Library: ${bookTitle.get(r.chapter_book_id) ?? "book"}` : interestName.get(r.dive_interest_id) ?? "Unknown",
+      interestId: isChapter ? null : r.dive_interest_id ?? null,
+      date: r.created_at,
+      url: isChapter ? `/library/chapter/${r.chapter_id}` : `/deep-dive/${r.deep_dive_id}`,
+    });
+  }
+
+  const modelRes = await client.execute(
+    `SELECT mu.id, mu.lens_text, mu.digest_id, mu.date_used, m.name as model_name
+     FROM model_usage mu JOIN mental_models m ON mu.model_id = m.id`
+  );
+  for (const r of modelRes.rows as any[]) {
+    rows.push({
+      title: `Mental Model: ${r.model_name}`,
+      body: r.lens_text ?? "",
+      contentType: "mental_model",
+      sourceId: r.id,
+      interestLabel: "Mental Model of the Day",
+      interestId: null,
+      date: r.date_used,
+      url: r.digest_id ? `/archive/${r.digest_id}?at=mentalmodel-${r.id}` : "/archive",
+    });
+  }
+
+  const rabbitRes = await client.execute("SELECT id, title, summary, topic_area, digest_id, created_at FROM rabbit_holes");
+  for (const r of rabbitRes.rows as any[]) {
+    rows.push({
+      title: r.title,
+      body: r.summary ?? "",
+      contentType: "rabbit_hole",
+      sourceId: r.id,
+      interestLabel: r.topic_area ?? "Rabbit Hole",
+      interestId: null,
+      date: r.created_at,
+      url: r.digest_id ? `/archive/${r.digest_id}?at=rabbithole-${r.id}` : "/archive",
+    });
+  }
+
+  const chapterRes = await client.execute(
+    "SELECT id, title, summary, key_concepts, notable_arguments, book_id FROM book_chapters WHERE summary IS NOT NULL"
+  );
+  for (const r of chapterRes.rows as any[]) {
+    let keyConceptsText = "";
+    try {
+      keyConceptsText = (JSON.parse(r.key_concepts ?? "[]") as { term: string; definition: string }[])
+        .map((c) => `${c.term}: ${c.definition}`)
+        .join("\n");
+    } catch {
+      keyConceptsText = "";
+    }
+    rows.push({
+      title: r.title,
+      body: `${r.summary ?? ""}\n\n${keyConceptsText}`,
+      contentType: "chapter",
+      sourceId: r.id,
+      interestLabel: `Library: ${bookTitle.get(r.book_id) ?? "book"}`,
+      interestId: null,
+      date: new Date().toISOString(),
+      url: `/library/chapter/${r.id}`,
+    });
+  }
+
+  for (const row of rows) {
+    const dedupeKey = `${row.contentType}:${row.sourceId}`;
+    try {
+      await client.execute({
+        sql: `INSERT INTO search_index (title, body, content_type, source_id, interest_label, interest_id, date, url, dedupe_key)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [row.title, row.body, row.contentType, row.sourceId, row.interestLabel, row.interestId, row.date, row.url, dedupeKey],
+      });
+    } catch (err) {
+      console.error(`[migrate] search_index backfill failed for ${dedupeKey}:`, err);
+    }
+  }
+  if (rows.length > 0) {
+    console.log(`[migrate] Backfilled search_index with ${rows.length} existing rows.`);
+  }
+}
+
 export async function runMigrations() {
   // `next build` prerenders several pages (including the auto-generated
   // /_not-found) in parallel worker processes, each opening its own
@@ -496,6 +726,16 @@ export async function runMigrations() {
   await client.execute(`DELETE FROM brain_games WHERE id NOT IN (SELECT MIN(id) FROM brain_games GROUP BY content);`);
   await client.execute(`CREATE UNIQUE INDEX IF NOT EXISTS mental_models_name_idx ON mental_models(name);`);
   await client.execute(`CREATE UNIQUE INDEX IF NOT EXISTS brain_games_content_idx ON brain_games(content);`);
+
+  await backfillSearchIndex();
+  // Same concurrent-build-worker race as mental_models/brain_games above
+  // (two workers can both see search_index as empty and both backfill) —
+  // FTS5 virtual tables can't take a CREATE UNIQUE INDEX to prevent it
+  // outright, so clean up after the fact instead, keeping the lowest rowid
+  // per dedupe_key. Cheap at this app's scale; safe to run every time.
+  await client.execute(
+    `DELETE FROM search_index WHERE rowid NOT IN (SELECT MIN(rowid) FROM search_index GROUP BY dedupe_key);`
+  );
 }
 
 // Allow `npm run db:migrate` (tsx src/db/migrate.ts) to run this directly.

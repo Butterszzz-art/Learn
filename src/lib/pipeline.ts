@@ -22,6 +22,7 @@ import { dedupeItems, dedupeKeyFor } from "./dedupe";
 import { categorizeByKeywords } from "./categorize";
 import { classifyAndSummarizeBatch, summarizeBatch, hasClaudeKey } from "./claude";
 import { fetchArticleText } from "./articleFetch";
+import { indexForSearch } from "./searchIndex";
 import {
   generateDeepDive,
   generateAppliedInsight,
@@ -325,6 +326,16 @@ async function generateAndPersistDeepDive(
 
   const deepDiveId = inserted[0].id;
   await addCoveredTopic(interest.id, result.topic, deepDiveId);
+  indexForSearch({
+    contentType: "deep_dive",
+    sourceId: deepDiveId,
+    title: result.topic,
+    body: result.content,
+    interestLabel: interest.name,
+    interestId: interest.id,
+    date: new Date().toISOString(),
+    url: `/deep-dive/${deepDiveId}`,
+  }).catch((err) => console.error("[pipeline] search-index failed for deep dive:", err));
   return { id: deepDiveId, topic: result.topic };
 }
 
@@ -404,6 +415,18 @@ export async function submitExplainBack(deepDiveId: number, userExplanation: str
     .values({ deepDiveId, userExplanation: trimmed, feedback })
     .returning({ id: explainBacks.id });
 
+  const interest = await getInterestById(dive.interestId);
+  indexForSearch({
+    contentType: "explain_back",
+    sourceId: inserted[0].id,
+    title: `Explain it back — ${dive.topic}`,
+    body: `${trimmed}\n\n${feedback}`,
+    interestLabel: interest?.name ?? "Unknown",
+    interestId: dive.interestId,
+    date: new Date().toISOString(),
+    url: `/deep-dive/${deepDiveId}`,
+  }).catch((err) => console.error("[pipeline] search-index failed for explain-back:", err));
+
   return { id: inserted[0].id, feedback };
 }
 
@@ -432,6 +455,18 @@ export async function submitChapterExplainBack(chapterId: number, userExplanatio
     .insert(explainBacks)
     .values({ chapterId, userExplanation: trimmed, feedback })
     .returning({ id: explainBacks.id });
+
+  const bookRows = await db.select({ title: books.title }).from(books).where(eq(books.id, chapter.bookId)).limit(1);
+  indexForSearch({
+    contentType: "explain_back",
+    sourceId: inserted[0].id,
+    title: `Explain it back — ${chapter.title}`,
+    body: `${trimmed}\n\n${feedback}`,
+    interestLabel: `Library: ${bookRows[0]?.title ?? "book"}`,
+    interestId: null,
+    date: new Date().toISOString(),
+    url: `/library/chapter/${chapterId}`,
+  }).catch((err) => console.error("[pipeline] search-index failed for chapter explain-back:", err));
 
   return { id: inserted[0].id, feedback };
 }
@@ -510,7 +545,20 @@ async function generateInsightForDive(interest: InterestWithConfig, deepDiveId: 
   const content = await generateAppliedInsight(interest.name, dive.topic, dive.content);
   if (!content) return false;
 
-  await db.insert(appliedInsights).values({ interestId: interest.id, deepDiveId: dive.id, content });
+  const inserted = await db
+    .insert(appliedInsights)
+    .values({ interestId: interest.id, deepDiveId: dive.id, content })
+    .returning({ id: appliedInsights.id });
+  indexForSearch({
+    contentType: "applied_insight",
+    sourceId: inserted[0].id,
+    title: `Applied Insight — ${interest.name}`,
+    body: content,
+    interestLabel: interest.name,
+    interestId: interest.id,
+    date: new Date().toISOString(),
+    url: `/deep-dive/${dive.id}`,
+  }).catch((err) => console.error("[pipeline] search-index failed for applied insight:", err));
   return true;
 }
 
@@ -537,7 +585,20 @@ async function generateInsightForDrill(interest: InterestWithConfig, drillId: nu
   );
   if (!content) return false;
 
-  await db.insert(appliedInsights).values({ interestId: interest.id, drillId: drill.id, content });
+  const inserted = await db
+    .insert(appliedInsights)
+    .values({ interestId: interest.id, drillId: drill.id, content })
+    .returning({ id: appliedInsights.id });
+  indexForSearch({
+    contentType: "applied_insight",
+    sourceId: inserted[0].id,
+    title: `Applied Insight — ${interest.name}`,
+    body: content,
+    interestLabel: interest.name,
+    interestId: interest.id,
+    date: new Date().toISOString(),
+    url: drill.digestId ? `/archive/${drill.digestId}` : "/drills",
+  }).catch((err) => console.error("[pipeline] search-index failed for applied insight:", err));
   return true;
 }
 
@@ -668,6 +729,16 @@ async function addGroundedDrills(cycleId: number, needed: number): Promise<numbe
         .returning({ id: drills.id });
 
       await addCoveredTopic(candidate.interestId, result.conceptLabel, candidate.id);
+      indexForSearch({
+        contentType: "drill",
+        sourceId: inserted[0].id,
+        title: `Drill — ${result.conceptLabel}`,
+        body: `${result.promptContent}\n\n${result.explanation}`,
+        interestLabel: interest.name,
+        interestId: interest.id,
+        date: new Date().toISOString(),
+        url: "/drills",
+      }).catch((err) => console.error("[pipeline] search-index failed for drill:", err));
       if (interest.generatesAppliedInsights) {
         await generateInsightForDrill(interest, inserted[0].id).catch((err) => {
           console.error(`[pipeline] Grounded-drill applied insight failed for "${interest.name}":`, err);
@@ -722,6 +793,16 @@ async function addStandaloneLogicDrill(cycleId: number): Promise<boolean> {
       .returning({ id: drills.id });
 
     await addCoveredTopic(targetInterest.id, result.conceptLabel, null);
+    indexForSearch({
+      contentType: "drill",
+      sourceId: inserted[0].id,
+      title: `Drill — ${result.conceptLabel}`,
+      body: `${result.promptContent}\n\n${result.explanation}`,
+      interestLabel: targetInterest.name,
+      interestId: targetInterest.id,
+      date: new Date().toISOString(),
+      url: "/drills",
+    }).catch((err) => console.error("[pipeline] search-index failed for standalone drill:", err));
     if (targetInterest.generatesAppliedInsights) {
       await generateInsightForDrill(targetInterest, inserted[0].id).catch((err) => {
         console.error(`[pipeline] Standalone-drill applied insight failed for "${targetInterest.name}":`, err);
@@ -828,12 +909,25 @@ export async function refreshMentalModelForCycle(): Promise<boolean> {
         .filter((ref): ref is LinkedItemRef => ref != null);
       if (linkedItemIds.length === 0) continue;
 
-      await db.insert(modelUsage).values({
-        modelId: model.id,
-        digestId: cycleId,
-        linkedItemIds: JSON.stringify(linkedItemIds),
-        lensText: lens.lensText,
-      });
+      const insertedUsage = await db
+        .insert(modelUsage)
+        .values({
+          modelId: model.id,
+          digestId: cycleId,
+          linkedItemIds: JSON.stringify(linkedItemIds),
+          lensText: lens.lensText,
+        })
+        .returning({ id: modelUsage.id });
+      indexForSearch({
+        contentType: "mental_model",
+        sourceId: insertedUsage[0].id,
+        title: `Mental Model: ${model.name}`,
+        body: lens.lensText,
+        interestLabel: "Mental Model of the Day",
+        interestId: null,
+        date: new Date().toISOString(),
+        url: `/archive/${cycleId}?at=mentalmodel-${insertedUsage[0].id}`,
+      }).catch((err) => console.error("[pipeline] search-index failed for mental model usage:", err));
       return true;
     } catch (err) {
       console.error(`[pipeline] Mental model lens failed for "${model.name}":`, err);
@@ -868,14 +962,27 @@ export async function refreshRabbitHoleForCycle(): Promise<boolean> {
     const result = await generateRabbitHole(activeNames, avoidTopics);
     if (!result) return false;
 
-    await db.insert(rabbitHoles).values({
+    const insertedHole = await db
+      .insert(rabbitHoles)
+      .values({
+        title: result.title,
+        summary: result.summary,
+        url: result.url,
+        sourceName: result.sourceName,
+        topicArea: result.topicArea,
+        digestId: cycleId,
+      })
+      .returning({ id: rabbitHoles.id });
+    indexForSearch({
+      contentType: "rabbit_hole",
+      sourceId: insertedHole[0].id,
       title: result.title,
-      summary: result.summary,
-      url: result.url,
-      sourceName: result.sourceName,
-      topicArea: result.topicArea,
-      digestId: cycleId,
-    });
+      body: result.summary,
+      interestLabel: result.topicArea,
+      interestId: null,
+      date: new Date().toISOString(),
+      url: `/archive/${cycleId}?at=rabbithole-${insertedHole[0].id}`,
+    }).catch((err) => console.error("[pipeline] search-index failed for rabbit hole:", err));
     return true;
   } catch (err) {
     console.error("[pipeline] Rabbit hole generation failed:", err);
@@ -957,17 +1064,30 @@ export async function refreshBookChapterForCycle(): Promise<BookChapterStepResul
               .join("\n")}`;
             const drillResult = await generateGroundedDrill(libraryInterest.name, chapter.title, groundingContent);
             if (drillResult) {
-              await db.insert(drills).values({
+              const insertedChapterDrill = await db
+                .insert(drills)
+                .values({
+                  interestId: libraryInterest.id,
+                  sourceChapterId: chapter.id,
+                  drillType: drillResult.drillType,
+                  promptContent: drillResult.promptContent,
+                  options: JSON.stringify(drillResult.options),
+                  correctOption: drillResult.correctOption,
+                  explanation: drillResult.explanation,
+                  conceptLabel: drillResult.conceptLabel,
+                  digestId: cycleId,
+                })
+                .returning({ id: drills.id });
+              indexForSearch({
+                contentType: "drill",
+                sourceId: insertedChapterDrill[0].id,
+                title: `Drill — ${drillResult.conceptLabel}`,
+                body: `${drillResult.promptContent}\n\n${drillResult.explanation}`,
+                interestLabel: libraryInterest.name,
                 interestId: libraryInterest.id,
-                sourceChapterId: chapter.id,
-                drillType: drillResult.drillType,
-                promptContent: drillResult.promptContent,
-                options: JSON.stringify(drillResult.options),
-                correctOption: drillResult.correctOption,
-                explanation: drillResult.explanation,
-                conceptLabel: drillResult.conceptLabel,
-                digestId: cycleId,
-              });
+                date: new Date().toISOString(),
+                url: "/drills",
+              }).catch((err) => console.error("[pipeline] search-index failed for chapter drill:", err));
             }
           } catch (err) {
             console.error(`[pipeline] Chapter-grounded drill failed for chapter #${chapter.id}:`, err);
@@ -1156,27 +1276,41 @@ async function filterFresh(rawItems: RawItem[]): Promise<RawItem[]> {
 async function insertItems(
   processed: ProcessedItem[],
   interestId: number,
+  interestName: string,
   cycleId: number
 ): Promise<number> {
   let inserted = 0;
   for (const item of processed) {
     try {
-      await db.insert(items).values({
-        title: item.title,
-        authors: item.authors,
-        summary: item.summary,
-        rawSnippet: item.snippet,
-        sourceName: item.sourceName,
-        sourceType: item.sourceType,
-        category: item.category,
-        interestId,
-        url: item.url,
-        dedupeKey: item.dedupeKey,
-        publishedAt: item.publishedAt,
-        score: item.score,
-        digestId: cycleId,
-      });
+      const row = await db
+        .insert(items)
+        .values({
+          title: item.title,
+          authors: item.authors,
+          summary: item.summary,
+          rawSnippet: item.snippet,
+          sourceName: item.sourceName,
+          sourceType: item.sourceType,
+          category: item.category,
+          interestId,
+          url: item.url,
+          dedupeKey: item.dedupeKey,
+          publishedAt: item.publishedAt,
+          score: item.score,
+          digestId: cycleId,
+        })
+        .returning({ id: items.id });
       inserted++;
+      indexForSearch({
+        contentType: "news",
+        sourceId: row[0].id,
+        title: item.title,
+        body: item.summary,
+        interestLabel: interestName,
+        interestId,
+        date: item.publishedAt ?? new Date().toISOString(),
+        url: `/archive/${cycleId}?at=news-${row[0].id}`,
+      }).catch((err) => console.error("[pipeline] search-index failed for news item:", err));
     } catch (err) {
       console.error(`[pipeline] Skipping item insert (likely a dedupe race) for "${item.title}":`, err);
     }
@@ -1236,7 +1370,7 @@ async function runCuratedNews(
     return { ...item, category, summary, score, dedupeKey: dedupeKeyFor(item) };
   });
 
-  const added = await insertItems(processed, interest.id, cycleId);
+  const added = await insertItems(processed, interest.id, interest.name, cycleId);
   return { added, fetched: fetchedCount };
 }
 
@@ -1288,6 +1422,6 @@ async function runRoundupNews(
 
   processed.sort((a, b) => b.score - a.score);
   const selected = processed.slice(0, TARGET_ROUNDUP_ITEMS);
-  const added = await insertItems(selected, interest.id, cycleId);
+  const added = await insertItems(selected, interest.id, interest.name, cycleId);
   return { added, fetched: fetchedCount };
 }

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getChapterById } from "@/lib/digest";
 import { ExplainItBack } from "@/components/ExplainItBack";
+import { ExportButtons } from "@/components/ExportButtons";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +28,8 @@ export default async function ChapterPage({ params }: { params: { chapterId: str
           <span className="pill">{chapter.bookTitle}</span>
           <span className="pill">Chapter {chapter.chapterNumber}</span>
         </div>
-        <h1 className="font-display text-3xl font-bold leading-tight">{chapter.title}</h1>
+        <h1 className="mb-3 font-display text-3xl font-bold leading-tight">{chapter.title}</h1>
+        <ExportButtons kind="chapter" id={chapter.id} />
       </div>
 
       <article className="prose prose-invert max-w-none">

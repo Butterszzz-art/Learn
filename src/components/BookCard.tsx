@@ -7,6 +7,12 @@ const STATUS_LABEL: Record<BookListEntry["status"], string> = {
   error: "Error",
 };
 
+const SOURCE_TYPE_LABEL: Record<BookListEntry["sourceType"], string> = {
+  pdf: "PDF",
+  epub: "EPUB",
+  url_article: "Article",
+};
+
 export function BookCard({ book }: { book: BookListEntry }) {
   const content = (
     <>
@@ -22,6 +28,7 @@ export function BookCard({ book }: { book: BookListEntry }) {
         >
           {STATUS_LABEL[book.status]}
         </span>
+        <span className="pill">{SOURCE_TYPE_LABEL[book.sourceType]}</span>
         {book.status !== "error" && book.totalChapters > 0 && (
           <span className="pill">
             {book.chaptersSurfaced}/{book.totalChapters} chapters read

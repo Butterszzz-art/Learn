@@ -318,6 +318,12 @@ export const brainGames = sqliteTable("brain_games", {
 export const BOOK_STATUSES = ["processing", "ready", "error"] as const;
 export type BookStatus = (typeof BOOK_STATUSES)[number];
 
+// Phase 11: Library input beyond PDF. "book" is a loose term at this point —
+// a url_article is really a single-chapter note, but reuses the exact same
+// table/pipeline (see libraryPipeline.ts) rather than a parallel one.
+export const BOOK_SOURCE_TYPES = ["pdf", "epub", "url_article"] as const;
+export type BookSourceType = (typeof BOOK_SOURCE_TYPES)[number];
+
 export const books = sqliteTable("books", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   title: text("title").notNull(), // "Untitled" until the structure pass identifies it
@@ -332,13 +338,18 @@ export const books = sqliteTable("books", {
   // not itself a spec column, but needed to bridge upload-time input to a
   // value that can only be computed after that later step.
   paceWeeksRequested: integer("pace_weeks_requested"),
-  // The PDF itself, base64-encoded, stored in the DB rather than on local
-  // disk as literally specified — Vercel's serverless filesystem is
-  // ephemeral (same reasoning as src/db/index.ts's local-vs-hosted split),
-  // so a file written during one request isn't guaranteed to exist for the
-  // next. Cleared (set to "") once processing finishes — Claude has already
-  // read everything it needs to by then, and there's no reason to keep
-  // holding a multi-MB blob in every row indefinitely.
+  sourceType: text("source_type").$type<BookSourceType>().notNull().default("pdf"),
+  // Only set for source_type="url_article" — the page that was fetched.
+  sourceUrl: text("source_url"),
+  // The uploaded file's raw bytes, base64-encoded, stored in the DB rather
+  // than on local disk as Phase 7 literally specified — Vercel's serverless
+  // filesystem is ephemeral (same reasoning as src/db/index.ts's local-vs-
+  // hosted split), so a file written during one request isn't guaranteed to
+  // exist for the next. PDF or EPUB bytes depending on source_type; empty
+  // for url_article, which has no file to store. Cleared (set to "") once
+  // processing finishes — Claude has already read everything it needs to by
+  // then, and there's no reason to keep holding a multi-MB blob in every row
+  // indefinitely.
   fileBase64: text("file_base64").notNull(),
   uploadDate: text("upload_date")
     .notNull()
@@ -360,6 +371,13 @@ export const bookChapters = sqliteTable("book_chapters", {
   // its long-chapter windowing) without re-identifying structure each time.
   startPage: integer("start_page"),
   endPage: integer("end_page"),
+  // Phase 11: EPUB and url_article chapters carry their already-extracted
+  // plain text here (no PDF document support from Claude's side for these
+  // formats — see epub.ts / articleFetch.ts), populated at structure time
+  // and cleared once the chapter's content pass has run, same "don't hold
+  // onto it once it's no longer needed" reasoning as books.fileBase64.
+  // Always null for source_type="pdf", which uses fileBase64 instead.
+  rawText: text("raw_text"),
   // Null until the per-chapter content pass runs (structure-pass rows start
   // as placeholders — title/number only). Non-null is this app's signal
   // for "content generated", independent of `status` below, which tracks

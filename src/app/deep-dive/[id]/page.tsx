@@ -8,6 +8,7 @@ import { AppliedInsightCard } from "@/components/AppliedInsightCard";
 import { FollowUpCards } from "@/components/FollowUpCards";
 import { SelfCheckQuiz } from "@/components/SelfCheckQuiz";
 import { ExplainItBack } from "@/components/ExplainItBack";
+import { ExportButtons } from "@/components/ExportButtons";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +47,8 @@ export default async function DeepDivePage({
           <span className="pill">{LEVEL_LABELS[deepDive.level]}</span>
           {createdLabel && <span className="text-neuron-muted">{createdLabel}</span>}
         </div>
-        <h1 className="font-display text-3xl font-bold leading-tight">{deepDive.topic}</h1>
+        <h1 className="mb-3 font-display text-3xl font-bold leading-tight">{deepDive.topic}</h1>
+        <ExportButtons kind="deep-dive" id={deepDive.id} />
       </div>
 
       <article className="prose prose-invert max-w-none prose-headings:font-display prose-a:text-neuron-accent prose-strong:text-neuron-text">

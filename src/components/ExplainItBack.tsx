@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ExplainBackEntry } from "@/lib/digest";
+import { ExportButtons } from "./ExportButtons";
 
 type Source = { type: "deepDive"; id: number } | { type: "chapter"; id: number };
 
@@ -81,7 +82,8 @@ export function ExplainItBack({
           {entries.map((entry) => (
             <div key={entry.id} className="card">
               <p className="mb-2 text-sm text-neuron-text/90">{entry.userExplanation}</p>
-              <p className="text-xs leading-relaxed text-neuron-accent3">{entry.feedback}</p>
+              <p className="mb-3 text-xs leading-relaxed text-neuron-accent3">{entry.feedback}</p>
+              <ExportButtons kind="explain-back" id={entry.id} />
             </div>
           ))}
         </div>

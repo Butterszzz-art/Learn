@@ -1,9 +1,13 @@
 import { getAnthropicClient } from "./claude";
 
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
-// Very long chapters are split into page windows and merged, rather than
-// asking Claude to hold an enormous span in one pass.
+// Very long chapters are split into page windows (PDF) or character windows
+// (EPUB/URL article text) and merged, rather than asking Claude to hold an
+// enormous span in one pass.
 const MAX_PAGES_PER_WINDOW = 40;
+// Roughly analogous to MAX_PAGES_PER_WINDOW for plain-text sources — about
+// 40 pages' worth of prose at a rough 750 chars/page estimate.
+const MAX_CHARS_PER_WINDOW = 30000;
 // Per-chapter content caps after merging windows, so a many-window chapter
 // doesn't produce an unbounded notebook entry.
 const MAX_KEY_CONCEPTS = 12;
@@ -241,6 +245,83 @@ export async function processChapterContent(
   const results = await Promise.all(
     windows.map((w) => processChapterWindow(base64Pdf, bookTitle, chapter, w.start, w.end))
   );
+  return mergeChapterContentResults(results);
+}
+
+/** Same window-and-merge shape as processChapterWindow, but for a source
+ * with no real Claude PDF support (EPUB, a fetched URL article) — the
+ * caller already has the chapter's plain text (see epub.ts / articleFetch's
+ * fetchArticleText), so this sends it as a text content block instead of a
+ * PDF document block. Same output schema either way. */
+async function processChapterWindowFromText(
+  bookTitle: string,
+  chapterTitle: string,
+  windowText: string,
+  windowLabel: string
+): Promise<ChapterContentResult | null> {
+  const anthropic = getAnthropicClient();
+  if (!anthropic) return null;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: 3072,
+      output_config: { format: { type: "json_schema", schema: CHAPTER_CONTENT_SCHEMA } },
+      messages: [
+        {
+          role: "user",
+          content:
+            `This is "${bookTitle}", chapter "${chapterTitle}"${windowLabel ? ` (${windowLabel})` : ""}. ` +
+            "Write a thorough summary, key concepts, notable arguments/claims, and a few short " +
+            "standout quotes for this text. Original synthesis in your own words — not close " +
+            "paraphrase or reproduction of the source text.\n\n---\n\n" +
+            windowText,
+        },
+      ],
+    });
+
+    const textBlock = response.content.find((b) => b.type === "text");
+    if (!textBlock || textBlock.type !== "text") return null;
+    return JSON.parse(textBlock.text) as ChapterContentResult;
+  } catch (err) {
+    console.error(`[library] Text-chapter window processing failed for "${bookTitle}" — "${chapterTitle}":`, err);
+    return null;
+  }
+}
+
+/**
+ * Text-source equivalent of processChapterContent — for EPUB chapters and
+ * single-"chapter" URL articles, whose full plain text is already known (no
+ * PDF document support needed, or possible, from Claude's side). Splits
+ * very long text into character-count windows rather than page windows, but
+ * shares the exact same merge/output shape.
+ */
+export async function processChapterContentFromText(
+  bookTitle: string,
+  chapterTitle: string,
+  fullText: string
+): Promise<ChapterContentResult | null> {
+  const windowCount = Math.max(1, Math.ceil(fullText.length / MAX_CHARS_PER_WINDOW));
+  const charsPerWindow = Math.ceil(fullText.length / windowCount);
+
+  const windows: string[] = [];
+  for (let i = 0; i < windowCount; i++) {
+    windows.push(fullText.slice(i * charsPerWindow, (i + 1) * charsPerWindow));
+  }
+
+  const results = await Promise.all(
+    windows.map((w, i) =>
+      processChapterWindowFromText(bookTitle, chapterTitle, w, windowCount > 1 ? `part ${i + 1} of ${windowCount}` : "")
+    )
+  );
+  return mergeChapterContentResults(results);
+}
+
+/** Shared by both the PDF-windowed and text-windowed paths — merges each
+ * window's independent result into one chapter entry, deduping and capping
+ * so a many-window chapter doesn't produce an unbounded notebook entry.
+ * Returns null if every window failed. */
+function mergeChapterContentResults(results: (ChapterContentResult | null)[]): ChapterContentResult | null {
   const successful = results.filter((r): r is ChapterContentResult => r !== null);
   if (successful.length === 0) return null;
 

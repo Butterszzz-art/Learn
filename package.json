@@ -21,7 +21,9 @@
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.36.4",
     "fast-xml-parser": "^4.5.0",
+    "jszip": "^3.10.1",
     "next": "^14.2.18",
+    "pdfkit": "^0.19.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
@@ -30,6 +32,7 @@
   "devDependencies": {
     "@tailwindcss/typography": "^0.5.20",
     "@types/node": "^22.9.0",
+    "@types/pdfkit": "^0.17.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "autoprefixer": "^10.4.20",

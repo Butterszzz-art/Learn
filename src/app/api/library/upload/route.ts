@@ -3,9 +3,9 @@ import { ensureDb } from "@/db/bootstrap";
 import { createBook } from "@/lib/libraryPipeline";
 
 export const dynamic = "force-dynamic";
-// Just reads the upload and writes one row — no Claude call here (that's
-// process-structure/process-chapter, called separately by the client after
-// this returns). Comfortably fast regardless of file size.
+// Just reads the upload/URL and writes one row — no Claude call here
+// (that's process-structure/process-chapter, called separately by the
+// client after this returns). Comfortably fast regardless of file size.
 export const maxDuration = 60;
 
 // Generous but bounded — matches Anthropic's own PDF document size ceiling
@@ -23,12 +23,37 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Expected multipart/form-data" }, { status: 400 });
   }
 
+  const paceWeeksRaw = form.get("paceWeeks");
+  const paceWeeks = typeof paceWeeksRaw === "string" && paceWeeksRaw.trim() ? Number(paceWeeksRaw) : null;
+  const paceWeeksRequested = paceWeeks && Number.isFinite(paceWeeks) && paceWeeks > 0 ? Math.round(paceWeeks) : null;
+
+  // Phase 11: a pasted article URL is a valid "book" source too — no file
+  // involved, just a single-chapter note built from the fetched page.
+  const urlField = form.get("url");
+  if (typeof urlField === "string" && urlField.trim()) {
+    const url = urlField.trim();
+    if (!/^https?:\/\//i.test(url)) {
+      return NextResponse.json({ error: "Enter a valid http(s) URL" }, { status: 400 });
+    }
+    try {
+      const result = await createBook(url, "", paceWeeksRequested, "url_article", url);
+      return NextResponse.json(result);
+    } catch (err) {
+      console.error("[api/library/upload] URL create failed:", err);
+      return NextResponse.json({ error: err instanceof Error ? err.message : "Couldn't save this URL" }, { status: 500 });
+    }
+  }
+
   const file = form.get("file");
   if (!(file instanceof File)) {
-    return NextResponse.json({ error: "A PDF file is required" }, { status: 400 });
+    return NextResponse.json({ error: "A PDF or EPUB file, or an article URL, is required" }, { status: 400 });
   }
-  if (file.type && file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
-    return NextResponse.json({ error: "Only PDF files are supported for now" }, { status: 400 });
+
+  const lowerName = file.name.toLowerCase();
+  const isPdf = file.type === "application/pdf" || lowerName.endsWith(".pdf");
+  const isEpub = file.type === "application/epub+zip" || lowerName.endsWith(".epub");
+  if (!isPdf && !isEpub) {
+    return NextResponse.json({ error: "Only PDF and EPUB files are supported" }, { status: 400 });
   }
   if (file.size > MAX_FILE_BYTES) {
     return NextResponse.json(
@@ -37,14 +62,10 @@ export async function POST(req: Request) {
     );
   }
 
-  const paceWeeksRaw = form.get("paceWeeks");
-  const paceWeeks = typeof paceWeeksRaw === "string" && paceWeeksRaw.trim() ? Number(paceWeeksRaw) : null;
-  const paceWeeksRequested = paceWeeks && Number.isFinite(paceWeeks) && paceWeeks > 0 ? Math.round(paceWeeks) : null;
-
   try {
     const buffer = Buffer.from(await file.arrayBuffer());
     const base64 = buffer.toString("base64");
-    const result = await createBook(file.name, base64, paceWeeksRequested);
+    const result = await createBook(file.name, base64, paceWeeksRequested, isPdf ? "pdf" : "epub");
     return NextResponse.json(result);
   } catch (err) {
     console.error("[api/library/upload] failed:", err);

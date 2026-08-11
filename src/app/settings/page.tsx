@@ -31,6 +31,24 @@ export default async function SettingsPage() {
         </h2>
         <BrainGamesToggle initial={settings.includeBrainGames} />
       </section>
+
+      <section>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neuron-muted">
+          Your data
+        </h2>
+        <div className="card">
+          <p className="mb-3 text-sm text-neuron-text/90">
+            Export every Deep Dive and Library chapter you've generated as a zip of markdown files,
+            organized by interest/book and date — drop it straight into a notes app like Obsidian as
+            a folder. Notes that share a topic or key concept get linked to each other with
+            <code className="mx-1 rounded bg-neuron-surface2 px-1">[[wiki-links]]</code>
+            where practical.
+          </p>
+          <a href="/api/export/all" className="btn-secondary inline-block text-sm">
+            ⬇ Export everything
+          </a>
+        </div>
+      </section>
     </div>
   );
 }
