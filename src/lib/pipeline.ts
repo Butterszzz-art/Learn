@@ -48,17 +48,21 @@ import {
 import type { InterestWithConfig } from "./interests";
 import type { RawItem, ProcessedItem } from "./types";
 
-const TARGET_ITEMS_PER_INTEREST = 8; // curated (RSS/API) sources
-const TARGET_ROUNDUP_ITEMS = 5; // generated Field News Roundup
-// Passion Mode: favorited interests get this many deep dives per cycle
-// instead of 1. Kept modest (not the full "2-3" range) to bound API cost —
-// see README if you want to raise it.
-const FAVORITE_DEEP_DIVE_QUOTA = 2;
-// Drills (Phase 5): "1-2 drills" grounded in real recent deep-dive content
-// per cycle, scanned across ALL interests.
-const GROUNDED_DRILL_TARGET = 2;
-const GROUNDED_DRILL_LOOKBACK_DAYS = 4;
-const GROUNDED_DRILL_MAX_CANDIDATES = 5; // bounds Claude calls even with a large recent-dive pool
+// Volume constants below govern how much content one refresh cycle
+// generates. With no meaningful cap on API usage anymore, these are set to
+// gather substantially more per cycle rather than the original cost-
+// conscious minimums — raise further if you want an even denser feed.
+const TARGET_ITEMS_PER_INTEREST = 15; // curated (RSS/API) sources
+const TARGET_ROUNDUP_ITEMS = 10; // generated Field News Roundup
+// Every enabled interest gets this many deep dives per cycle by default;
+// a favorited/Passion Mode interest gets FAVORITE_DEEP_DIVE_QUOTA instead.
+const BASE_DEEP_DIVE_QUOTA = 2;
+const FAVORITE_DEEP_DIVE_QUOTA = 4;
+// Drills (Phase 5): grounded in real recent deep-dive content per cycle,
+// scanned across ALL interests.
+const GROUNDED_DRILL_TARGET = 5;
+const GROUNDED_DRILL_LOOKBACK_DAYS = 7;
+const GROUNDED_DRILL_MAX_CANDIDATES = 12; // bounds Claude calls even with a large recent-dive pool
 
 // Phase 6 constants.
 // Explain-it-back: for advanced/research_level interests, roughly 1 in 7
@@ -75,8 +79,8 @@ const MENTAL_MODEL_ITEM_CANDIDATES = 12;
 // Steelman: only for interests where argument is central, capped per cycle
 // to control API cost (each generation call uses web_search).
 const STEELMAN_ELIGIBLE_SLUGS = new Set(["political-science", "economics", "philosophy", "critical-thinking"]);
-const STEELMAN_TARGET_PER_INTEREST = 2;
-const STEELMAN_CANDIDATE_POOL = 8;
+const STEELMAN_TARGET_PER_INTEREST = 4;
+const STEELMAN_CANDIDATE_POOL = 15;
 // Rabbit Hole: how many recently-shown topic areas to avoid repeating.
 const RABBIT_HOLE_AVOID_LOOKBACK = 20;
 
@@ -341,10 +345,11 @@ async function generateAndPersistDeepDive(
 
 /**
  * One Deep Dive for one interest, for the current cycle — no-op once this
- * cycle has reached its quota (1 normally, FAVORITE_DEEP_DIVE_QUOTA for a
- * favorited/Passion Mode interest). Called once per HTTP request; the
- * caller loops (see RefreshButton.tsx / runInterestCycle below) to fill a
- * >1 quota across multiple short requests rather than one long one.
+ * cycle has reached its quota (BASE_DEEP_DIVE_QUOTA normally,
+ * FAVORITE_DEEP_DIVE_QUOTA for a favorited/Passion Mode interest). Called
+ * once per HTTP request; the caller loops (see RefreshButton.tsx /
+ * runInterestCycle below) to fill a >1 quota across multiple short requests
+ * rather than one long one.
  */
 export async function refreshDeepDiveForInterest(interestId: number): Promise<DeepDiveStepResult | null> {
   const interest = await getInterestById(interestId);
@@ -359,7 +364,7 @@ export async function refreshDeepDiveForInterest(interestId: number): Promise<De
   }
 
   const cycleId = await getOrCreateCurrentCycleId();
-  const quota = interest.isFavorite ? FAVORITE_DEEP_DIVE_QUOTA : 1;
+  const quota = interest.isFavorite ? FAVORITE_DEEP_DIVE_QUOTA : BASE_DEEP_DIVE_QUOTA;
   const existing = await db
     .select({ topic: deepDives.topic })
     .from(deepDives)
@@ -642,7 +647,8 @@ export interface DrillsStepResult {
  * once per cycle, after other interests' deep dives are generated, since
  * grounded drills scan across ALL interests' recent deep-dive content. Two
  * parts, each independently idempotent so a retry never duplicates:
- *  1. 1-2 drills grounded in a real, recent deep dive (any interest).
+ *  1. Up to GROUNDED_DRILL_TARGET drills grounded in a real, recent deep
+ *     dive (any interest).
  *  2. 1 standalone formal-logic drill for Critical Thinking & Argumentation
  *     (preferred) or Logic, if either is enabled.
  */
@@ -1135,7 +1141,8 @@ async function addSteelmansForInterest(interest: InterestWithConfig, cycleId: nu
   try {
     const results = await generateSteelmans(
       interest.name,
-      candidateRows.map((c, idx) => ({ index: idx + 1, title: c.title, summary: c.summary }))
+      candidateRows.map((c, idx) => ({ index: idx + 1, title: c.title, summary: c.summary })),
+      needed
     );
 
     let added = 0;
