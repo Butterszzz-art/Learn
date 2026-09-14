@@ -8,6 +8,7 @@ import { SearchOverlay } from "./SearchOverlay";
 const LINKS = [
   { href: "/drills", label: "Drills" },
   { href: "/library", label: "Library" },
+  { href: "/research", label: "Research" },
   { href: "/archive", label: "Archive" },
   { href: "/settings", label: "Settings" },
 ];

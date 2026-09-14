@@ -44,3 +44,27 @@
     @apply rounded bg-neuron-accent/30 text-neuron-text;
   }
 }
+
+@layer utilities {
+  /* Reveal-on-appear — used for content that just arrived (agent answers,
+     freshly-fetched cards) so it registers as new rather than popping in.
+     Transform/opacity only (GPU-cheap); fully inert under reduced motion. */
+  @keyframes reveal-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .animate-reveal {
+    animation: reveal-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-reveal {
+      animation: none;
+    }
+  }
+}
