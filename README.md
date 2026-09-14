@@ -143,6 +143,13 @@ No hosting, no email, no account required.
   ranked by relevance with recency as the tiebreaker, results grouped by
   content type and linking straight back into the reading view. Kept
   up to date incrementally as each cycle generates new content.
+- **Research Agent**: a dedicated tab, separate from "Search everything"
+  above (which only searches content this app has already generated). Ask a
+  research question and an AI agent — powered by OpenRouter, independent of
+  the Anthropic key used everywhere else — searches OpenAlex and Semantic
+  Scholar for real, current papers before answering, citing what it actually
+  found rather than relying on its own training data. Optional: every other
+  feature works unchanged if it's left unconfigured.
 - **Export your knowledge**: any Deep Dive, Library chapter, or
   explain-it-back entry exports as Markdown or PDF from its own page. A
   one-click "Export everything" in Settings produces a zip of every Deep
@@ -184,6 +191,21 @@ Anthropic API key — curated News still works without one.
 3. Optionally set `ANTHROPIC_MODEL` to a different model ID — defaults to
    `claude-sonnet-5`.
 4. Restart `npm run dev`.
+
+### Enabling the Research Agent (optional, separate key)
+
+The Research Agent (`/research`) is an add-on feature independent of
+everything above — it runs on [OpenRouter](https://openrouter.ai) instead of
+the Anthropic API, so a second key is needed only if you want it.
+
+1. Get a key from [openrouter.ai/keys](https://openrouter.ai/keys). **Add it
+   yourself** — don't paste it into a chat with an AI assistant and ask it to
+   write the file for you.
+2. Set `OPENROUTER_API_KEY=sk-or-...` in `.env.local`.
+3. Optionally set `OPENROUTER_MODEL` to a different OpenRouter model slug —
+   defaults to `anthropic/claude-sonnet-5`.
+4. Restart `npm run dev`. Leaving this unset just shows a "not configured"
+   message on the Research tab; nothing else in the app is affected.
 
 ---
 
@@ -370,6 +392,9 @@ src/
     newsRoundup.ts       Field News Roundup generation (web_search)
     dedupe.ts           URL + fuzzy-title deduplication
     score.ts            Per-interest item ranking
+    externalSources.ts  OpenAlex + Semantic Scholar paper search (no LLM)
+    researchAgent.ts    Research Agent: OpenRouter tool-calling loop over
+                        externalSources.ts
     pipeline.ts         Orchestrates News + Deep Dive + Applied Insight,
                         per interest, per cycle
     digest.ts           Read-side feed/archive/settings queries
