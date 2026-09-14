@@ -23,15 +23,17 @@ const SYSTEM_PROMPT =
 
 /**
  * Given a batch of candidate news items (title + summary) for one interest,
- * uses web search to identify up to 2 that present a genuine arguable
- * thesis (an opinion, a policy argument, a contested interpretation — not
- * purely descriptive discovery news), and writes the strongest good-faith
- * counterargument to each. One combined call per interest per cycle rather
- * than one per candidate, to bound API cost. Returns [] if none qualify.
+ * uses web search to identify up to maxResults that present a genuine
+ * arguable thesis (an opinion, a policy argument, a contested interpretation
+ * — not purely descriptive discovery news), and writes the strongest
+ * good-faith counterargument to each. One combined call per interest per
+ * cycle rather than one per candidate, to bound API cost. Returns [] if none
+ * qualify.
  */
 export async function generateSteelmans(
   interestName: string,
-  candidates: SteelmanCandidate[]
+  candidates: SteelmanCandidate[],
+  maxResults = 2
 ): Promise<SteelmanResult[]> {
   const anthropic = getAnthropicClient();
   if (!anthropic || candidates.length === 0) return [];
@@ -39,7 +41,7 @@ export async function generateSteelmans(
   const prompt =
     `Here are recent ${interestName} news items (numbered):\n\n` +
     candidates.map((c) => `${c.index}. ${c.title} — ${c.summary}`).join("\n") +
-    "\n\nIdentify AT MOST 2 of these that present a genuine arguable thesis — an opinion piece, a " +
+    `\n\nIdentify AT MOST ${maxResults} of these that present a genuine arguable thesis — an opinion piece, a ` +
     "policy argument, a contested interpretation. Skip purely descriptive/discovery items (a new " +
     "measurement, a new fossil, a factual event report) — those have no 'other side' to steelman. If " +
     "none qualify, that's fine — say so.\n\n" +
@@ -58,9 +60,9 @@ export async function generateSteelmans(
     let messages: Anthropic.MessageParam[] = [{ role: "user", content: prompt }];
     let response = await anthropic.messages.create({
       model: MODEL,
-      max_tokens: 2048,
+      max_tokens: 3072,
       system: SYSTEM_PROMPT,
-      tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 4 }],
+      tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }],
       output_config: { effort: "medium" },
       messages,
     });
@@ -70,9 +72,9 @@ export async function generateSteelmans(
       messages = [...messages, { role: "assistant", content: response.content }];
       response = await anthropic.messages.create({
         model: MODEL,
-        max_tokens: 2048,
+        max_tokens: 3072,
         system: SYSTEM_PROMPT,
-        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 4 }],
+        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }],
         output_config: { effort: "medium" },
         messages,
       });
@@ -90,14 +92,18 @@ export async function generateSteelmans(
       .join("\n\n")
       .trim();
 
-    return parseSteelmanResponse(fullText, candidates);
+    return parseSteelmanResponse(fullText, candidates, maxResults);
   } catch (err) {
     console.error(`[steelman] Generation failed for "${interestName}":`, err);
     return [];
   }
 }
 
-function parseSteelmanResponse(fullText: string, candidates: SteelmanCandidate[]): SteelmanResult[] {
+function parseSteelmanResponse(
+  fullText: string,
+  candidates: SteelmanCandidate[],
+  maxResults: number
+): SteelmanResult[] {
   if (/^\s*NONE\s*$/i.test(fullText)) return [];
 
   const validIndexes = new Set(candidates.map((c) => c.index));
@@ -116,5 +122,5 @@ function parseSteelmanResponse(fullText: string, candidates: SteelmanCandidate[]
     results.push({ index, steelman });
   }
 
-  return results.slice(0, 2);
+  return results.slice(0, maxResults);
 }

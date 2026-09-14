@@ -23,7 +23,7 @@ No hosting, no email, no account required.
 - **News, for every field**: interests with a registered RSS/API source (all
   the original seven except Business and Political Science) use it. Every
   other interest — Business, Political Science, or anything you typed
-  yourself — gets a Claude-generated **Field News Roundup** instead: 3-5
+  yourself — gets a Claude-generated **Field News Roundup** instead: 8-10
   real, current, web-search-verified developments, each with a genuine
   source link, summarized in the app's own words.
 - **Real abstracts, not blurbs**: News summaries are a genuine ~120-200 word
@@ -37,11 +37,12 @@ No hosting, no email, no account required.
   too thin to build a real summary from. A "Read source" link to the
   original always follows. Falls back gracefully to a short snippet if a
   page fetch or the summarization call fails.
-- **Deep dives**: once per digest cycle, per enabled interest, Claude — with
-  the `web_search` tool — writes one genuinely thorough, several-hundred-word
-  explainer on the next logical syllabus topic, grounded in real current
-  sources. Calibrated to your level, but never condescending — level only
-  changes which concepts are assumed as background, not the register.
+- **Deep dives**: each digest cycle, per enabled interest, Claude — with the
+  `web_search` tool — writes several genuinely thorough, several-hundred-word
+  explainers on the next logical syllabus topics (2 per interest normally,
+  4 for a favorited/Passion Mode interest), grounded in real current sources.
+  Calibrated to your level, but never condescending — level only changes
+  which concepts are assumed as background, not the register.
 - **Applied Insights**: for interests where it makes sense (Psychology,
   Business, Economics & Finance, Philosophy, and Neuroscience by default;
   toggle any interest in Settings), one short, concrete, actionable
@@ -70,11 +71,11 @@ No hosting, no email, no account required.
   cards — natural next subtopics it raised, each with a one-line teaser.
   Clicking one generates and opens that specific entry immediately, for any
   interest, not waiting for the next cycle.
-- **Passion Mode**: star any interest (feed or Settings) to get more than
-  one deep dive per cycle, framed one notch more advanced than its stored
-  level, plus two on-demand feed controls — **Binge** (algorithm picks,
-  generates now) and **pick your next topic** (see 2-3 candidates, choose
-  one yourself).
+- **Passion Mode**: star any interest (feed or Settings) to double its deep
+  dives per cycle, framed one notch more advanced than its stored level,
+  plus two on-demand feed controls — **Binge** (algorithm picks, generates
+  now) and **pick your next topic** (see 2-3 candidates, choose one
+  yourself).
 - **Retention tools**: each deep dive ends with a 2-3 question self-check —
   multiple choice, reveals right/wrong plus a one-line explanation
   immediately, no score kept or sent anywhere. Topics you've covered
@@ -85,7 +86,7 @@ No hosting, no email, no account required.
   feed — never a streak, never framed as being "at risk."
 - **Drills**: critical-thinking/logic practice — spot the fallacy,
   reconstruct the argument, check validity, or strengthen/weaken it.
-  Grounded in real content whenever possible: each cycle, 1-2 drills are
+  Grounded in real content whenever possible: each cycle, up to 5 drills are
   built from an actual argument or claim found in a recent deep dive
   (any interest), with a link back to it. Plus one standalone formal-logic
   drill per cycle (syllogisms, validity vs. soundness, formal fallacies)
@@ -300,7 +301,11 @@ browser's share menu for an app-like shortcut.
 - Every step is **idempotent** — it checks what already exists for the
   current cycle before generating anything. So if a step times out on
   Hobby, clicking **Refresh now** again simply picks up where it left off
-  instead of duplicating or losing progress.
+  instead of duplicating or losing progress. The button already loops the
+  Deep Dive step client-side until each interest's quota is filled (2
+  normally, 4 for a favorited interest), so one click gathers the full
+  cycle — it just takes longer with the higher per-cycle volume than a
+  single deep dive would.
 - If you hit timeouts often on Hobby, either upgrade that Vercel project to
   Pro, or just get in the habit of clicking Refresh twice.
 
@@ -310,14 +315,15 @@ browser's share menu for an app-like shortcut.
 
 - **Refresh** (the button in the UI, or `npm run fetch` from the CLI) does,
   for every enabled interest, in parallel:
-  1. **News** — curated fetch (dedupe, score, keep the top ~8) for
+  1. **News** — curated fetch (dedupe, score, keep the top ~15) for
      interests with a registered source; a Claude+`web_search` Field News
-     Roundup (3-5 items, capped) for everything else.
-  2. **Deep Dive** — if this cycle hasn't reached its quota yet (1 normally,
-     2 for a favorited/Passion Mode interest), Claude picks the next
+     Roundup (8-10 items, capped) for everything else.
+  2. **Deep Dive** — if this cycle hasn't reached its quota yet (2 normally,
+     4 for a favorited/Passion Mode interest), Claude picks the next
      syllabus topic (escalating in depth as the series grows, unless the
      interest is at research level) and writes the explainer, plus its
-     follow-up topics and self-check questions.
+     follow-up topics and self-check questions — looping until the quota
+     is filled.
   3. **Applied Insight** — one per deep dive written this cycle, for
      interests that generate them, or nothing if a given topic doesn't have
      a natural everyday application.
@@ -325,7 +331,7 @@ browser's share menu for an app-like shortcut.
   Refreshing multiple times within the same day/week adds new News items to
   the *same* cycle; Deep Dive and Applied Insight are capped at their quota
   per interest per cycle regardless of how many times you refresh (see
-  Passion Mode above for what raises that quota above 1). Curiosity
+  Passion Mode above for what raises that quota above 2). Curiosity
   branching, Binge, and pick-your-next-topic all add *extra* dives on top of
   that quota, on demand — they're not capped by it. This is what makes
   "You're caught up" mean something even with Passion Mode's larger quota.

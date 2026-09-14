@@ -15,7 +15,7 @@ function buildPrompt(interestName: string, focusOverride?: string): string {
   const subject = focusOverride ?? `real, current, dated developments, news items, or notable recent ` +
     `happenings in the field of "${interestName}"`;
   return (
-    `Search for 3 to 5 ${subject}. Use web search to confirm each one is real and to get a ` +
+    `Search for 8 to 10 ${subject}. Use web search to confirm each one is real and to get a ` +
     "genuine, working source URL — never invent one.\n\n" +
     "Respond with exactly one block per item, in this format, separated by a line containing only " +
     "three dashes (---):\n\n" +
@@ -28,14 +28,14 @@ function buildPrompt(interestName: string, focusOverride?: string): string {
     "TITLE: <next item>\n" +
     "...\n\n" +
     "Only include items you actually found via search with a real, working URL. If you can only find " +
-    "2 solid, verifiable items, that's fine — do not pad with weaker or fabricated items to reach 5."
+    "a few solid, verifiable items, that's fine — do not pad with weaker or fabricated items to reach 10."
   );
 }
 
 /**
  * Generates a "Field News Roundup" for an interest with no registered RSS
  * fetcher (any custom interest, Business/Political Science/Philosophy of
- * Science, or Critical Thinking & Argumentation) — 3-5 real, current,
+ * Science, or Critical Thinking & Argumentation) — 8-10 real, current,
  * web-search-grounded developments, each shaped like a RawItem so it can
  * flow through the same dedupe/score/render pipeline as fetched items.
  * focusOverride replaces the generic "developments in the field of X" ask
@@ -52,9 +52,9 @@ export async function generateFieldNewsRoundup(interestName: string, focusOverri
     ];
     let response = await anthropic.messages.create({
       model: MODEL,
-      max_tokens: 3072,
+      max_tokens: 5120,
       system: SYSTEM_PROMPT,
-      tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 6 }],
+      tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 12 }],
       output_config: { effort: "medium" },
       messages,
     });
@@ -64,9 +64,9 @@ export async function generateFieldNewsRoundup(interestName: string, focusOverri
       messages = [...messages, { role: "assistant", content: response.content }];
       response = await anthropic.messages.create({
         model: MODEL,
-        max_tokens: 3072,
+        max_tokens: 5120,
         system: SYSTEM_PROMPT,
-        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 6 }],
+        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 12 }],
         output_config: { effort: "medium" },
         messages,
       });
@@ -84,7 +84,7 @@ export async function generateFieldNewsRoundup(interestName: string, focusOverri
       .join("\n\n")
       .trim();
 
-    return parseRoundup(fullText).slice(0, 5);
+    return parseRoundup(fullText).slice(0, 10);
   } catch (err) {
     console.error(`[newsRoundup] Generation failed for "${interestName}":`, err);
     return [];

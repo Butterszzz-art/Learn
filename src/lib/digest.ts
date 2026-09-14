@@ -71,9 +71,9 @@ export interface InterestFeedSection {
   interestSlug: string;
   isFavorite: boolean;
   news: NewsItem[];
-  // A cycle normally has one deep dive per interest, but a favorited
-  // (Passion Mode) interest can have more — see FAVORITE_DEEP_DIVE_QUOTA in
-  // pipeline.ts — plus curiosity-branching/Binge on-demand additions.
+  // A cycle normally has BASE_DEEP_DIVE_QUOTA deep dives per interest, but a
+  // favorited (Passion Mode) interest gets FAVORITE_DEEP_DIVE_QUOTA instead
+  // — see pipeline.ts — plus curiosity-branching/Binge on-demand additions.
   deepDives: DeepDiveSummary[];
   appliedInsights: AppliedInsightSummary[];
   drills: DrillSummary[];
