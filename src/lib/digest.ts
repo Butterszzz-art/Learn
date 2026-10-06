@@ -36,6 +36,24 @@ export interface NewsItem {
   steelmanContent: string | null;
 }
 
+// Phase 15 (Syllabus Awareness) — a provable, per-entry curriculum-gap tag;
+// see computeSyllabusComparison in src/lib/syllabus.ts for how it's derived.
+export interface SyllabusTag {
+  status: "not_in_syllabus" | "newer_than_assigned";
+  courseName: string;
+  note: string;
+}
+
+function parseSyllabusComparison(raw: string | null): SyllabusTag | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed?.status && parsed?.note ? (parsed as SyllabusTag) : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface DeepDiveSummary {
   id: number;
   topic: string;
@@ -43,6 +61,7 @@ export interface DeepDiveSummary {
   level: Level;
   createdAt: string;
   sourceCount: number;
+  syllabusTag: SyllabusTag | null;
 }
 
 export interface AppliedInsightSummary {
@@ -63,6 +82,10 @@ export interface DrillSummary {
   // "based on today's [Interest] deep-dive". Null for standalone logic drills.
   sourceDeepDiveId: number | null;
   sourceDeepDiveTopic: string | null;
+  // Phase 14 — carried along purely so the engagement-event logger
+  // (DrillCard) knows which interest to attribute a "viewed"/"answered"
+  // event to for pruning purposes.
+  interestId: number;
 }
 
 export interface InterestFeedSection {
@@ -129,15 +152,17 @@ export interface CycleFeed {
   // At most one topic due for spaced review, surfaced as a "Remember this?"
   // card. Only rendered on the live/current feed, not archive views.
   dueReview: DueReviewTopic | null;
-  // Once per cycle each, visually distinct from the per-interest sections.
-  mentalModelOfTheDay: MentalModelOfTheDay | null;
-  rabbitHoleOfTheDay: RabbitHoleOfTheDay | null;
+  // Phase 13: Mental Model and Rabbit Hole moved from "one per day" to
+  // "a handful per week" — both now arrays (0-3 and 0-2 respectively in
+  // practice), visually distinct from the per-interest sections.
+  mentalModelsOfTheWeek: MentalModelOfTheDay[];
+  rabbitHolesOfTheWeek: RabbitHoleOfTheDay[];
   // Null when the "Include brain games" setting is off — distinct from an
   // empty array, which would mean the setting is on but the bank is empty.
   brainGames: BrainGamePick[] | null;
   // One pointer per book that surfaced chapter(s) this cycle — a short
   // "Chapter N of [Book] is ready" card, not the chapter content itself.
-  bookChaptersOfTheDay: BookChapterPointer[];
+  bookChaptersOfTheWeek: BookChapterPointer[];
 }
 
 function stripMarkdown(md: string): string {
@@ -179,10 +204,10 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
       totalEntries: 0,
       progress: { conceptsThisMonth: 0, interestsCount: 0 },
       dueReview: null,
-      mentalModelOfTheDay: null,
-      rabbitHoleOfTheDay: null,
+      mentalModelsOfTheWeek: [],
+      rabbitHolesOfTheWeek: [],
       brainGames: await getBrainGamesIfEnabled(),
-      bookChaptersOfTheDay: await getBookChaptersOfTheDay(cycleId),
+      bookChaptersOfTheWeek: await getBookChaptersOfTheWeek(cycleId),
     };
   }
 
@@ -264,6 +289,7 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
       level: r.level,
       createdAt: r.createdAt,
       sourceCount,
+      syllabusTag: parseSyllabusComparison(r.syllabusComparison),
     });
   }
 
@@ -286,6 +312,7 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
       conceptLabel: drill.conceptLabel,
       sourceDeepDiveId: sourceDive?.id ?? null,
       sourceDeepDiveTopic: sourceDive?.topic ?? null,
+      interestId: drill.interestId,
     });
   }
 
@@ -339,10 +366,10 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
   // the live feed, not archive views — see Feed.tsx's isArchive prop.
   const dueReview = await getDueReviewTopic(progressInterestIds, interestById);
 
-  const mentalModelOfTheDay = await getMentalModelOfTheDay(cycleId);
-  const rabbitHoleOfTheDay = await getRabbitHoleOfTheDay(cycleId);
+  const mentalModelsOfTheWeek = await getMentalModelsOfTheWeek(cycleId);
+  const rabbitHolesOfTheWeek = await getRabbitHolesOfTheWeek(cycleId);
   const brainGamesList = await getBrainGamesIfEnabled();
-  const bookChaptersOfTheDay = await getBookChaptersOfTheDay(cycleId);
+  const bookChaptersOfTheWeek = await getBookChaptersOfTheWeek(cycleId);
 
   return {
     cycleId: cycle.id,
@@ -355,16 +382,16 @@ async function loadCycleFeed(cycleId: number, enabledInterestIds: number[]): Pro
     totalEntries,
     progress,
     dueReview,
-    mentalModelOfTheDay,
-    rabbitHoleOfTheDay,
+    mentalModelsOfTheWeek,
+    rabbitHolesOfTheWeek,
     brainGames: brainGamesList,
-    bookChaptersOfTheDay,
+    bookChaptersOfTheWeek,
   };
 }
 
 /** One pointer card per book that surfaced chapter(s) this cycle — see
  * BookChapterPointer. Chapters themselves render in Library, not here. */
-async function getBookChaptersOfTheDay(cycleId: number): Promise<BookChapterPointer[]> {
+async function getBookChaptersOfTheWeek(cycleId: number): Promise<BookChapterPointer[]> {
   const rows = await db
     .select({ chapter: bookChapters, book: books })
     .from(bookChapters)
@@ -385,78 +412,89 @@ async function getBookChaptersOfTheDay(cycleId: number): Promise<BookChapterPoin
   return [...byBook.values()];
 }
 
-async function getMentalModelOfTheDay(cycleId: number): Promise<MentalModelOfTheDay | null> {
+/** Phase 13: Mental Model of the Week — up to `limit` usages for this
+ * cycle (was a single "of the Day" row). */
+async function getMentalModelsOfTheWeek(cycleId: number, limit = 5): Promise<MentalModelOfTheDay[]> {
   const rows = await db
     .select({ usage: modelUsage, model: mentalModels })
     .from(modelUsage)
     .innerJoin(mentalModels, eq(modelUsage.modelId, mentalModels.id))
     .where(eq(modelUsage.digestId, cycleId))
-    .limit(1);
-  const row = rows[0];
-  if (!row) return null;
+    .orderBy(desc(modelUsage.dateUsed))
+    .limit(limit);
+  if (rows.length === 0) return [];
 
-  // Phase 7 widened this from plain number[] (always an item) to
-  // {type, id}[] (item or book chapter) — a bare number in an older row
-  // means {type: "item", id: number}.
-  let rawRefs: unknown[] = [];
-  try {
-    rawRefs = JSON.parse(row.usage.linkedItemIds);
-  } catch {
-    rawRefs = [];
-  }
-  const refs = rawRefs.map((r) =>
-    typeof r === "number" ? { type: "item" as const, id: r } : (r as { type: "item" | "chapter"; id: number })
-  );
-  const itemIds = refs.filter((r) => r.type === "item").map((r) => r.id);
-  const chapterIds = refs.filter((r) => r.type === "chapter").map((r) => r.id);
-
-  const linkedItems: { id: number; title: string; interestName: string }[] = [];
-  if (itemIds.length > 0) {
-    const itemRows = await db
-      .select({ item: items, interest: interests })
-      .from(items)
-      .leftJoin(interests, eq(items.interestId, interests.id))
-      .where(inArray(items.id, itemIds));
-    linkedItems.push(
-      ...itemRows.map((r) => ({ id: r.item.id, title: r.item.title, interestName: r.interest?.name ?? "Unknown" }))
+  const out: MentalModelOfTheDay[] = [];
+  for (const row of rows) {
+    // Phase 7 widened this from plain number[] (always an item) to
+    // {type, id}[] (item or book chapter) — a bare number in an older row
+    // means {type: "item", id: number}.
+    let rawRefs: unknown[] = [];
+    try {
+      rawRefs = JSON.parse(row.usage.linkedItemIds);
+    } catch {
+      rawRefs = [];
+    }
+    const refs = rawRefs.map((r) =>
+      typeof r === "number" ? { type: "item" as const, id: r } : (r as { type: "item" | "chapter"; id: number })
     );
-  }
-  if (chapterIds.length > 0) {
-    const chapterRows = await db
-      .select({ chapter: bookChapters, book: books })
-      .from(bookChapters)
-      .innerJoin(books, eq(bookChapters.bookId, books.id))
-      .where(inArray(bookChapters.id, chapterIds));
-    linkedItems.push(
-      ...chapterRows.map((r) => ({
-        id: r.chapter.id,
-        title: r.chapter.title,
-        interestName: `Library: ${r.book.title}`,
-      }))
-    );
-  }
+    const itemIds = refs.filter((r) => r.type === "item").map((r) => r.id);
+    const chapterIds = refs.filter((r) => r.type === "chapter").map((r) => r.id);
 
-  return {
-    id: row.usage.id,
-    modelName: row.model.name,
-    category: row.model.category,
-    lensText: row.usage.lensText,
-    linkedItems,
-  };
+    const linkedItems: { id: number; title: string; interestName: string }[] = [];
+    if (itemIds.length > 0) {
+      const itemRows = await db
+        .select({ item: items, interest: interests })
+        .from(items)
+        .leftJoin(interests, eq(items.interestId, interests.id))
+        .where(inArray(items.id, itemIds));
+      linkedItems.push(
+        ...itemRows.map((r) => ({ id: r.item.id, title: r.item.title, interestName: r.interest?.name ?? "Unknown" }))
+      );
+    }
+    if (chapterIds.length > 0) {
+      const chapterRows = await db
+        .select({ chapter: bookChapters, book: books })
+        .from(bookChapters)
+        .innerJoin(books, eq(bookChapters.bookId, books.id))
+        .where(inArray(bookChapters.id, chapterIds));
+      linkedItems.push(
+        ...chapterRows.map((r) => ({
+          id: r.chapter.id,
+          title: r.chapter.title,
+          interestName: `Library: ${r.book.title}`,
+        }))
+      );
+    }
+
+    out.push({
+      id: row.usage.id,
+      modelName: row.model.name,
+      category: row.model.category,
+      lensText: row.usage.lensText,
+      linkedItems,
+    });
+  }
+  return out;
 }
 
-async function getRabbitHoleOfTheDay(cycleId: number): Promise<RabbitHoleOfTheDay | null> {
-  const rows = await db.select().from(rabbitHoles).where(eq(rabbitHoles.digestId, cycleId)).limit(1);
-  const row = rows[0];
-  if (!row) return null;
-  return {
+/** Phase 13: Rabbit Hole of the Week — up to `limit` for this cycle (was a
+ * single "of the Day" row). */
+async function getRabbitHolesOfTheWeek(cycleId: number, limit = 5): Promise<RabbitHoleOfTheDay[]> {
+  const rows = await db
+    .select()
+    .from(rabbitHoles)
+    .where(eq(rabbitHoles.digestId, cycleId))
+    .orderBy(desc(rabbitHoles.createdAt))
+    .limit(limit);
+  return rows.map((row) => ({
     id: row.id,
     title: row.title,
     summary: row.summary,
     url: row.url,
     sourceName: row.sourceName,
     topicArea: row.topicArea,
-  };
+  }));
 }
 
 /** Null (not shown) unless the "Include brain games" setting is on —
@@ -545,11 +583,30 @@ async function getDueReviewTopic(
   };
 }
 
-/** The current (most recent) cycle's feed, restricted to enabled interests. */
-export async function getCurrentFeed(enabledInterestIds: number[]): Promise<CycleFeed | null> {
-  const latest = await db.select().from(digests).orderBy(desc(digests.id)).limit(1);
+/** The current (most recent) cycle's feed of the given frequency, restricted
+ * to enabled interests. Phase 13: since a daily and a weekly cycle now both
+ * always exist, "most recent digest overall" is no longer a meaningful
+ * single answer — callers that care about one cadence specifically (Drills'
+ * own tab, which is weekly-cadence content) ask for that cadence by name. */
+async function getCurrentCycleFeed(
+  frequency: "daily" | "weekly",
+  enabledInterestIds: number[]
+): Promise<CycleFeed | null> {
+  const latest = await db
+    .select()
+    .from(digests)
+    .where(eq(digests.frequency, frequency))
+    .orderBy(desc(digests.id))
+    .limit(1);
   if (!latest[0]) return null;
   return loadCycleFeed(latest[0].id, enabledInterestIds);
+}
+
+/** The current weekly cycle's feed — Deep Dives, Applied Insights, Drills,
+ * Mental Model, Rabbit Hole, Library chapters, Brain Games. Used by pages
+ * that only care about that cadence (e.g. the Drills tab). */
+export async function getCurrentWeeklyFeed(enabledInterestIds: number[]): Promise<CycleFeed | null> {
+  return getCurrentCycleFeed("weekly", enabledInterestIds);
 }
 
 export async function getFeedByCycleId(
@@ -557,6 +614,160 @@ export async function getFeedByCycleId(
   enabledInterestIds: number[]
 ): Promise<CycleFeed | null> {
   return loadCycleFeed(cycleId, enabledInterestIds);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 13 (Hybrid Cadence) — the home page's live view merges the current
+// daily cycle (News, Remember-this, Brain Fact) and the current weekly
+// cycle (everything substantial) into one combined feed, plus tracks
+// whether each cadence's current bundle has already been fully shown to the
+// reader (see the module comment on settings.last{Daily,Weekly}SeenAt).
+// ---------------------------------------------------------------------------
+
+export interface HybridFeed extends CycleFeed {
+  dailyPeriodLabel: string;
+  weeklyPeriodLabel: string;
+  dailyFullySeen: boolean;
+  weeklyFullySeen: boolean;
+}
+
+/** How close together two getHybridCurrentFeed calls have to be to count as
+ * "the same visit" for seen-tracking purposes — see that function's doc
+ * comment for why this exists. */
+const SEEN_DEBOUNCE_MS = 10 * 60 * 1000; // 10 minutes
+
+/** Parses either shape of timestamp this app stores — SQLite's own
+ * ("YYYY-MM-DD HH:MM:SS", UTC, no offset, no "T") or a proper ISO string
+ * (used for last{Daily,Weekly}SeenAt, written via `.toISOString()`) — into
+ * epoch milliseconds. The two shapes don't compare correctly as plain
+ * strings (lexicographic order breaks at the "T"/space difference), so
+ * anything comparing timestamps across these two sources must go through
+ * this first. Returns 0 (never "newer than anything") if unparseable. */
+function toEpochMs(raw: string): number {
+  const iso = raw.includes("T") ? raw : `${raw.replace(" ", "T")}Z`;
+  const t = new Date(iso).getTime();
+  return isNaN(t) ? 0 : t;
+}
+
+/** Latest content timestamp across a cycle's actual rows, as epoch ms —
+ * used to decide whether last{Daily,Weekly}SeenAt is stale (new content
+ * landed since) or current (nothing to catch up on). Falls back to the
+ * digest row's own createdAt (set once, at cycle creation) when there's no
+ * content yet. Mental Model/Rabbit Hole/Library-chapter DTOs don't carry
+ * their own timestamp, so a mid-week addition of ONLY one of those (with no
+ * accompanying new deep dive/insight) won't flip this — an accepted
+ * imprecision given the all-or-nothing seen-gate design (see
+ * getHybridCurrentFeed's doc comment). News' publishedAt is source-supplied
+ * and format-inconsistent, so it's skipped here too — daily cadence is
+ * already covered by a fresh digest row (and thus fresh createdAt) each day. */
+function latestContentEpochMs(feed: CycleFeed): number {
+  const stamps: number[] = [toEpochMs(feed.createdAt)];
+  for (const s of feed.sections) {
+    for (const d of s.deepDives) stamps.push(toEpochMs(d.createdAt));
+    for (const a of s.appliedInsights) stamps.push(toEpochMs(a.createdAt));
+  }
+  return Math.max(...stamps);
+}
+
+/**
+ * The merged live view: finds (creating if needed) the current daily and
+ * weekly cycles, loads each independently via loadCycleFeed, and combines
+ * them into one CycleFeed-shaped object — per interest, `news` comes from
+ * the daily result, `deepDives`/`appliedInsights`/`drills` from the weekly
+ * result (this falls out for free: the daily cycle never accumulates deep
+ * content and vice versa, per the pipeline.ts cadence split).
+ *
+ * Also reads settings.last{Daily,Weekly}SeenAt *before* computing
+ * dailyFullySeen/weeklyFullySeen, then writes `now()` back to both — the
+ * same "read triggers idempotent write" pattern the pipeline's
+ * findOrCreateCycle/ensureCycleHasBrainFact already use. This is a per-
+ * cadence, all-or-nothing gate (not per-card tracking): if new weekly
+ * content lands mid-week, the whole bundle reads as "not fully seen" again
+ * rather than just the delta — a deliberate simplicity tradeoff, not a bug.
+ *
+ * The write is debounced (SEEN_DEBOUNCE_MS) rather than unconditional:
+ * this page renders on the server on every navigation, and Next.js/the
+ * browser can easily trigger more than one render for what's really a
+ * single visit (link prefetching, a background re-fetch on tab refocus,
+ * etc.) — writing `now()` on every one of those would make the SECOND
+ * render of the same visit see its own first render's write and report
+ * "already seen" before the reader ever actually saw anything. Collapsing
+ * writes within a short window treats that burst as one visit.
+ */
+export async function getHybridCurrentFeed(enabledInterestIds: number[]): Promise<HybridFeed | null> {
+  const [dailyRow, weeklyRow] = await Promise.all([
+    db.select().from(digests).where(eq(digests.frequency, "daily")).orderBy(desc(digests.id)).limit(1),
+    db.select().from(digests).where(eq(digests.frequency, "weekly")).orderBy(desc(digests.id)).limit(1),
+  ]);
+  if (!dailyRow[0] && !weeklyRow[0]) return null;
+
+  const [dailyFeed, weeklyFeed] = await Promise.all([
+    dailyRow[0] ? loadCycleFeed(dailyRow[0].id, enabledInterestIds) : null,
+    weeklyRow[0] ? loadCycleFeed(weeklyRow[0].id, enabledInterestIds) : null,
+  ]);
+
+  // Merge sections by interest: news from daily, deep content from weekly.
+  const sectionsById = new Map<number, InterestFeedSection>();
+  for (const s of dailyFeed?.sections ?? []) {
+    sectionsById.set(s.interestId, { ...s, deepDives: [], appliedInsights: [], drills: [] });
+  }
+  for (const s of weeklyFeed?.sections ?? []) {
+    const existing = sectionsById.get(s.interestId);
+    if (existing) {
+      existing.deepDives = s.deepDives;
+      existing.appliedInsights = s.appliedInsights;
+      existing.drills = s.drills;
+    } else {
+      sectionsById.set(s.interestId, { ...s, news: [] });
+    }
+  }
+  const sections = [...sectionsById.values()];
+  const totalEntries = sections.reduce(
+    (sum, s) => sum + s.news.length + s.deepDives.length + s.appliedInsights.length + s.drills.length,
+    0
+  );
+
+  const settingsRows = await db.select().from(settings).where(eq(settings.id, 1)).limit(1);
+  const priorDailySeenAt = settingsRows[0]?.lastDailySeenAt ?? null;
+  const priorWeeklySeenAt = settingsRows[0]?.lastWeeklySeenAt ?? null;
+
+  const dailyFullySeen =
+    !!dailyFeed && !!priorDailySeenAt && toEpochMs(priorDailySeenAt) >= latestContentEpochMs(dailyFeed);
+  const weeklyFullySeen =
+    !!weeklyFeed && !!priorWeeklySeenAt && toEpochMs(priorWeeklySeenAt) >= latestContentEpochMs(weeklyFeed);
+
+  const nowMs = Date.now();
+  const patch: Record<string, string> = {};
+  if (!priorDailySeenAt || nowMs - toEpochMs(priorDailySeenAt) > SEEN_DEBOUNCE_MS) {
+    patch.lastDailySeenAt = new Date(nowMs).toISOString();
+  }
+  if (!priorWeeklySeenAt || nowMs - toEpochMs(priorWeeklySeenAt) > SEEN_DEBOUNCE_MS) {
+    patch.lastWeeklySeenAt = new Date(nowMs).toISOString();
+  }
+  if (Object.keys(patch).length > 0) {
+    await db.update(settings).set(patch).where(eq(settings.id, 1));
+  }
+
+  return {
+    cycleId: (dailyFeed ?? weeklyFeed)!.cycleId,
+    periodLabel: dailyFeed?.periodLabel ?? weeklyFeed!.periodLabel,
+    frequency: "hybrid",
+    createdAt: (dailyFeed ?? weeklyFeed)!.createdAt,
+    brainFact: dailyFeed?.brainFact ?? null,
+    showBrainFact: dailyFeed?.showBrainFact ?? false,
+    sections,
+    totalEntries,
+    progress: dailyFeed?.progress ?? weeklyFeed?.progress ?? { conceptsThisMonth: 0, interestsCount: 0 },
+    dueReview: dailyFeed?.dueReview ?? null,
+    mentalModelsOfTheWeek: weeklyFeed?.mentalModelsOfTheWeek ?? [],
+    rabbitHolesOfTheWeek: weeklyFeed?.rabbitHolesOfTheWeek ?? [],
+    brainGames: weeklyFeed?.brainGames ?? null,
+    bookChaptersOfTheWeek: weeklyFeed?.bookChaptersOfTheWeek ?? [],
+    dailyPeriodLabel: dailyFeed?.periodLabel ?? "",
+    weeklyPeriodLabel: weeklyFeed?.periodLabel ?? "",
+    dailyFullySeen,
+    weeklyFullySeen,
+  };
 }
 
 export interface CycleListEntry {
@@ -630,6 +841,7 @@ export interface DeepDiveDetail {
   // essay-style prompts on advanced/research_level interests.
   essayPrompt: string | null;
   explainBacks: ExplainBackEntry[];
+  syllabusTag: SyllabusTag | null;
 }
 
 function parseJsonArray<T>(raw: string): T[] {
@@ -679,6 +891,7 @@ export async function getDeepDiveById(id: number): Promise<DeepDiveDetail | null
     followUpTopics: parseJsonArray(row.followUpTopics),
     selfCheckQuestions: parseJsonArray(row.selfCheckQuestions),
     essayPrompt: row.essayPrompt,
+    syllabusTag: parseSyllabusComparison(row.syllabusComparison),
     explainBacks: explainBackRows.map((r) => ({
       id: r.id,
       userExplanation: r.userExplanation,
@@ -689,7 +902,8 @@ export async function getDeepDiveById(id: number): Promise<DeepDiveDetail | null
 }
 
 export interface AppSettings {
-  frequency: "daily" | "weekly";
+  // Phase 13: the single daily/weekly frequency toggle is gone — both
+  // cadences always run now, nothing left to read here for it.
   lastRefreshAt: string | null;
   // Brain Games (Phase 6): opt-in, off by default — not part of the
   // interests system.
@@ -700,15 +914,13 @@ export async function getAppSettings(): Promise<AppSettings> {
   const rows = await db.select().from(settings).where(eq(settings.id, 1)).limit(1);
   const row = rows[0];
   return {
-    frequency: (row?.frequency as "daily" | "weekly") ?? "daily",
     lastRefreshAt: row?.lastRefreshAt ?? null,
     includeBrainGames: row?.includeBrainGames ?? false,
   };
 }
 
-export async function updateAppSettings(update: { frequency?: "daily" | "weekly"; includeBrainGames?: boolean }) {
+export async function updateAppSettings(update: { includeBrainGames?: boolean }) {
   const patch: Record<string, unknown> = {};
-  if (update.frequency) patch.frequency = update.frequency;
   if (typeof update.includeBrainGames === "boolean") patch.includeBrainGames = update.includeBrainGames;
   if (Object.keys(patch).length === 0) return;
   await db.update(settings).set(patch).where(eq(settings.id, 1));

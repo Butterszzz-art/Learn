@@ -10,25 +10,39 @@ export interface BrainGamePick {
   answer: string;
 }
 
+/** The most recent Monday at 00:00 UTC, as a SQLite-comparable timestamp
+ * string ("YYYY-MM-DD HH:MM:SS") — mirrors pipeline.ts's
+ * currentWeekMondayLabel, kept local here since it's a two-line calculation
+ * not worth a shared util for. */
+function currentWeekMondayTimestamp(): string {
+  const now = new Date();
+  const day = now.getUTCDay(); // 0 = Sunday
+  const diffToMonday = (day + 6) % 7;
+  const monday = new Date(now);
+  monday.setUTCDate(now.getUTCDate() - diffToMonday);
+  return `${monday.toISOString().slice(0, 10)} 00:00:00`;
+}
+
 /**
  * Picks a handful of brain games not recently shown (prefers never-shown,
- * then least-recently-shown), and marks them as shown today. Idempotent
- * within a single day, mirroring pickBrainFactOfTheDay: if games were
- * already picked today, returns those same ones rather than rotating again
- * on every page load.
+ * then least-recently-shown), and marks them as shown this week. Idempotent
+ * within a single week (Phase 13 — Brain Games moved from daily to weekly
+ * cadence, was "within a single day"), mirroring pickBrainFactOfTheDay's
+ * daily version: if games were already picked this week, returns those same
+ * ones rather than rotating again on every page load.
  */
 export async function pickBrainGames(count = 3): Promise<BrainGamePick[]> {
-  const today = new Date().toISOString().slice(0, 10);
+  const weekStart = currentWeekMondayTimestamp();
 
-  const alreadyTodayResult = await client.execute({
-    sql: "SELECT id, game_type, content, answer FROM brain_games WHERE last_shown_at LIKE ? ORDER BY id LIMIT ?",
-    args: [`${today}%`, count],
+  const alreadyThisWeekResult = await client.execute({
+    sql: "SELECT id, game_type, content, answer FROM brain_games WHERE last_shown_at >= ? ORDER BY last_shown_at DESC LIMIT ?",
+    args: [weekStart, count],
   });
-  const alreadyToday = alreadyTodayResult.rows as unknown as
+  const alreadyThisWeek = alreadyThisWeekResult.rows as unknown as
     | { id: number; game_type: BrainGameType; content: string; answer: string }[]
     | undefined;
-  if (alreadyToday && alreadyToday.length > 0) {
-    return alreadyToday.map((r) => ({ id: r.id, gameType: r.game_type, content: r.content, answer: r.answer }));
+  if (alreadyThisWeek && alreadyThisWeek.length > 0) {
+    return alreadyThisWeek.map((r) => ({ id: r.id, gameType: r.game_type, content: r.content, answer: r.answer }));
   }
 
   const neverShown = await db

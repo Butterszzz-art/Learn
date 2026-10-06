@@ -13,3 +13,7 @@ npm-debug.log*
 .DS_Store
 *.tsbuildinfo
 next-env.d.ts
+
+# local credential notes — never commit
+api keys.txt
+connection key mongoDB.md

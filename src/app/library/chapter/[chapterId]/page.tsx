@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { getChapterById } from "@/lib/digest";
 import { ExplainItBack } from "@/components/ExplainItBack";
 import { ExportButtons } from "@/components/ExportButtons";
+import { TrustBadge } from "@/components/TrustBadge";
+import { CiteButton } from "@/components/CiteButton";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +31,10 @@ export default async function ChapterPage({ params }: { params: { chapterId: str
           <span className="pill">Chapter {chapter.chapterNumber}</span>
         </div>
         <h1 className="mb-3 font-display text-3xl font-bold leading-tight">{chapter.title}</h1>
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <TrustBadge classification="grounded" />
+          <CiteButton kind="book" id={chapter.bookId} />
+        </div>
         <ExportButtons kind="chapter" id={chapter.id} />
       </div>
 

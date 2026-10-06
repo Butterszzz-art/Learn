@@ -1,6 +1,6 @@
+import type Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient } from "./claude";
-
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
+import { getModel } from "./modelConfig";
 
 export interface LensCandidateItem {
   index: number;
@@ -12,6 +12,78 @@ export interface LensCandidateItem {
 export interface MentalModelLensResult {
   lensText: string;
   usedIndexes: number[]; // 1-2 of the candidate indexes it actually referenced
+}
+
+const LENS_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    applicable: {
+      type: "boolean",
+      description:
+        "True only if the model genuinely illuminates one or two of these items — not a stretch. " +
+        "False if nothing today fits naturally.",
+    },
+    usedIndexes: {
+      type: "array",
+      items: { type: "integer" },
+      minItems: 1,
+      maxItems: 2,
+      description: "The index (or two) of the item(s) actually referenced, ideally from different interests.",
+    },
+    lensText: {
+      type: "string",
+      description:
+        "2-3 sentences showing the model applied concretely to the referenced item(s) — name the " +
+        "model, then connect it to what the item(s) actually say, not an abstract definition.",
+    },
+  },
+  required: ["applicable"],
+  additionalProperties: false,
+};
+
+/**
+ * Builds the request params for one mental-model-lens attempt — shared by
+ * the synchronous path (generateMentalModelLens, below) and the Batches API
+ * path (Phase 14: no web search here at all — pure reasoning over already-
+ * fetched content — so it's batch-eligible outright, no gather/write split
+ * needed; see scripts/processBatches.ts's round-b, since candidates come
+ * from round-a's News items).
+ */
+export function buildMentalModelLensParams(
+  modelName: string,
+  modelDescription: string,
+  candidates: LensCandidateItem[]
+): Anthropic.MessageCreateParamsNonStreaming {
+  return {
+    model: getModel("mental_model_lens"),
+    max_tokens: 768,
+    output_config: { format: { type: "json_schema", schema: LENS_SCHEMA } },
+    messages: [
+      {
+        role: "user",
+        content:
+          `Mental model: "${modelName}" — ${modelDescription}\n\n` +
+          "Today's feed items (numbered):\n" +
+          candidates.map((c) => `${c.index}. [${c.interestName}] ${c.title} — ${c.summary}`).join("\n") +
+          "\n\nIf this model genuinely illuminates one or two of these items, write a 2-3 sentence " +
+          "lens card connecting it to what they actually say — concrete, not an abstract restatement " +
+          "of the model's definition. Prefer two items from different interests over one, if a " +
+          "genuine connection exists across them. If nothing today fits naturally, set applicable to " +
+          "false rather than forcing a strained connection.",
+      },
+    ],
+  };
+}
+
+export function parseMentalModelLensResult(text: string, candidates: LensCandidateItem[]): MentalModelLensResult | null {
+  const parsed = JSON.parse(text) as { applicable: boolean; usedIndexes?: number[]; lensText?: string };
+  if (!parsed.applicable || !parsed.lensText?.trim() || !parsed.usedIndexes?.length) return null;
+
+  const validIndexes = new Set(candidates.map((c) => c.index));
+  const usedIndexes = parsed.usedIndexes.filter((i) => validIndexes.has(i)).slice(0, 2);
+  if (usedIndexes.length === 0) return null;
+
+  return { lensText: parsed.lensText.trim(), usedIndexes };
 }
 
 /**
@@ -31,73 +103,10 @@ export async function generateMentalModelLens(
   if (!anthropic || candidates.length === 0) return null;
 
   try {
-    const response = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: 768,
-      output_config: {
-        format: {
-          type: "json_schema",
-          schema: {
-            type: "object",
-            properties: {
-              applicable: {
-                type: "boolean",
-                description:
-                  "True only if the model genuinely illuminates one or two of these items — not a " +
-                  "stretch. False if nothing today fits naturally.",
-              },
-              usedIndexes: {
-                type: "array",
-                items: { type: "integer" },
-                minItems: 1,
-                maxItems: 2,
-                description: "The index (or two) of the item(s) actually referenced, ideally from different interests.",
-              },
-              lensText: {
-                type: "string",
-                description:
-                  "2-3 sentences showing the model applied concretely to the referenced item(s) — name " +
-                  "the model, then connect it to what the item(s) actually say, not an abstract " +
-                  "definition.",
-              },
-            },
-            required: ["applicable"],
-            additionalProperties: false,
-          },
-        },
-      },
-      messages: [
-        {
-          role: "user",
-          content:
-            `Mental model: "${modelName}" — ${modelDescription}\n\n` +
-            "Today's feed items (numbered):\n" +
-            candidates
-              .map((c) => `${c.index}. [${c.interestName}] ${c.title} — ${c.summary}`)
-              .join("\n") +
-            "\n\nIf this model genuinely illuminates one or two of these items, write a 2-3 sentence " +
-            "lens card connecting it to what they actually say — concrete, not an abstract restatement " +
-            "of the model's definition. Prefer two items from different interests over one, if a " +
-            "genuine connection exists across them. If nothing today fits naturally, set applicable to " +
-            "false rather than forcing a strained connection.",
-        },
-      ],
-    });
-
+    const response = await anthropic.messages.create(buildMentalModelLensParams(modelName, modelDescription, candidates));
     const textBlock = response.content.find((b) => b.type === "text");
     if (!textBlock || textBlock.type !== "text") return null;
-    const parsed = JSON.parse(textBlock.text) as {
-      applicable: boolean;
-      usedIndexes?: number[];
-      lensText?: string;
-    };
-    if (!parsed.applicable || !parsed.lensText?.trim() || !parsed.usedIndexes?.length) return null;
-
-    const validIndexes = new Set(candidates.map((c) => c.index));
-    const usedIndexes = parsed.usedIndexes.filter((i) => validIndexes.has(i)).slice(0, 2);
-    if (usedIndexes.length === 0) return null;
-
-    return { lensText: parsed.lensText.trim(), usedIndexes };
+    return parseMentalModelLensResult(textBlock.text, candidates);
   } catch (err) {
     console.error(`[mentalModelLens] Generation failed for "${modelName}":`, err);
     return null;

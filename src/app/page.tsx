@@ -1,11 +1,13 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { hasCompletedOnboarding, getEnabledInterests } from "@/lib/interests";
-import { getCurrentFeed } from "@/lib/digest";
-import { buildReadingStream } from "@/lib/stream";
+import { getHybridCurrentFeed } from "@/lib/digest";
+import { buildReadingStream, computeHiddenCardIds } from "@/lib/stream";
 import { StreamContainer } from "@/components/stream/StreamContainer";
 import { RefreshButton } from "@/components/RefreshButton";
 import { hasClaudeKey } from "@/lib/claude";
+import { getActivePruningNotices } from "@/lib/engagement";
+import { PruningNotices } from "@/components/PruningNotices";
 
 export const dynamic = "force-dynamic";
 
@@ -14,8 +16,12 @@ export default async function HomePage({ searchParams }: { searchParams: { at?: 
   if (!onboarded) redirect("/onboarding");
 
   const enabledInterests = await getEnabledInterests();
-  const feed = await getCurrentFeed(enabledInterests.map((i) => i.id));
+  const feed = await getHybridCurrentFeed(enabledInterests.map((i) => i.id));
   const claudeConfigured = hasClaudeKey();
+  const pruningNotices = await getActivePruningNotices();
+
+  const cards = feed ? buildReadingStream(feed, false, feed) : [];
+  const hiddenCardIds = feed ? [...computeHiddenCardIds(cards, feed)] : [];
 
   return (
     <div>
@@ -35,15 +41,18 @@ export default async function HomePage({ searchParams }: { searchParams: { at?: 
         <RefreshButton />
       </div>
 
+      <PruningNotices initial={pruningNotices} />
+
       {feed ? (
         <StreamContainer
-          cards={buildReadingStream(feed, false)}
+          cards={cards}
           interestPills={feed.sections.map((s) => ({ id: s.interestId, name: s.interestName, isFavorite: s.isFavorite }))}
-          periodLabel={feed.periodLabel}
-          frequency={feed.frequency}
+          periodLabel={combinedPeriodLabel(feed.dailyPeriodLabel, feed.weeklyPeriodLabel)}
+          frequency="hybrid"
           totalEntries={feed.totalEntries}
           createdLabel={formatCreatedLabel(feed.createdAt)}
           initialCardId={searchParams.at}
+          hiddenCardIds={hiddenCardIds}
         />
       ) : (
         <div className="card text-center">
@@ -60,4 +69,23 @@ export default async function HomePage({ searchParams }: { searchParams: { at?: 
 function formatCreatedLabel(iso: string): string {
   const d = new Date(iso);
   return isNaN(d.getTime()) ? "" : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+/** "Tue, Aug 11 · Week of Aug 10" — the header combines both cadences'
+ * period labels (Phase 13), since a single feed no longer has just one. */
+function combinedPeriodLabel(dailyLabel: string, weeklyLabel: string): string {
+  const daily = new Date(`${dailyLabel}T00:00:00Z`);
+  const dailyText = isNaN(daily.getTime())
+    ? dailyLabel
+    : daily.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  // "Week of 2026-08-10" -> "Week of Aug 10"
+  const weeklyText = weeklyLabel.replace(/(\d{4})-(\d{2})-(\d{2})/, (_m, y, mo, d) => {
+    const date = new Date(`${y}-${mo}-${d}T00:00:00Z`);
+    return isNaN(date.getTime())
+      ? `${y}-${mo}-${d}`
+      : date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  });
+  if (!dailyLabel) return weeklyText;
+  if (!weeklyLabel) return dailyText;
+  return `${dailyText} · ${weeklyText}`;
 }

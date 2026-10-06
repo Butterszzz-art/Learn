@@ -9,6 +9,9 @@ import { FollowUpCards } from "@/components/FollowUpCards";
 import { SelfCheckQuiz } from "@/components/SelfCheckQuiz";
 import { ExplainItBack } from "@/components/ExplainItBack";
 import { ExportButtons } from "@/components/ExportButtons";
+import { TrustBadge } from "@/components/TrustBadge";
+import { CiteButton } from "@/components/CiteButton";
+import { classifyDeepDive } from "@/lib/trustSignals";
 
 export const dynamic = "force-dynamic";
 
@@ -45,9 +48,17 @@ export default async function DeepDivePage({
           <span className="pill border-neuron-accent2/50 text-neuron-accent2">📖 Deep dive</span>
           <span className="pill">{deepDive.interestName}</span>
           <span className="pill">{LEVEL_LABELS[deepDive.level]}</span>
+          {deepDive.syllabusTag && (
+            <span className="pill border-sky-400/50 text-sky-300">
+              {deepDive.syllabusTag.status === "not_in_syllabus" ? "🎓 Not in your syllabus" : "🎓 Newer than your assigned reading"}
+            </span>
+          )}
           {createdLabel && <span className="text-neuron-muted">{createdLabel}</span>}
         </div>
         <h1 className="mb-3 font-display text-3xl font-bold leading-tight">{deepDive.topic}</h1>
+        <div className="mb-3">
+          <TrustBadge classification={classifyDeepDive(deepDive.sources.length)} />
+        </div>
         <ExportButtons kind="deep-dive" id={deepDive.id} />
       </div>
 
@@ -63,9 +74,12 @@ export default async function DeepDivePage({
 
       {deepDive.sources.length > 0 && (
         <div className="mt-10 border-t border-neuron-border pt-6">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neuron-muted">
-            Sources
-          </h2>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-neuron-muted">
+              Sources{deepDive.sources.length > 1 ? ` (${deepDive.sources.length})` : ""}
+            </h2>
+            <CiteButton kind="deep-dive" id={deepDive.id} />
+          </div>
           <ul className="space-y-1.5 text-sm">
             {deepDive.sources.map((source, i) => (
               <li key={i}>

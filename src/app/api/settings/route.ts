@@ -16,10 +16,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid body" }, { status: 400 });
   }
 
-  const update: { frequency?: "daily" | "weekly"; includeBrainGames?: boolean } = {};
-  if (body.frequency === "daily" || body.frequency === "weekly") {
-    update.frequency = body.frequency;
-  }
+  const update: { includeBrainGames?: boolean } = {};
   if (typeof body.includeBrainGames === "boolean") {
     update.includeBrainGames = body.includeBrainGames;
   }

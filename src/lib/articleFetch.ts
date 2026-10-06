@@ -1,5 +1,5 @@
 // Phase 10 — lightweight, dependency-free "extract the main readable text
-// from a webpage" helper. Used to build a genuine ~120-200 word
+// from a webpage" helper. Used to build a genuine ~250-320 word
 // abstract-style News summary for sources that don't already provide a real
 // structured abstract (RSS feeds, web-search-grounded Field News Roundup
 // items) — their snippet alone is too thin to summarize well. Phase 11

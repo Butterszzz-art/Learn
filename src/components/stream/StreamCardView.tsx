@@ -8,8 +8,10 @@ import { BrainFactCard } from "../BrainFactCard";
 import { BrainGameCard } from "../BrainGameCard";
 import { DrillPointerCard } from "../DrillPointerCard";
 import { BookChapterPointerCard } from "../BookChapterPointerCard";
+import { WeeklyBundleHeaderCard } from "../WeeklyBundleHeaderCard";
 import { CaughtUpCard } from "../CaughtUpCard";
 import { StreamDeepDiveHookCard } from "./StreamDeepDiveHookCard";
+import { ViewTracker } from "../ViewTracker";
 
 /** Renders the single card matching a stream item's kind. Short/self-
  * contained kinds reuse their existing card component untouched; News and
@@ -27,35 +29,41 @@ export function StreamCardView({ card, nextCardId }: { card: StreamCard; nextCar
       return <RabbitHoleCard entry={card.data} />;
     case "news":
       return (
-        <div>
+        <ViewTracker itemId={card.data.id} itemType="news" interestId={card.interestId}>
           <div className="mb-2 flex flex-wrap gap-2">
             <span className="pill">📰 News</span>
             <span className="pill">{card.interestName}</span>
           </div>
-          <ItemCard item={card.data} />
-        </div>
+          <ItemCard item={card.data} interestId={card.interestId} />
+        </ViewTracker>
       );
     case "appliedInsight":
       return (
-        <div>
+        <ViewTracker itemId={card.data.id} itemType="applied_insight" interestId={card.interestId}>
           <span className="pill mb-2 inline-block">{card.interestName}</span>
           <AppliedInsightCard entry={card.data} />
-        </div>
+        </ViewTracker>
       );
     case "deepDiveHook":
-      return <StreamDeepDiveHookCard entry={card.data} interestName={card.interestName} nextCardId={nextCardId} />;
+      return (
+        <ViewTracker itemId={card.data.id} itemType="deep_dive" interestId={card.interestId}>
+          <StreamDeepDiveHookCard entry={card.data} interestName={card.interestName} nextCardId={nextCardId} />
+        </ViewTracker>
+      );
     case "brainGame":
       return <BrainGameCard game={card.data} />;
     case "drillPointer":
       return <DrillPointerCard count={card.count} />;
     case "chapterPointer":
       return <BookChapterPointerCard entry={card.data} />;
+    case "weeklyBundleHeader":
+      return <WeeklyBundleHeaderCard interestName={card.interestName} count={card.count} />;
     case "caughtUp":
       return (
         <CaughtUpCard
           conceptsThisMonth={card.conceptsThisMonth}
           interestsCount={card.interestsCount}
-          frequency={card.frequency}
+          message={card.message}
         />
       );
   }

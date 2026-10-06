@@ -1,17 +1,18 @@
 import { NextResponse } from "next/server";
 import { ensureDb } from "@/db/bootstrap";
-import { refreshRabbitHoleForCycle } from "@/lib/pipeline";
+import { refreshRabbitHolesForCycle } from "@/lib/pipeline";
 
 export const dynamic = "force-dynamic";
 // Cycle-level (not per-interest). Uses web_search, similar cost/latency
 // profile to a Field News Roundup generation — comfortably within Vercel
-// Hobby's 60s cap in nearly all cases. Idempotent per cycle — safe to retry.
+// Hobby's 60s cap in nearly all cases. Idempotent per cycle — safe to retry,
+// tops up to RABBIT_HOLE_WEEKLY_TARGET rather than duplicating.
 export const maxDuration = 60;
 
 export async function POST() {
   await ensureDb();
   try {
-    const added = await refreshRabbitHoleForCycle();
+    const added = await refreshRabbitHolesForCycle();
     return NextResponse.json({ added });
   } catch (err) {
     console.error("[api/refresh/rabbit-hole] failed:", err);

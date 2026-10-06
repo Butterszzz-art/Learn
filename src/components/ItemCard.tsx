@@ -1,5 +1,7 @@
 import type { NewsItem } from "@/lib/digest";
 import { SteelmanToggle } from "./SteelmanToggle";
+import { TrustBadge } from "./TrustBadge";
+import { CiteButton } from "./CiteButton";
 
 function formatDate(iso: string | null): string {
   if (!iso) return "";
@@ -13,7 +15,7 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-export function ItemCard({ item }: { item: NewsItem }) {
+export function ItemCard({ item, interestId }: { item: NewsItem; interestId?: number | null }) {
   return (
     <article className="card">
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-neuron-muted">
@@ -29,16 +31,20 @@ export function ItemCard({ item }: { item: NewsItem }) {
         </a>
       </h3>
       {item.authors && <p className="mb-2 text-xs text-neuron-muted">{item.authors}</p>}
-      <p className="text-sm leading-relaxed text-neuron-text/90">{item.summary}</p>
-      <a
-        href={item.url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="mt-3 inline-block text-xs text-neuron-accent hover:underline"
-      >
-        Read source →
-      </a>
-      {item.steelmanContent && <SteelmanToggle content={item.steelmanContent} />}
+      <p className="whitespace-pre-line text-sm leading-relaxed text-neuron-text/90">{item.summary}</p>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <a
+          href={item.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs text-neuron-accent hover:underline"
+        >
+          Read source →
+        </a>
+        <TrustBadge classification="grounded" />
+        <CiteButton kind="item" id={item.id} />
+      </div>
+      {item.steelmanContent && <SteelmanToggle itemId={item.id} interestId={interestId ?? null} content={item.steelmanContent} />}
     </article>
   );
 }

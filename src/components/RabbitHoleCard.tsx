@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { RabbitHoleOfTheDay } from "@/lib/digest";
+import { TrustBadge } from "./TrustBadge";
 
 /** Once per cycle: one item entirely outside the reader's active interests
  * — visually distinct, clearly labeled, with a one-click "follow up on
@@ -65,6 +66,7 @@ export function RabbitHoleCard({ entry }: { entry: RabbitHoleOfTheDay }) {
         >
           Read more ({entry.sourceName}) →
         </a>
+        <TrustBadge classification="grounded" />
         {added ? (
           <span className="text-xs text-neuron-muted">✓ Added as an interest</span>
         ) : (

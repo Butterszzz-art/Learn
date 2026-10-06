@@ -10,6 +10,11 @@ export function DeepDiveCard({ entry }: { entry: DeepDiveSummary }) {
     >
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
         <span className="pill">{LEVEL_LABELS[entry.level]}</span>
+        {entry.syllabusTag && (
+          <span className="pill border-sky-400/50 text-sky-300">
+            {entry.syllabusTag.status === "not_in_syllabus" ? "🎓 Not in your syllabus" : "🎓 Newer than your assigned reading"}
+          </span>
+        )}
       </div>
       <h3 className="mb-2 font-display text-lg leading-snug">{entry.topic}</h3>
       <p className="text-sm leading-relaxed text-neuron-text/90">{entry.contentPreview}</p>

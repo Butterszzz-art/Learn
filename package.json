@@ -13,11 +13,15 @@
     "db:seed-interests": "tsx src/db/seedInterests.ts",
     "db:seed-mental-models": "tsx src/db/seedMentalModels.ts",
     "db:seed-brain-games": "tsx src/db/seedBrainGames.ts",
-    "fetch": "tsx scripts/fetch.ts"
+    "fetch": "tsx scripts/fetch.ts",
+    "resummarize": "tsx scripts/resummarize.ts",
+    "submit-batch": "tsx scripts/submitBatch.ts",
+    "process-batches": "tsx scripts/processBatches.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
     "@libsql/client": "^0.17.4",
+    "@next/env": "^14.2.18",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.36.4",
     "fast-xml-parser": "^4.5.0",
