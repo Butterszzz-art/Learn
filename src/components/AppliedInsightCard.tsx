@@ -1,4 +1,5 @@
 import type { AppliedInsightSummary } from "@/lib/digest";
+import { TrustBadge } from "./TrustBadge";
 
 export function AppliedInsightCard({
   entry,
@@ -18,7 +19,8 @@ export function AppliedInsightCard({
           </span>
         </div>
       )}
-      <p className="text-sm leading-relaxed text-neuron-text/90">{entry.content}</p>
+      <p className="mb-2 text-sm leading-relaxed text-neuron-text/90">{entry.content}</p>
+      <TrustBadge classification="synthesized" />
     </div>
   );
 }

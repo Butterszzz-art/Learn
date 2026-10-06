@@ -28,19 +28,20 @@ async function postCycleStep(path: string): Promise<any> {
   return data;
 }
 
-// Passion Mode's per-cycle quota (FAVORITE_DEEP_DIVE_QUOTA in pipeline.ts)
-// is currently 4, but this loop doesn't need to know the exact number: each
-// call is a safe no-op once the server-side quota is reached, so looping up
-// to this safety cap converges correctly for both favorited (quota 4) and
-// regular (BASE_DEEP_DIVE_QUOTA, currently 2) interests without coupling the
-// two constants together.
+// Passion Mode's per-week quota (WEEKLY_DEEP_DIVE_QUOTA_FAVORITE in
+// pipeline.ts) is currently 4, but this loop doesn't need to know the exact
+// number: each call is a safe no-op once the server-side quota is reached,
+// so looping up to this safety cap converges correctly for both favorited
+// (quota 4) and regular (WEEKLY_DEEP_DIVE_QUOTA_NORMAL, currently 2)
+// interests without coupling the two constants together.
 const MAX_DIVES_PER_INTEREST = 6;
 
-/** Runs News -> Deep Dive(s) -> Applied Insight for one interest, sequentially, updating progress as it goes. */
+/** Runs News -> Deep Dive(s) -> Applied Insight -> Steelman for one
+ * interest, sequentially, updating progress as it goes. */
 async function runInterest(
   id: number,
   onStatus: (status: InterestProgress["status"]) => void
-): Promise<{ newsAdded: number; deepDiveAdded: boolean; insightAdded: boolean }> {
+): Promise<{ newsAdded: number; deepDiveAdded: boolean; insightAdded: boolean; steelmansAdded: number }> {
   onStatus("news");
   const news = await postStep("/api/refresh/news", id).catch((err) => {
     console.error(err);
@@ -64,8 +65,13 @@ async function runInterest(
     return { added: false };
   });
 
+  const steelman = await postStep("/api/refresh/steelman", id).catch((err) => {
+    console.error(err);
+    return { added: 0 };
+  });
+
   onStatus("done");
-  return { newsAdded: news.added ?? 0, deepDiveAdded, insightAdded: !!insight.added };
+  return { newsAdded: news.added ?? 0, deepDiveAdded, insightAdded: !!insight.added, steelmansAdded: steelman.added ?? 0 };
 }
 
 // Cycle-level steps (not per-interest): Drills, Mental Model of the Day,
@@ -104,6 +110,7 @@ export function RefreshButton() {
       let newsAdded = 0;
       let deepDivesAdded = 0;
       let insightsAdded = 0;
+      let steelmansAdded = 0;
       if (enabled.length > 0) {
         setProgress(enabled.map((i) => ({ id: i.id, name: i.name, status: "waiting" as const })));
 
@@ -114,7 +121,7 @@ export function RefreshButton() {
             }).catch((err) => {
               console.error(err);
               setProgress((prev) => prev.map((p) => (p.id === i.id ? { ...p, status: "error" } : p)));
-              return { newsAdded: 0, deepDiveAdded: false, insightAdded: false };
+              return { newsAdded: 0, deepDiveAdded: false, insightAdded: false, steelmansAdded: 0 };
             })
           )
         );
@@ -122,14 +129,15 @@ export function RefreshButton() {
         newsAdded = results.reduce((sum, r) => sum + r.newsAdded, 0);
         deepDivesAdded = results.filter((r) => r.deepDiveAdded).length;
         insightsAdded = results.filter((r) => r.insightAdded).length;
+        steelmansAdded = results.reduce((sum, r) => sum + r.steelmansAdded, 0);
       }
 
       // Cycle-level steps always run, even with zero interests enabled —
       // Library's chapter drip-feed is independent of the interests system.
       let chaptersSurfaced = 0;
       let drillsAdded = 0;
-      let mentalModelAdded = false;
-      let rabbitHoleAdded = false;
+      let mentalModelsAdded = 0;
+      let rabbitHolesAdded = 0;
       for (const step of CYCLE_STEPS) {
         setCycleStepStatus((prev) => ({ ...prev, [step.key]: "running" }));
         let failed = false;
@@ -142,8 +150,8 @@ export function RefreshButton() {
         if (!result) continue;
         if (step.key === "book-chapter") chaptersSurfaced = result.chaptersSurfaced ?? 0;
         if (step.key === "drills") drillsAdded = (result.groundedAdded ?? 0) + (result.standaloneAdded ? 1 : 0);
-        if (step.key === "mental-model") mentalModelAdded = !!result.added;
-        if (step.key === "rabbit-hole") rabbitHoleAdded = !!result.added;
+        if (step.key === "mental-model") mentalModelsAdded = result.added ?? 0;
+        if (step.key === "rabbit-hole") rabbitHolesAdded = result.added ?? 0;
       }
 
       if (enabled.length === 0 && chaptersSurfaced === 0) {
@@ -152,8 +160,9 @@ export function RefreshButton() {
         const parts = [`+${newsAdded} news`, `+${deepDivesAdded} deep dives`];
         if (insightsAdded > 0) parts.push(`+${insightsAdded} insights`);
         if (drillsAdded > 0) parts.push(`+${drillsAdded} drills`);
-        if (mentalModelAdded) parts.push("+1 mental model");
-        if (rabbitHoleAdded) parts.push("+1 rabbit hole");
+        if (steelmansAdded > 0) parts.push(`+${steelmansAdded} steelmans`);
+        if (mentalModelsAdded > 0) parts.push(`+${mentalModelsAdded} mental models`);
+        if (rabbitHolesAdded > 0) parts.push(`+${rabbitHolesAdded} rabbit holes`);
         if (chaptersSurfaced > 0) parts.push(`+${chaptersSurfaced} chapter${chaptersSurfaced > 1 ? "s" : ""}`);
         setSummary(parts.join(", ") + ".");
       }

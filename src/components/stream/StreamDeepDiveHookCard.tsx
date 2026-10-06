@@ -29,6 +29,11 @@ export function StreamDeepDiveHookCard({
         <span className="pill border-neuron-accent2/50 text-neuron-accent2">📖 Deep Dive</span>
         <span className="pill">{interestName}</span>
         <span className="pill">{LEVEL_LABELS[entry.level]}</span>
+        {entry.syllabusTag && (
+          <span className="pill border-sky-400/50 text-sky-300">
+            {entry.syllabusTag.status === "not_in_syllabus" ? "🎓 Not in your syllabus" : "🎓 Newer than your assigned reading"}
+          </span>
+        )}
       </div>
       <h3 className="mb-2 font-display text-xl leading-snug">{entry.topic}</h3>
       <p className="text-sm leading-relaxed text-neuron-text/90">{opening}</p>

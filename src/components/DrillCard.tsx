@@ -4,6 +4,9 @@ import { useState } from "react";
 import Link from "next/link";
 import type { DrillSummary } from "@/lib/digest";
 import { DRILL_TYPE_LABELS } from "@/db/schema";
+import { logEvent } from "@/lib/eventClient";
+import { TrustBadge } from "./TrustBadge";
+import { classifyDrill } from "@/lib/trustSignals";
 
 /** A single Drill: pick an option, get immediate feedback + explanation.
  * Visually distinct from reading material (teal accent, "practice" framing)
@@ -11,6 +14,11 @@ import { DRILL_TYPE_LABELS } from "@/db/schema";
  * since drills render inline in the feed, not just at the end of a dive. */
 export function DrillCard({ entry }: { entry: DrillSummary }) {
   const [selected, setSelected] = useState<number | null>(null);
+
+  function pick(i: number) {
+    setSelected(i);
+    logEvent(entry.id, "drill", entry.interestId, "answered");
+  }
 
   return (
     <div className="card border-neuron-accent3/40 bg-gradient-to-br from-neuron-surface to-neuron-surface2">
@@ -43,7 +51,7 @@ export function DrillCard({ entry }: { entry: DrillSummary }) {
             <button
               key={i}
               type="button"
-              onClick={() => setSelected(i)}
+              onClick={() => pick(i)}
               disabled={selected !== null}
               className={`block w-full rounded-2xl border p-2.5 text-left text-sm transition disabled:cursor-default ${style}`}
             >
@@ -59,6 +67,9 @@ export function DrillCard({ entry }: { entry: DrillSummary }) {
       {selected !== null && (
         <p className="mt-3 text-xs leading-relaxed text-neuron-muted">{entry.explanation}</p>
       )}
+      <div className="mt-3">
+        <TrustBadge classification={classifyDrill(entry.sourceDeepDiveId != null)} />
+      </div>
     </div>
   );
 }

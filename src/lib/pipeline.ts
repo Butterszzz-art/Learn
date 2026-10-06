@@ -13,9 +13,9 @@ import {
   books,
   bookChapters,
 } from "@/db/schema";
-import type { Category, Level } from "@/db/schema";
+import type { Category, Level, PrunableContentType } from "@/db/schema";
 import { bumpLevel } from "@/db/schema";
-import { eq, and, gte, desc, isNotNull, isNull, notInArray } from "drizzle-orm";
+import { eq, and, gte, lte, desc, isNotNull, isNull, notInArray, inArray } from "drizzle-orm";
 import { fetchForInterest } from "./fetchers/registry";
 import { generateFieldNewsRoundup } from "./newsRoundup";
 import { dedupeItems, dedupeKeyFor } from "./dedupe";
@@ -34,6 +34,7 @@ import { generateExplainBackFeedback, generateEssayPrompt } from "./explainBack"
 import { generateMentalModelLens } from "./mentalModelLens";
 import { generateSteelmans } from "./steelman";
 import { generateRabbitHole } from "./rabbitHole";
+import { isAutoGenerationEnabled } from "./engagement";
 import { scoreItem } from "./score";
 import { pickBrainFactOfTheDay, maybeGenerateWeeklyFacts } from "./brainFact";
 import {
@@ -47,42 +48,59 @@ import {
 } from "./interests";
 import type { InterestWithConfig } from "./interests";
 import type { RawItem, ProcessedItem } from "./types";
+import { getSyllabusContext } from "./syllabus";
 
 // Volume constants below govern how much content one refresh cycle
-// generates. With no meaningful cap on API usage anymore, these are set to
-// gather substantially more per cycle rather than the original cost-
-// conscious minimums — raise further if you want an even denser feed.
-const TARGET_ITEMS_PER_INTEREST = 15; // curated (RSS/API) sources
-const TARGET_ROUNDUP_ITEMS = 10; // generated Field News Roundup
-// Every enabled interest gets this many deep dives per cycle by default;
-// a favorited/Passion Mode interest gets FAVORITE_DEEP_DIVE_QUOTA instead.
-const BASE_DEEP_DIVE_QUOTA = 2;
-const FAVORITE_DEEP_DIVE_QUOTA = 4;
-// Drills (Phase 5): grounded in real recent deep-dive content per cycle,
-// scanned across ALL interests.
-const GROUNDED_DRILL_TARGET = 5;
-const GROUNDED_DRILL_LOOKBACK_DAYS = 7;
-const GROUNDED_DRILL_MAX_CANDIDATES = 12; // bounds Claude calls even with a large recent-dive pool
+// generates. With no meaningful cap on API usage anymore, they're raised
+// from the original cost-conscious minimums (8 items / 5 roundup items / 1-3
+// deep dives per week / 2 drills) — raise further for an even denser feed.
+export const TARGET_ITEMS_PER_INTEREST = 15; // curated (RSS/API) sources
+export const TARGET_ROUNDUP_ITEMS = 10; // generated Field News Roundup
+// Phase 13 (Hybrid Cadence): Field News Roundup items are the one "stays
+// daily" content type that costs meaningfully more per call than a curated-
+// source item (a fresh web_search every time, vs. an RSS/API fetch). Flip
+// this to "weekly" if that cost becomes a real concern — everything else
+// about runRoundupNews keeps working unchanged, it'll just attach to the
+// weekly cycle instead of the daily one.
+const ROUNDUP_ITEMS_CADENCE: "daily" | "weekly" = "daily";
+// Passion Mode: favorited interests get the larger quota; every other
+// enabled interest gets the normal one. Both are per WEEK (Phase 13 moved Deep
+// Dives from daily to weekly, so these are not per-day numbers).
+export const WEEKLY_DEEP_DIVE_QUOTA_NORMAL = 2;
+export const WEEKLY_DEEP_DIVE_QUOTA_FAVORITE = 4;
+// Drills (Phase 5, moved weekly in Phase 13): "1-2 drills" grounded in real
+// recent deep-dive content per cycle (now a week), scanned across ALL
+// interests. Lookback widened from 4 to 10 days so a whole week's worth of
+// (now less frequent) deep dives stays in the candidate pool.
+export const GROUNDED_DRILL_TARGET = 5;
+export const GROUNDED_DRILL_LOOKBACK_DAYS = 10;
+export const GROUNDED_DRILL_MAX_CANDIDATES = 12; // bounds Claude calls even with a large recent-dive pool
 
 // Phase 6 constants.
 // Explain-it-back: for advanced/research_level interests, roughly 1 in 7
 // deep dives gets a real essay-style open question instead of the default
-// "explain this back" prompt — matches the spec's "roughly weekly" for a
-// daily cycle without needing extra state to track elapsed time.
-const ESSAY_PROMPT_CHANCE = 1 / 7;
-const ESSAY_PROMPT_LEVELS: Level[] = ["advanced", "research_level"];
-// Mental Model of the Day: how many recent usages to look back on when
-// picking an unused-recently model, and how many of today's items to offer
-// as candidates for the lens to connect to.
-const MODEL_USAGE_LOOKBACK = 15;
-const MENTAL_MODEL_ITEM_CANDIDATES = 12;
-// Steelman: only for interests where argument is central, capped per cycle
-// to control API cost (each generation call uses web_search).
-const STEELMAN_ELIGIBLE_SLUGS = new Set(["political-science", "economics", "philosophy", "critical-thinking"]);
-const STEELMAN_TARGET_PER_INTEREST = 4;
-const STEELMAN_CANDIDATE_POOL = 15;
-// Rabbit Hole: how many recently-shown topic areas to avoid repeating.
-const RABBIT_HOLE_AVOID_LOOKBACK = 20;
+// "explain this back" prompt — matches the spec's "roughly weekly" cadence;
+// now that deep dives themselves are weekly (Phase 13), this rolls per dive
+// rather than per day, so it's rarer in practice, which is fine — an essay
+// prompt was always meant to be an occasional variant, not a fixed schedule.
+export const ESSAY_PROMPT_CHANCE = 1 / 7;
+export const ESSAY_PROMPT_LEVELS: Level[] = ["advanced", "research_level"];
+// Mental Model of the Week (Phase 13: 2-3/week instead of 1/day): how many
+// recent usages to look back on when picking an unused-recently model, how
+// many of the week's items to offer as candidates, and the per-week target.
+export const MODEL_USAGE_LOOKBACK = 15;
+export const MENTAL_MODEL_ITEM_CANDIDATES = 12;
+export const MENTAL_MODEL_WEEKLY_TARGET = 3;
+// Steelman: only for interests where argument is central, capped per WEEK
+// (Phase 13 — was per day) to control API cost (each generation call uses
+// web_search).
+export const STEELMAN_ELIGIBLE_SLUGS = new Set(["political-science", "economics", "philosophy", "critical-thinking"]);
+export const STEELMAN_TARGET_PER_INTEREST = 4;
+export const STEELMAN_CANDIDATE_POOL = 15;
+// Rabbit Hole of the Week (Phase 13: 1-2/week instead of 1/day): how many
+// recently-shown topic areas to avoid repeating, and the per-week target.
+export const RABBIT_HOLE_AVOID_LOOKBACK = 20;
+export const RABBIT_HOLE_WEEKLY_TARGET = 2;
 
 // Phase 7 (Library) — modelUsage.linkedItemIds entry shape. Widened from
 // Phase 6's plain number[] to also reference a book chapter, not just a
@@ -90,13 +108,17 @@ const RABBIT_HOLE_AVOID_LOOKBACK = 20;
 type LinkedItemRef = { type: "item" | "chapter"; id: number };
 
 export interface PipelineResult {
-  cycleId: number;
+  // Phase 13: both cadences always run — the daily cycle carries News, the
+  // weekly cycle carries everything else.
+  dailyCycleId: number;
+  weeklyCycleId: number;
   newsAdded: number;
   deepDivesAdded: number;
   appliedInsightsAdded: number;
   drillsAdded: number;
-  mentalModelAdded: boolean;
-  rabbitHoleAdded: boolean;
+  steelmansAdded: number;
+  mentalModelsAdded: number;
+  rabbitHolesAdded: number;
   chaptersSurfaced: number;
   fetchedCount: number;
   usedClaude: boolean;
@@ -109,6 +131,7 @@ interface InterestCycleResult {
   fetched: number;
   deepDiveAdded: boolean;
   insightAdded: boolean;
+  steelmansAdded: number;
 }
 
 function truncateSnippet(snippet: string, max = 300): string {
@@ -123,7 +146,7 @@ function truncateSnippet(snippet: string, max = 300): string {
 // than showing that one word as the "summary".
 const USELESS_SUMMARY_RE = /^placeholder\.?$/i;
 
-function cleanSummary(summary: string | undefined | null, fallbackSnippet: string): string {
+export function cleanSummary(summary: string | undefined | null, fallbackSnippet: string): string {
   const s = (summary || "").trim();
   if (!s || USELESS_SUMMARY_RE.test(s)) {
     return truncateSnippet(fallbackSnippet) || "No summary available yet — check the source directly.";
@@ -143,7 +166,7 @@ function cleanSummary(summary: string | undefined | null, fallbackSnippet: strin
  * item's original snippet on any fetch/extraction failure — one flaky page
  * should never block the whole News refresh.
  */
-async function buildSummaryTexts(items: RawItem[]): Promise<string[]> {
+export async function buildSummaryTexts(items: RawItem[]): Promise<string[]> {
   return Promise.all(
     items.map(async (item) => {
       if (item.hasFullAbstract) return item.snippet;
@@ -158,31 +181,40 @@ async function buildSummaryTexts(items: RawItem[]): Promise<string[]> {
   );
 }
 
-async function getFrequency(): Promise<"daily" | "weekly"> {
-  const rows = await db.select().from(settings).where(eq(settings.id, 1)).limit(1);
-  return (rows[0]?.frequency as "daily" | "weekly") ?? "daily";
+// ---------------------------------------------------------------------------
+// Phase 13 (Hybrid Cadence): a daily cycle and a weekly cycle now both
+// always exist concurrently — no user toggle. Cheap, mostly-compressing-
+// existing-material content (News, Field News Roundup by default) attaches
+// to the daily cycle; everything substantial (Deep Dives, Applied Insights,
+// Drills, Mental Model, Rabbit Hole, Library chapters, Brain Games, Steelman)
+// attaches to the weekly cycle. `digests.frequency`/`periodLabel` already
+// distinguish the two — no new column needed on any content table.
+// ---------------------------------------------------------------------------
+
+function dailyPeriodLabel(): string {
+  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
-function periodLabel(frequency: "daily" | "weekly"): string {
+/** The most recent Monday, as YYYY-MM-DD (UTC). */
+function currentWeekMondayLabel(): string {
   const now = new Date();
-  if (frequency === "daily") {
-    return now.toISOString().slice(0, 10); // YYYY-MM-DD
-  }
-  // Week starting on the most recent Monday.
   const day = now.getUTCDay(); // 0 = Sunday
   const diffToMonday = (day + 6) % 7;
   const monday = new Date(now);
   monday.setUTCDate(now.getUTCDate() - diffToMonday);
-  return `Week of ${monday.toISOString().slice(0, 10)}`;
+  return monday.toISOString().slice(0, 10);
+}
+
+function weeklyPeriodLabel(): string {
+  return `Week of ${currentWeekMondayLabel()}`;
 }
 
 /**
- * Finds the digest ("cycle") row for the current period, or creates one.
+ * Finds the digest ("cycle") row for the given period, or creates one.
  * Multiple refreshes within the same day/week accumulate into the SAME
  * cycle — this is what makes the "You're caught up" bounded feed meaningful.
  */
-async function findOrCreateCurrentCycle(frequency: "daily" | "weekly"): Promise<number> {
-  const label = periodLabel(frequency);
+async function findOrCreateCycle(frequency: "daily" | "weekly", label: string): Promise<number> {
   const existing = await db.select().from(digests).where(eq(digests.periodLabel, label)).limit(1);
   if (existing[0]) return existing[0].id;
   const inserted = await db
@@ -204,14 +236,41 @@ async function ensureCycleHasBrainFact(cycleId: number): Promise<number> {
 }
 
 /**
- * Resolves the current cycle id, creating it (with its Brain Fact) if this
- * is the first call this period. Idempotent and cheap — safe to call once
- * per step, per interest, per HTTP request; this is what lets the granular
- * refreshXForInterest functions below be fully self-contained.
+ * Resolves the current DAILY cycle id, creating it (with its Brain Fact) if
+ * this is the first call today. Idempotent and cheap — safe to call once per
+ * step, per interest, per HTTP request; this is what lets the granular
+ * refreshXForInterest functions below be fully self-contained. News and
+ * (by default) Field News Roundup attach here.
  */
-export async function getOrCreateCurrentCycleId(): Promise<number> {
-  const frequency = await getFrequency();
-  return ensureCycleHasBrainFact(await findOrCreateCurrentCycle(frequency));
+export async function getOrCreateDailyCycleId(): Promise<number> {
+  return ensureCycleHasBrainFact(await findOrCreateCycle("daily", dailyPeriodLabel()));
+}
+
+/**
+ * Resolves the current WEEKLY cycle id, creating it if this is the first
+ * call this week. Deep Dives, Applied Insights, Drills, Mental Model,
+ * Rabbit Hole, Library chapters, Brain Games, and Steelman all attach here —
+ * the consolidated "This Week in [Interest]" bundle.
+ */
+export async function getOrCreateWeeklyCycleId(): Promise<number> {
+  return findOrCreateCycle("weekly", weeklyPeriodLabel());
+}
+
+/**
+ * Every daily-cadence digest id created so far THIS week (Monday through
+ * today) — used by weekly steps that need to scan the whole week's daily-
+ * cadence content (Steelman candidates, Mental Model candidates), not just
+ * a single day's. String comparison on periodLabel works: it's always
+ * YYYY-MM-DD.
+ */
+export async function getDailyDigestIdsForCurrentWeek(): Promise<number[]> {
+  const monday = currentWeekMondayLabel();
+  const today = dailyPeriodLabel();
+  const rows = await db
+    .select({ id: digests.id })
+    .from(digests)
+    .where(and(eq(digests.frequency, "daily"), gte(digests.periodLabel, monday), lte(digests.periodLabel, today)));
+  return rows.map((r) => r.id);
 }
 
 // ---------------------------------------------------------------------------
@@ -229,12 +288,26 @@ export interface NewsStepResult {
   fetched: number;
 }
 
-/** News for one interest: curated fetch if it has a source, else a generated Field News Roundup. */
+/** News for one interest: curated fetch if it has a source, else a generated
+ * Field News Roundup. Daily cadence — attaches to the daily cycle, unless
+ * ROUNDUP_ITEMS_CADENCE is flipped to "weekly" for a roundup-sourced
+ * interest (no registered fetcher). */
 export async function refreshNewsForInterest(interestId: number): Promise<NewsStepResult | null> {
   const interest = await getInterestById(interestId);
   if (!interest || !interest.enabled) return null;
 
-  const cycleId = await getOrCreateCurrentCycleId();
+  // Phase 14 (engagement-based pruning): auto-generation for this
+  // (interest, "news") combination may have been switched off after a
+  // sustained stretch of low engagement — see engagement.ts. The dedicated
+  // "Generate now" action (generateNowForContentType) bypasses this check;
+  // this is only the automatic/scheduled path (RefreshButton, npm run
+  // fetch, and the scheduled batch pipeline all route through here).
+  if (!(await isAutoGenerationEnabled(interestId, "news"))) {
+    return { interestId, interestName: interest.name, added: 0, fetched: 0 };
+  }
+
+  const usesWeeklyCycle = !interest.hasCuratedSource && ROUNDUP_ITEMS_CADENCE === "weekly";
+  const cycleId = usesWeeklyCycle ? await getOrCreateWeeklyCycleId() : await getOrCreateDailyCycleId();
   const result = await (interest.hasCuratedSource
     ? runCuratedNews(interest, cycleId)
     : runRoundupNews(interest, cycleId)
@@ -246,14 +319,6 @@ export async function refreshNewsForInterest(interestId: number): Promise<NewsSt
   if (result.added > 0) {
     await db.update(settings).set({ lastRefreshAt: new Date().toISOString() }).where(eq(settings.id, 1));
   }
-
-  // Steelman companion: only for argument-central interests, capped per
-  // cycle — see addSteelmansForInterest. Runs regardless of whether items
-  // were just added, since it self-tops-up (idempotent) against whatever
-  // this cycle already has.
-  await addSteelmansForInterest(interest, cycleId).catch((err) => {
-    console.error(`[pipeline] Steelman step failed for "${interest.name}":`, err);
-  });
 
   return { interestId, interestName: interest.name, ...result };
 }
@@ -288,7 +353,11 @@ async function generateAndPersistDeepDive(
   // Passion Mode: favorited interests are framed one notch more advanced
   // than the interest's own stored level, without changing that setting.
   const level = interest.isFavorite ? bumpLevel(interest.level) : interest.level;
-  const result = await generateDeepDive(interest.name, level, covered, opts.forcedTopic);
+  // Phase 15 (Syllabus Awareness) — empty array for an interest with no
+  // attached syllabus, which generateDeepDive/computeSyllabusComparison
+  // both treat as "nothing to compare against" (never a false gap claim).
+  const syllabusContext = await getSyllabusContext(interest.id);
+  const result = await generateDeepDive(interest.name, level, covered, opts.forcedTopic, syllabusContext);
   if (!result) return null;
 
   // Explain-it-back essay prompt: only for advanced/research_level
@@ -325,6 +394,7 @@ async function generateAndPersistDeepDive(
       followUpTopics: JSON.stringify(followUps),
       selfCheckQuestions: JSON.stringify(selfCheck),
       essayPrompt,
+      syllabusComparison: result.syllabusComparison ? JSON.stringify(result.syllabusComparison) : null,
     })
     .returning({ id: deepDives.id });
 
@@ -344,12 +414,11 @@ async function generateAndPersistDeepDive(
 }
 
 /**
- * One Deep Dive for one interest, for the current cycle — no-op once this
- * cycle has reached its quota (BASE_DEEP_DIVE_QUOTA normally,
- * FAVORITE_DEEP_DIVE_QUOTA for a favorited/Passion Mode interest). Called
- * once per HTTP request; the caller loops (see RefreshButton.tsx /
- * runInterestCycle below) to fill a >1 quota across multiple short requests
- * rather than one long one.
+ * One Deep Dive for one interest, for the current WEEKLY cycle (Phase 13) —
+ * no-op once this week has reached its quota (WEEKLY_DEEP_DIVE_QUOTA_NORMAL,
+ * or _FAVORITE for a favorited/Passion Mode interest). Called once per HTTP
+ * request; the caller loops (see RefreshButton.tsx / runInterestCycle below)
+ * to fill a >1 quota across multiple short requests rather than one long one.
  */
 export async function refreshDeepDiveForInterest(interestId: number): Promise<DeepDiveStepResult | null> {
   const interest = await getInterestById(interestId);
@@ -363,8 +432,14 @@ export async function refreshDeepDiveForInterest(interestId: number): Promise<De
     return { interestId, interestName: interest.name, added: false, topic: null };
   }
 
-  const cycleId = await getOrCreateCurrentCycleId();
-  const quota = interest.isFavorite ? FAVORITE_DEEP_DIVE_QUOTA : BASE_DEEP_DIVE_QUOTA;
+  // Phase 14 (engagement-based pruning) — see refreshNewsForInterest's
+  // comment above for the full reasoning; same contract here.
+  if (!(await isAutoGenerationEnabled(interestId, "deep_dive"))) {
+    return { interestId, interestName: interest.name, added: false, topic: null };
+  }
+
+  const cycleId = await getOrCreateWeeklyCycleId();
+  const quota = interest.isFavorite ? WEEKLY_DEEP_DIVE_QUOTA_FAVORITE : WEEKLY_DEEP_DIVE_QUOTA_NORMAL;
   const existing = await db
     .select({ topic: deepDives.topic })
     .from(deepDives)
@@ -505,7 +580,7 @@ export async function generateOnDemandDeepDive(
     return { interestId, interestName: interest.name, added: false, topic: null, deepDiveId: null };
   }
 
-  const cycleId = await getOrCreateCurrentCycleId();
+  const cycleId = await getOrCreateWeeklyCycleId();
   try {
     const result = await generateAndPersistDeepDive(interest, cycleId, { forcedTopic });
     if (!result) {
@@ -618,8 +693,13 @@ export async function refreshInsightForInterest(interestId: number): Promise<Ins
   if (!interest.generatesAppliedInsights || !hasClaudeKey()) {
     return { interestId, interestName: interest.name, added: false };
   }
+  // Phase 14 (engagement-based pruning) — see refreshNewsForInterest's
+  // comment above for the full reasoning; same contract here.
+  if (!(await isAutoGenerationEnabled(interestId, "applied_insight"))) {
+    return { interestId, interestName: interest.name, added: false };
+  }
 
-  const cycleId = await getOrCreateCurrentCycleId();
+  const cycleId = await getOrCreateWeeklyCycleId();
   const diveRows = await db
     .select({ id: deepDives.id })
     .from(deepDives)
@@ -655,7 +735,7 @@ export interface DrillsStepResult {
 export async function refreshDrillsForCycle(): Promise<DrillsStepResult> {
   if (!hasClaudeKey()) return { groundedAdded: 0, standaloneAdded: false };
 
-  const cycleId = await getOrCreateCurrentCycleId();
+  const cycleId = await getOrCreateWeeklyCycleId();
   const existing = await db
     .select({ id: drills.id, sourceDeepDiveId: drills.sourceDeepDiveId })
     .from(drills)
@@ -674,7 +754,7 @@ export async function refreshDrillsForCycle(): Promise<DrillsStepResult> {
 
 /** Formats a past Date to match SQLite's own `current_timestamp` shape, for
  * a lookback-window comparison against deepDives.createdAt. */
-function daysAgoSqlite(days: number): string {
+export function daysAgoSqlite(days: number): string {
   return new Date(Date.now() - days * 86400000).toISOString().slice(0, 19).replace("T", " ");
 }
 
@@ -714,6 +794,11 @@ async function addGroundedDrills(cycleId: number, needed: number): Promise<numbe
     if (added >= needed) break;
     const interest = await getInterestById(candidate.interestId);
     if (!interest) continue;
+    // Phase 14 (engagement-based pruning) — this cycle-level step scans
+    // across every interest's recent dives, so the check has to happen
+    // per-candidate here rather than once up front. See
+    // refreshNewsForInterest's comment for the full reasoning.
+    if (!(await isAutoGenerationEnabled(candidate.interestId, "drill"))) continue;
 
     try {
       const result = await generateGroundedDrill(interest.name, candidate.topic, candidate.content);
@@ -772,6 +857,9 @@ async function addStandaloneLogicDrill(cycleId: number): Promise<boolean> {
   ]);
   const targetInterest = criticalThinking?.enabled ? criticalThinking : logic?.enabled ? logic : null;
   if (!targetInterest) return false;
+  // Phase 14 (engagement-based pruning) — see refreshNewsForInterest's
+  // comment above for the full reasoning.
+  if (!(await isAutoGenerationEnabled(targetInterest.id, "drill"))) return false;
 
   try {
     const [ctCovered, logicCovered] = await Promise.all([
@@ -822,30 +910,42 @@ async function addStandaloneLogicDrill(cycleId: number): Promise<boolean> {
 }
 
 /**
- * Cycle-level Mental Model of the Day step — picks one mental model not
- * used recently, gathers today's fetched items across enabled interests,
- * and asks Claude to connect the model to one or two of them concretely.
- * Idempotent: no-ops if this cycle already has one. Declines (no row
- * added) if nothing today fits any recently-unused model naturally.
+ * Cycle-level Mental Model of the Week step (Phase 13: 2-3/week instead of
+ * 1/day) — picks mental models not used recently, gathers this WEEK's
+ * fetched items (across every daily cycle so far this week) and this week's
+ * surfaced Library chapters, and asks Claude to connect each model to one or
+ * two of them concretely. Idempotent: tops up to MENTAL_MODEL_WEEKLY_TARGET
+ * rather than duplicating past that. Declines (no row added, for that
+ * attempt) if nothing fits any recently-unused model naturally. Returns how
+ * many were added.
  */
-export async function refreshMentalModelForCycle(): Promise<boolean> {
-  if (!hasClaudeKey()) return false;
+export async function refreshMentalModelsForCycle(): Promise<number> {
+  if (!hasClaudeKey()) return 0;
 
-  const cycleId = await getOrCreateCurrentCycleId();
-  const existing = await db.select({ id: modelUsage.id }).from(modelUsage).where(eq(modelUsage.digestId, cycleId)).limit(1);
-  if (existing.length > 0) return false;
+  const cycleId = await getOrCreateWeeklyCycleId();
+  const existingUsage = await db
+    .select({ id: modelUsage.id, modelId: modelUsage.modelId })
+    .from(modelUsage)
+    .where(eq(modelUsage.digestId, cycleId));
+  const remaining = MENTAL_MODEL_WEEKLY_TARGET - existingUsage.length;
+  if (remaining <= 0) return 0;
+  const usedThisCycleModelIds = new Set(existingUsage.map((r) => r.modelId));
 
   // Not gated on enabledInterests.length: a Library book's chapters (below)
   // are eligible candidates independent of whether any interest is enabled.
   const enabledInterests = await getEnabledInterests();
   const interestNameById = new Map(enabledInterests.map((i) => [i.id, i.name]));
 
-  const itemRows = await db
-    .select({ id: items.id, title: items.title, summary: items.summary, interestId: items.interestId })
-    .from(items)
-    .where(eq(items.digestId, cycleId))
-    .orderBy(desc(items.score))
-    .limit(MENTAL_MODEL_ITEM_CANDIDATES);
+  const dailyIdsThisWeek = await getDailyDigestIdsForCurrentWeek();
+  const itemRows =
+    dailyIdsThisWeek.length > 0
+      ? await db
+          .select({ id: items.id, title: items.title, summary: items.summary, interestId: items.interestId })
+          .from(items)
+          .where(inArray(items.digestId, dailyIdsThisWeek))
+          .orderBy(desc(items.score))
+          .limit(MENTAL_MODEL_ITEM_CANDIDATES)
+      : [];
   const itemCandidates = itemRows
     .filter((r) => r.interestId != null && interestNameById.has(r.interestId))
     .map((r) => ({
@@ -855,9 +955,9 @@ export async function refreshMentalModelForCycle(): Promise<boolean> {
       ref: { type: "item" as const, id: r.id },
     }));
 
-  // Library chapters surfaced THIS cycle are eligible too, same as any
-  // interest content — see refreshBookChapterForCycle, which runs before
-  // this step (both are called from the same cycle-steps sequence).
+  // Library chapters surfaced THIS (weekly) cycle are eligible too, same as
+  // any interest content — see refreshBookChapterForCycle, which runs
+  // before this step (both are called from the same cycle-steps sequence).
   const chapterRows = await db
     .select({ id: bookChapters.id, title: bookChapters.title, summary: bookChapters.summary, bookId: bookChapters.bookId })
     .from(bookChapters)
@@ -878,122 +978,137 @@ export async function refreshMentalModelForCycle(): Promise<boolean> {
 
   const merged = [...itemCandidates, ...chapterCandidates];
   const candidates = merged.map((c, idx) => ({ index: idx + 1, ...c }));
-  if (candidates.length === 0) return false;
+  if (candidates.length === 0) return 0;
 
-  // Recently-used models (by most recent dateUsed), excluded from selection
-  // so the feature doesn't repeat the same lens over and over.
-  const recentUsageRows = await db
-    .select({ modelId: modelUsage.modelId })
-    .from(modelUsage)
-    .orderBy(desc(modelUsage.dateUsed))
-    .limit(MODEL_USAGE_LOOKBACK);
-  const recentlyUsedIds = recentUsageRows.map((r) => r.modelId);
+  let added = 0;
+  for (let round = 0; round < remaining; round++) {
+    // Recently-used models (by most recent dateUsed) plus anything already
+    // used THIS cycle, excluded from selection so the feature doesn't repeat
+    // the same lens over and over within or across weeks.
+    const recentUsageRows = await db
+      .select({ modelId: modelUsage.modelId })
+      .from(modelUsage)
+      .orderBy(desc(modelUsage.dateUsed))
+      .limit(MODEL_USAGE_LOOKBACK);
+    const excludedIds = [...new Set([...recentUsageRows.map((r) => r.modelId), ...usedThisCycleModelIds])];
 
-  const availableModels =
-    recentlyUsedIds.length > 0
-      ? await db.select().from(mentalModels).where(notInArray(mentalModels.id, recentlyUsedIds))
-      : await db.select().from(mentalModels);
-  const pool = availableModels.length > 0 ? availableModels : await db.select().from(mentalModels);
-  if (pool.length === 0) return false;
+    const availableModels =
+      excludedIds.length > 0
+        ? await db.select().from(mentalModels).where(notInArray(mentalModels.id, excludedIds))
+        : await db.select().from(mentalModels);
+    const pool = availableModels.length > 0 ? availableModels : await db.select().from(mentalModels);
+    if (pool.length === 0) break;
 
-  // Try a few random models (not just one) in case the first pick doesn't
-  // cleanly apply to today's actual items — generateMentalModelLens
-  // declines rather than forcing a strained connection.
-  const shuffled = [...pool].sort(() => Math.random() - 0.5).slice(0, 3);
+    // Try a few random models (not just one) in case the first pick doesn't
+    // cleanly apply to this week's actual items — generateMentalModelLens
+    // declines rather than forcing a strained connection.
+    const shuffled = [...pool].sort(() => Math.random() - 0.5).slice(0, 3);
 
-  for (const model of shuffled) {
-    try {
-      const lens = await generateMentalModelLens(
-        model.name,
-        model.description,
-        candidates.map(({ index, title, summary, interestName }) => ({ index, title, summary, interestName }))
-      );
-      if (!lens) continue;
+    let addedThisRound = false;
+    for (const model of shuffled) {
+      try {
+        const lens = await generateMentalModelLens(
+          model.name,
+          model.description,
+          candidates.map(({ index, title, summary, interestName }) => ({ index, title, summary, interestName }))
+        );
+        if (!lens) continue;
 
-      const linkedItemIds: LinkedItemRef[] = lens.usedIndexes
-        .map((i) => candidates.find((c) => c.index === i)?.ref)
-        .filter((ref): ref is LinkedItemRef => ref != null);
-      if (linkedItemIds.length === 0) continue;
+        const linkedItemIds: LinkedItemRef[] = lens.usedIndexes
+          .map((i) => candidates.find((c) => c.index === i)?.ref)
+          .filter((ref): ref is LinkedItemRef => ref != null);
+        if (linkedItemIds.length === 0) continue;
 
-      const insertedUsage = await db
-        .insert(modelUsage)
-        .values({
-          modelId: model.id,
-          digestId: cycleId,
-          linkedItemIds: JSON.stringify(linkedItemIds),
-          lensText: lens.lensText,
-        })
-        .returning({ id: modelUsage.id });
-      indexForSearch({
-        contentType: "mental_model",
-        sourceId: insertedUsage[0].id,
-        title: `Mental Model: ${model.name}`,
-        body: lens.lensText,
-        interestLabel: "Mental Model of the Day",
-        interestId: null,
-        date: new Date().toISOString(),
-        url: `/archive/${cycleId}?at=mentalmodel-${insertedUsage[0].id}`,
-      }).catch((err) => console.error("[pipeline] search-index failed for mental model usage:", err));
-      return true;
-    } catch (err) {
-      console.error(`[pipeline] Mental model lens failed for "${model.name}":`, err);
+        const insertedUsage = await db
+          .insert(modelUsage)
+          .values({
+            modelId: model.id,
+            digestId: cycleId,
+            linkedItemIds: JSON.stringify(linkedItemIds),
+            lensText: lens.lensText,
+          })
+          .returning({ id: modelUsage.id });
+        indexForSearch({
+          contentType: "mental_model",
+          sourceId: insertedUsage[0].id,
+          title: `Mental Model: ${model.name}`,
+          body: lens.lensText,
+          interestLabel: "Mental Model of the Week",
+          interestId: null,
+          date: new Date().toISOString(),
+          url: `/archive/${cycleId}?at=mentalmodel-${insertedUsage[0].id}`,
+        }).catch((err) => console.error("[pipeline] search-index failed for mental model usage:", err));
+        usedThisCycleModelIds.add(model.id);
+        added++;
+        addedThisRound = true;
+        break;
+      } catch (err) {
+        console.error(`[pipeline] Mental model lens failed for "${model.name}":`, err);
+      }
     }
+    if (!addedThisRound) break; // no candidate model worked this round — stop rather than spin
   }
-  return false;
+  return added;
 }
 
 /**
- * Cycle-level Rabbit Hole of the Day step — one item entirely outside the
- * reader's active interests, via web search. Idempotent: no-ops if this
- * cycle already has one.
+ * Cycle-level Rabbit Hole of the Week step (Phase 13: 1-2/week instead of
+ * 1/day) — item(s) entirely outside the reader's active interests, via web
+ * search. Idempotent: tops up to RABBIT_HOLE_WEEKLY_TARGET rather than
+ * duplicating past it. Returns how many were added.
  */
-export async function refreshRabbitHoleForCycle(): Promise<boolean> {
-  if (!hasClaudeKey()) return false;
+export async function refreshRabbitHolesForCycle(): Promise<number> {
+  if (!hasClaudeKey()) return 0;
 
-  const cycleId = await getOrCreateCurrentCycleId();
-  const existing = await db.select({ id: rabbitHoles.id }).from(rabbitHoles).where(eq(rabbitHoles.digestId, cycleId)).limit(1);
-  if (existing.length > 0) return false;
+  const cycleId = await getOrCreateWeeklyCycleId();
+  const existing = await db.select({ id: rabbitHoles.id }).from(rabbitHoles).where(eq(rabbitHoles.digestId, cycleId));
+  const remaining = RABBIT_HOLE_WEEKLY_TARGET - existing.length;
+  if (remaining <= 0) return 0;
 
   const enabledInterests = await getEnabledInterests();
   const activeNames = enabledInterests.map((i) => i.name);
 
-  const recentRows = await db
-    .select({ topicArea: rabbitHoles.topicArea })
-    .from(rabbitHoles)
-    .orderBy(desc(rabbitHoles.createdAt))
-    .limit(RABBIT_HOLE_AVOID_LOOKBACK);
-  const avoidTopics = recentRows.map((r) => r.topicArea);
+  let added = 0;
+  for (let round = 0; round < remaining; round++) {
+    const recentRows = await db
+      .select({ topicArea: rabbitHoles.topicArea })
+      .from(rabbitHoles)
+      .orderBy(desc(rabbitHoles.createdAt))
+      .limit(RABBIT_HOLE_AVOID_LOOKBACK);
+    const avoidTopics = recentRows.map((r) => r.topicArea);
 
-  try {
-    const result = await generateRabbitHole(activeNames, avoidTopics);
-    if (!result) return false;
+    try {
+      const result = await generateRabbitHole(activeNames, avoidTopics);
+      if (!result) break; // declined — nothing left that avoids recent topics naturally
 
-    const insertedHole = await db
-      .insert(rabbitHoles)
-      .values({
+      const insertedHole = await db
+        .insert(rabbitHoles)
+        .values({
+          title: result.title,
+          summary: result.summary,
+          url: result.url,
+          sourceName: result.sourceName,
+          topicArea: result.topicArea,
+          digestId: cycleId,
+        })
+        .returning({ id: rabbitHoles.id });
+      indexForSearch({
+        contentType: "rabbit_hole",
+        sourceId: insertedHole[0].id,
         title: result.title,
-        summary: result.summary,
-        url: result.url,
-        sourceName: result.sourceName,
-        topicArea: result.topicArea,
-        digestId: cycleId,
-      })
-      .returning({ id: rabbitHoles.id });
-    indexForSearch({
-      contentType: "rabbit_hole",
-      sourceId: insertedHole[0].id,
-      title: result.title,
-      body: result.summary,
-      interestLabel: result.topicArea,
-      interestId: null,
-      date: new Date().toISOString(),
-      url: `/archive/${cycleId}?at=rabbithole-${insertedHole[0].id}`,
-    }).catch((err) => console.error("[pipeline] search-index failed for rabbit hole:", err));
-    return true;
-  } catch (err) {
-    console.error("[pipeline] Rabbit hole generation failed:", err);
-    return false;
+        body: result.summary,
+        interestLabel: result.topicArea,
+        interestId: null,
+        date: new Date().toISOString(),
+        url: `/archive/${cycleId}?at=rabbithole-${insertedHole[0].id}`,
+      }).catch((err) => console.error("[pipeline] search-index failed for rabbit hole:", err));
+      added++;
+    } catch (err) {
+      console.error("[pipeline] Rabbit hole generation failed:", err);
+      break;
+    }
   }
+  return added;
 }
 
 export interface BookChapterStepResult {
@@ -1013,7 +1128,7 @@ export interface BookChapterStepResult {
  * already-written chapter becomes visible.
  */
 export async function refreshBookChapterForCycle(): Promise<BookChapterStepResult> {
-  const cycleId = await getOrCreateCurrentCycleId();
+  const cycleId = await getOrCreateWeeklyCycleId();
   const readyBooks = await db.select().from(books).where(eq(books.status, "ready"));
   if (readyBooks.length === 0) return { chaptersSurfaced: 0 };
 
@@ -1109,31 +1224,48 @@ export async function refreshBookChapterForCycle(): Promise<BookChapterStepResul
 }
 
 /**
- * Steelman companion: for interests where argument is central (a fixed
- * slug list, plus any custom interest), generates up to
- * STEELMAN_TARGET_PER_INTEREST counterarguments per cycle for this
- * interest's freshly-fetched items that present a genuine arguable thesis.
- * One combined Claude call (with web_search) covers up to
- * STEELMAN_CANDIDATE_POOL candidates, rather than one call per item, to
- * bound cost. Idempotent: only tops up to the per-cycle target, so a retry
- * never re-generates items that already have one.
+ * Steelman companion (Phase 13: moved weekly — was a daily, per-refresh
+ * step): for interests where argument is central (a fixed slug list, plus
+ * any custom interest), generates up to STEELMAN_TARGET_PER_INTEREST
+ * counterarguments per WEEK for this interest's freshly-fetched items
+ * (scanned across every daily cycle so far this week, not just today's)
+ * that present a genuine arguable thesis. One combined Claude call (with
+ * web_search) covers up to STEELMAN_CANDIDATE_POOL candidates, rather than
+ * one call per item, to bound cost. Idempotent: only tops up to the
+ * per-week target, so a retry never re-generates items that already have
+ * one. Called once per enabled interest as its own weekly step (see
+ * runDigestPipeline / /api/refresh/steelman), decoupled from the daily News
+ * step so it doesn't run on every refresh.
  */
-async function addSteelmansForInterest(interest: InterestWithConfig, cycleId: number): Promise<number> {
+export async function refreshSteelmansForInterest(interestId: number, opts: { bypassPrune?: boolean } = {}): Promise<number> {
   if (!hasClaudeKey()) return 0;
+  const interest = await getInterestById(interestId);
+  if (!interest || !interest.enabled) return 0;
   const eligible = STEELMAN_ELIGIBLE_SLUGS.has(interest.slug) || interest.isCustom;
   if (!eligible) return 0;
+  // Phase 14 (engagement-based pruning) — see refreshNewsForInterest's
+  // comment above for the full reasoning. `bypassPrune` is set only by the
+  // dedicated "Generate now" action (generateNowForContentType).
+  if (!opts.bypassPrune && !(await isAutoGenerationEnabled(interestId, "steelman"))) return 0;
+
+  const dailyIdsThisWeek = await getDailyDigestIdsForCurrentWeek();
+  if (dailyIdsThisWeek.length === 0) return 0;
 
   const existingCount = await db
     .select({ id: items.id })
     .from(items)
-    .where(and(eq(items.interestId, interest.id), eq(items.digestId, cycleId), isNotNull(items.steelmanContent)));
+    .where(
+      and(eq(items.interestId, interest.id), inArray(items.digestId, dailyIdsThisWeek), isNotNull(items.steelmanContent))
+    );
   const needed = STEELMAN_TARGET_PER_INTEREST - existingCount.length;
   if (needed <= 0) return 0;
 
   const candidateRows = await db
     .select({ id: items.id, title: items.title, summary: items.summary })
     .from(items)
-    .where(and(eq(items.interestId, interest.id), eq(items.digestId, cycleId), isNull(items.steelmanContent)))
+    .where(
+      and(eq(items.interestId, interest.id), inArray(items.digestId, dailyIdsThisWeek), isNull(items.steelmanContent))
+    )
     .orderBy(desc(items.score))
     .limit(STEELMAN_CANDIDATE_POOL);
   if (candidateRows.length === 0) return 0;
@@ -1175,7 +1307,8 @@ async function addSteelmansForInterest(interest: InterestWithConfig, cycleId: nu
  * failing never blocks the others.
  */
 export async function runDigestPipeline(): Promise<PipelineResult> {
-  const cycleId = await getOrCreateCurrentCycleId();
+  const dailyCycleId = await getOrCreateDailyCycleId();
+  const weeklyCycleId = await getOrCreateWeeklyCycleId();
   const enabledInterests = await getEnabledInterests();
 
   if (enabledInterests.length === 0) {
@@ -1186,13 +1319,15 @@ export async function runDigestPipeline(): Promise<PipelineResult> {
       return { chaptersSurfaced: 0 };
     });
     return {
-      cycleId,
+      dailyCycleId,
+      weeklyCycleId,
       newsAdded: 0,
       deepDivesAdded: 0,
       appliedInsightsAdded: 0,
       drillsAdded: 0,
-      mentalModelAdded: false,
-      rabbitHoleAdded: false,
+      steelmansAdded: 0,
+      mentalModelsAdded: 0,
+      rabbitHolesAdded: 0,
       chaptersSurfaced: bookChapterResult.chaptersSurfaced,
       fetchedCount: 0,
       usedClaude: hasClaudeKey(),
@@ -1217,13 +1352,13 @@ export async function runDigestPipeline(): Promise<PipelineResult> {
     console.error("[pipeline] Drills step failed:", err);
     return { groundedAdded: 0, standaloneAdded: false };
   });
-  const mentalModelAdded = await refreshMentalModelForCycle().catch((err) => {
+  const mentalModelsAdded = await refreshMentalModelsForCycle().catch((err) => {
     console.error("[pipeline] Mental model step failed:", err);
-    return false;
+    return 0;
   });
-  const rabbitHoleAdded = await refreshRabbitHoleForCycle().catch((err) => {
+  const rabbitHolesAdded = await refreshRabbitHolesForCycle().catch((err) => {
     console.error("[pipeline] Rabbit hole step failed:", err);
-    return false;
+    return 0;
   });
 
   const newBrainFacts = await maybeGenerateWeeklyFacts().catch((err) => {
@@ -1232,13 +1367,15 @@ export async function runDigestPipeline(): Promise<PipelineResult> {
   });
 
   return {
-    cycleId,
+    dailyCycleId,
+    weeklyCycleId,
     newsAdded: results.reduce((sum, r) => sum + r.newsAdded, 0),
     deepDivesAdded: results.filter((r) => r.deepDiveAdded).length,
     appliedInsightsAdded: results.filter((r) => r.insightAdded).length,
     drillsAdded: drillsResult.groundedAdded + (drillsResult.standaloneAdded ? 1 : 0),
-    mentalModelAdded,
-    rabbitHoleAdded,
+    steelmansAdded: results.reduce((sum, r) => sum + r.steelmansAdded, 0),
+    mentalModelsAdded,
+    rabbitHolesAdded,
     chaptersSurfaced: bookChapterResult.chaptersSurfaced,
     fetchedCount: results.reduce((sum, r) => sum + r.fetched, 0),
     usedClaude: hasClaudeKey(),
@@ -1247,32 +1384,37 @@ export async function runDigestPipeline(): Promise<PipelineResult> {
   };
 }
 
-/** News + Deep Dive(s) + Applied Insight(s) for one interest, built from the
- * granular step functions above. Loops the deep-dive step to fill a
- * favorited interest's full per-cycle quota (>1) — safe because
+/** News + Deep Dive(s) + Applied Insight(s) + Steelman(s) for one interest,
+ * built from the granular step functions above. Loops the deep-dive step to
+ * fill a favorited interest's full per-week quota (>1) — safe because
  * refreshDeepDiveForInterest no-ops once quota is reached, so the loop just
  * stops early for a non-favorited (quota 1) interest. */
 async function runInterestCycle(interest: InterestWithConfig): Promise<InterestCycleResult> {
   const news = await refreshNewsForInterest(interest.id);
 
   let deepDiveAdded = false;
-  for (let i = 0; i < FAVORITE_DEEP_DIVE_QUOTA; i++) {
+  for (let i = 0; i < WEEKLY_DEEP_DIVE_QUOTA_FAVORITE; i++) {
     const dive = await refreshDeepDiveForInterest(interest.id);
     if (dive?.added) deepDiveAdded = true;
     else break;
   }
 
   const insight = await refreshInsightForInterest(interest.id);
+  const steelmansAdded = await refreshSteelmansForInterest(interest.id).catch((err) => {
+    console.error(`[pipeline] Steelman step failed for "${interest.name}":`, err);
+    return 0;
+  });
   return {
     newsAdded: news?.added ?? 0,
     fetched: news?.fetched ?? 0,
     deepDiveAdded,
     insightAdded: insight?.added ?? false,
+    steelmansAdded,
   };
 }
 
 /** Dedupes a batch against everything already persisted, returning only genuinely new items. */
-async function filterFresh(rawItems: RawItem[]): Promise<RawItem[]> {
+export async function filterFresh(rawItems: RawItem[]): Promise<RawItem[]> {
   const deduped = dedupeItems(rawItems);
   const existingKeysResult = await client.execute("SELECT dedupe_key FROM items");
   const existingKeys = new Set(existingKeysResult.rows.map((r: any) => r.dedupe_key as string));
@@ -1280,7 +1422,7 @@ async function filterFresh(rawItems: RawItem[]): Promise<RawItem[]> {
 }
 
 /** Inserts processed items one at a time, skipping (not aborting the batch on) a rare dedupe-key race. */
-async function insertItems(
+export async function insertItems(
   processed: ProcessedItem[],
   interestId: number,
   interestName: string,
@@ -1305,6 +1447,7 @@ async function insertItems(
           publishedAt: item.publishedAt,
           score: item.score,
           digestId: cycleId,
+          citationMetadata: JSON.stringify(item.citationMetadata ?? {}),
         })
         .returning({ id: items.id });
       inserted++;
@@ -1384,7 +1527,7 @@ async function runCuratedNews(
 // Critical Thinking & Argumentation's News Roundup targets real arguments/
 // fallacies in circulation specifically, rather than generic "developments
 // in critical thinking" commentary — see newsRoundup.ts's focusOverride.
-const ROUNDUP_FOCUS_OVERRIDES: Record<string, string> = {
+export const ROUNDUP_FOCUS_OVERRIDES: Record<string, string> = {
   "critical-thinking":
     "real arguments, claims, or pieces of reasoning currently circulating in public discourse or " +
     "media (op-eds, punditry, marketing claims, political rhetoric, viral social posts, etc.) that " +
@@ -1399,7 +1542,7 @@ const ROUNDUP_FOCUS_OVERRIDES: Record<string, string> = {
  * Roundup. Items arrive with a short 2-3 sentence summary from the roundup
  * generation itself (see newsRoundup.ts) — Phase 10 fetches each item's
  * real linked article page and re-summarizes from that fuller content into
- * the same ~120-200 word abstract-style target as every other News source,
+ * the same ~250-320 word abstract-style target as every other News source,
  * falling back to the roundup's own inline summary if that fetch fails.
  */
 async function runRoundupNews(
@@ -1431,4 +1574,187 @@ async function runRoundupNews(
   const selected = processed.slice(0, TARGET_ROUNDUP_ITEMS);
   const added = await insertItems(selected, interest.id, interest.name, cycleId);
   return { added, fetched: fetchedCount };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 14 (Cost Optimization) — "Generate now": the explicit, on-demand
+// counterpart to a (interest, contentType) combination the pruning sweep
+// switched to on_demand (see engagement.ts). Lives in the interest's own
+// area of the UI, always available regardless of engagement history —
+// bypasses isAutoGenerationEnabled entirely (that's the point: the reader
+// asked for one, right now), but otherwise reuses the exact same
+// generation/persistence logic as the scheduled steps above, so the content
+// it produces is indistinguishable from anything auto-generated.
+// ---------------------------------------------------------------------------
+
+export interface GenerateNowResult {
+  added: boolean;
+  message?: string; // set when nothing was added, to explain why (e.g. "declined — nothing to interrogate")
+}
+
+export async function generateNowForContentType(
+  interestId: number,
+  contentType: PrunableContentType
+): Promise<GenerateNowResult> {
+  const interest = await getInterestById(interestId);
+  if (!interest || !interest.enabled) return { added: false, message: "Interest not found or not enabled." };
+  if (!hasClaudeKey()) return { added: false, message: "No Anthropic API key configured." };
+
+  switch (contentType) {
+    case "news": {
+      const cycleId = await getOrCreateDailyCycleId();
+      const result = await (interest.hasCuratedSource ? runCuratedNews(interest, cycleId) : runRoundupNews(interest, cycleId)).catch(
+        (err) => {
+          console.error(`[pipeline] Generate-now News failed for "${interest.name}":`, err);
+          return { added: 0, fetched: 0 };
+        }
+      );
+      return result.added > 0 ? { added: true } : { added: false, message: "Nothing new found right now." };
+    }
+
+    case "deep_dive": {
+      const cycleId = await getOrCreateWeeklyCycleId();
+      const result = await generateAndPersistDeepDive(interest, cycleId).catch((err) => {
+        console.error(`[pipeline] Generate-now Deep Dive failed for "${interest.name}":`, err);
+        return null;
+      });
+      if (result && interest.generatesAppliedInsights) {
+        await generateInsightForDive(interest, result.id).catch((err) => {
+          console.error(`[pipeline] Generate-now Applied Insight (from Deep Dive) failed for "${interest.name}":`, err);
+        });
+      }
+      return result ? { added: true } : { added: false, message: "Generation failed — see server logs." };
+    }
+
+    case "applied_insight": {
+      const diveRows = await db
+        .select()
+        .from(deepDives)
+        .where(eq(deepDives.interestId, interestId))
+        .orderBy(desc(deepDives.createdAt))
+        .limit(1);
+      const dive = diveRows[0];
+      if (!dive) return { added: false, message: "No Deep Dive yet to base an Applied Insight on." };
+
+      // "Generate now" is an explicit new request, not an idempotency check
+      // — unlike generateInsightForDive, this doesn't skip an already-
+      // insighted dive; it tries again regardless.
+      const content = await generateAppliedInsight(interest.name, dive.topic, dive.content);
+      if (!content) return { added: false, message: "This topic doesn't have a natural everyday application." };
+
+      const inserted = await db
+        .insert(appliedInsights)
+        .values({ interestId: interest.id, deepDiveId: dive.id, content })
+        .returning({ id: appliedInsights.id });
+      indexForSearch({
+        contentType: "applied_insight",
+        sourceId: inserted[0].id,
+        title: `Applied Insight — ${interest.name}`,
+        body: content,
+        interestLabel: interest.name,
+        interestId: interest.id,
+        date: new Date().toISOString(),
+        url: `/deep-dive/${dive.id}`,
+      }).catch((err) => console.error("[pipeline] search-index failed for generate-now applied insight:", err));
+      return { added: true };
+    }
+
+    case "drill": {
+      const cycleId = await getOrCreateWeeklyCycleId();
+      const diveRows = await db
+        .select()
+        .from(deepDives)
+        .where(eq(deepDives.interestId, interestId))
+        .orderBy(desc(deepDives.createdAt))
+        .limit(1);
+
+      if (diveRows[0]) {
+        const dive = diveRows[0];
+        const result = await generateGroundedDrill(interest.name, dive.topic, dive.content).catch((err) => {
+          console.error(`[pipeline] Generate-now grounded drill failed for "${interest.name}":`, err);
+          return null;
+        });
+        if (result) {
+          const inserted = await db
+            .insert(drills)
+            .values({
+              interestId: interest.id,
+              sourceDeepDiveId: dive.id,
+              drillType: result.drillType,
+              promptContent: result.promptContent,
+              options: JSON.stringify(result.options),
+              correctOption: result.correctOption,
+              explanation: result.explanation,
+              conceptLabel: result.conceptLabel,
+              digestId: cycleId,
+            })
+            .returning({ id: drills.id });
+          await addCoveredTopic(interest.id, result.conceptLabel, dive.id);
+          indexForSearch({
+            contentType: "drill",
+            sourceId: inserted[0].id,
+            title: `Drill — ${result.conceptLabel}`,
+            body: `${result.promptContent}\n\n${result.explanation}`,
+            interestLabel: interest.name,
+            interestId: interest.id,
+            date: new Date().toISOString(),
+            url: "/drills",
+          }).catch((err) => console.error("[pipeline] search-index failed for generate-now drill:", err));
+          if (interest.generatesAppliedInsights) {
+            await generateInsightForDrill(interest, inserted[0].id).catch((err) => {
+              console.error(`[pipeline] Generate-now Applied Insight (from drill) failed for "${interest.name}":`, err);
+            });
+          }
+          return { added: true };
+        }
+      }
+
+      // No grounded drill came out of the most recent dive (or there isn't
+      // one) — fall back to a standalone formal-logic drill, but only for
+      // an interest that's actually Critical Thinking/Logic itself, same as
+      // the automatic addStandaloneLogicDrill's eligibility.
+      if (interest.slug === "critical-thinking" || interest.slug === "logic") {
+        const covered = await getCoveredTopics(interest.id);
+        const result = await generateStandaloneLogicDrill(covered.recent).catch((err) => {
+          console.error(`[pipeline] Generate-now standalone drill failed for "${interest.name}":`, err);
+          return null;
+        });
+        if (result) {
+          const inserted = await db
+            .insert(drills)
+            .values({
+              interestId: interest.id,
+              sourceDeepDiveId: null,
+              drillType: result.drillType,
+              promptContent: result.promptContent,
+              options: JSON.stringify(result.options),
+              correctOption: result.correctOption,
+              explanation: result.explanation,
+              conceptLabel: result.conceptLabel,
+              digestId: cycleId,
+            })
+            .returning({ id: drills.id });
+          await addCoveredTopic(interest.id, result.conceptLabel, null);
+          indexForSearch({
+            contentType: "drill",
+            sourceId: inserted[0].id,
+            title: `Drill — ${result.conceptLabel}`,
+            body: `${result.promptContent}\n\n${result.explanation}`,
+            interestLabel: interest.name,
+            interestId: interest.id,
+            date: new Date().toISOString(),
+            url: "/drills",
+          }).catch((err) => console.error("[pipeline] search-index failed for generate-now standalone drill:", err));
+          return { added: true };
+        }
+      }
+
+      return { added: false, message: "Nothing drillable found right now." };
+    }
+
+    case "steelman": {
+      const added = await refreshSteelmansForInterest(interestId, { bypassPrune: true });
+      return added > 0 ? { added: true } : { added: false, message: "No qualifying arguable items right now." };
+    }
+  }
 }

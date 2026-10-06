@@ -299,6 +299,7 @@ export async function generateFullExportZip(): Promise<Buffer> {
       followUpTopics: [],
       selfCheckQuestions: [],
       essayPrompt: null,
+      syllabusTag: null,
       explainBacks: [],
     };
     const md = buildDeepDiveMarkdown(detail, related);

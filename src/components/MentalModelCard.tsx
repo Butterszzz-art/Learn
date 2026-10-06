@@ -1,4 +1,5 @@
 import type { MentalModelOfTheDay } from "@/lib/digest";
+import { TrustBadge } from "./TrustBadge";
 
 /** Once per cycle: one mental model connected concretely to one or two of
  * today's actual items, ideally from different interests — visually
@@ -14,7 +15,10 @@ export function MentalModelCard({ entry }: { entry: MentalModelOfTheDay }) {
         <span className="pill">{entry.category}</span>
       </div>
       <p className="mb-2 font-display text-lg font-semibold">{entry.modelName}</p>
-      <p className="mb-3 text-sm leading-relaxed text-neuron-text/90">{entry.lensText}</p>
+      <p className="mb-2 text-sm leading-relaxed text-neuron-text/90">{entry.lensText}</p>
+      <div className="mb-3">
+        <TrustBadge classification="synthesized" />
+      </div>
       {entry.linkedItems.length > 0 && (
         <div className="flex flex-wrap gap-2 text-xs">
           {entry.linkedItems.map((item) => (

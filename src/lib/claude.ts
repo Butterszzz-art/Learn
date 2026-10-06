@@ -2,8 +2,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Category } from "@/db/schema";
 import { CATEGORIES } from "@/db/schema";
 import type { RawItem } from "./types";
-
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
+import { getModel } from "./modelConfig";
+import { cachedSystem } from "./promptCache";
+import { completeJson, hasSummaryLlm, inventedNumbers } from "./summaryLlm";
 
 let client: Anthropic | null | undefined;
 
@@ -27,17 +28,219 @@ interface ClassifiedItem {
   summary: string;
 }
 
-const BATCH_SIZE = 12;
+export const BATCH_SIZE = 12;
+
+// Phase 10: News summaries widened from a 2-3 sentence blurb to a genuine
+// abstract-style summary — substantial enough to learn the actual finding
+// from the card itself. Applies uniformly to every News source; what
+// differs per source is the *input* text (a real structured abstract for
+// academic sources, a fetched-and-extracted article page for everything
+// else — see buildSummaryTexts in pipeline.ts), not this target.
+// Phase 16: widened again from 120-200 to 250-320 ("Extended") after
+// side-by-side previews at four lengths — this range fit the target of
+// detailed/extensive without getting too dense to skim.
+const SUMMARY_LENGTH_INSTRUCTION =
+  "A detailed, extensive abstract-style summary of 250-320 words, written in your own words, as three " +
+  "paragraphs separated by a blank line: (1) background and motivation; (2) what was done and found — " +
+  "design, sample, methods, and every key result including secondary findings; (3) why it matters and " +
+  "what it implies, plus any caveats the source itself states. " +
+  "Carry over real numbers, statistics, effect sizes, and percentages from the source when present " +
+  "— factual data points are expected and fine to include — but NEVER invent or estimate a number, " +
+  "sample size, p-value, or finding that is not in the source text; if the source gives no sample " +
+  "size, do not state one. What must be original is the phrasing and structure: never mirror the " +
+  "source text's sentence structure, and never lift phrases from it. A summary under 250 words is a failure.";
+
+// Phase 14: pulled out into its own `system` block (cached — identical on
+// every call) rather than folded into the per-call user message, which used
+// to repeat this same instruction text verbatim on every single chunk call.
+const CLASSIFY_SYSTEM_PROMPT =
+  "You are helping compile a personal neuroscience news digest. For each item given, classify it " +
+  "into exactly one category and write a summary in your own words. " +
+  `${SUMMARY_LENGTH_INSTRUCTION} The provided text may be a real abstract, or text auto-extracted ` +
+  "from a webpage that can still contain some navigation/boilerplate — focus only on the actual " +
+  `article content.\n\nCategories: ${CATEGORIES.join(" | ")}`;
+
+const SUMMARIZE_SYSTEM_PROMPT =
+  "You are helping compile a personal knowledge digest. For each item given, write a summary in " +
+  `your own words. ${SUMMARY_LENGTH_INSTRUCTION} The provided text may be a real abstract, or text ` +
+  "auto-extracted from a webpage that can still contain some navigation/boilerplate — focus only on " +
+  "the actual article content.";
+
+const CLASSIFY_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    results: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          index: { type: "integer" },
+          category: { type: "string", enum: [...CATEGORIES] },
+          summary: { type: "string", description: SUMMARY_LENGTH_INSTRUCTION },
+        },
+        required: ["index", "category", "summary"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["results"],
+  additionalProperties: false,
+};
+
+const SUMMARIZE_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    results: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          index: { type: "integer" },
+          summary: { type: "string", description: SUMMARY_LENGTH_INSTRUCTION },
+        },
+        required: ["index", "summary"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["results"],
+  additionalProperties: false,
+};
+
+function itemsForPrompt(chunk: RawItem[]) {
+  return chunk.map((item, i) => ({
+    index: i,
+    title: item.title,
+    source: item.sourceName,
+    text: (item.snippet || "").slice(0, 6000),
+  }));
+}
+
+/**
+ * Builds the exact request params for a classify-and-summarize chunk call —
+ * shared by the synchronous path (classifyChunk, below) and the Batches API
+ * path (news summary generation for curated sources is batch-eligible per
+ * Phase 14 — see scripts/submitBatch.ts). Same params either way; the only
+ * difference is whether they're passed to `messages.create` directly or
+ * wrapped into a Batches API `requests[]` entry.
+ */
+export function buildClassifyChunkParams(chunk: RawItem[]): Anthropic.MessageCreateParamsNonStreaming {
+  return {
+    model: getModel("news_summary"),
+    max_tokens: 8192,
+    system: cachedSystem(CLASSIFY_SYSTEM_PROMPT),
+    output_config: { format: { type: "json_schema", schema: CLASSIFY_SCHEMA } },
+    messages: [{ role: "user", content: "Items:\n" + JSON.stringify(itemsForPrompt(chunk), null, 2) }],
+  };
+}
+
+export function buildSummarizeChunkParams(chunk: RawItem[]): Anthropic.MessageCreateParamsNonStreaming {
+  return {
+    model: getModel("news_summary"),
+    max_tokens: 8192,
+    system: cachedSystem(SUMMARIZE_SYSTEM_PROMPT),
+    output_config: { format: { type: "json_schema", schema: SUMMARIZE_SCHEMA } },
+    messages: [{ role: "user", content: "Items:\n" + JSON.stringify(itemsForPrompt(chunk), null, 2) }],
+  };
+}
+
+export function parseClassifyChunkResult(text: string): Map<number, ClassifiedItem> {
+  const parsed = JSON.parse(text) as { results: { index: number; category: string; summary: string }[] };
+  const map = new Map<number, ClassifiedItem>();
+  for (const r of parsed.results) {
+    if (!(CATEGORIES as readonly string[]).includes(r.category)) continue;
+    map.set(r.index, { category: r.category as Category, summary: r.summary });
+  }
+  return map;
+}
+
+export function parseSummarizeChunkResult(text: string): Map<number, string> {
+  const parsed = JSON.parse(text) as { results: { index: number; summary: string }[] };
+  const map = new Map<number, string>();
+  for (const r of parsed.results) map.set(r.index, r.summary);
+  return map;
+}
+
+const SINGLE_CLASSIFY_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    category: { type: "string", enum: [...CATEGORIES] },
+    summary: { type: "string", description: SUMMARY_LENGTH_INSTRUCTION },
+  },
+  required: ["category", "summary"],
+  additionalProperties: false,
+};
+
+const SINGLE_SUMMARIZE_SCHEMA = {
+  type: "object" as const,
+  properties: { summary: { type: "string", description: SUMMARY_LENGTH_INSTRUCTION } },
+  required: ["summary"],
+  additionalProperties: false,
+};
+
+function singleItemPrompt(item: RawItem): string {
+  return `Title: ${item.title}\nSource: ${item.sourceName}\nText: ${(item.snippet || "").slice(0, 6000)}`;
+}
+
+const MIN_ACCEPTED_WORDS = 200;
+const MAX_SUMMARY_ATTEMPTS = 3;
+
+// Smaller open models sometimes undershoot the length or invent statistics
+// (sample sizes, p-values) that the source never gave — unacceptable in a
+// science digest. Retry such output; if no attempt is clean, return null so the
+// caller falls back to the real (truncated) abstract instead of fabricated numbers.
+async function guarded<T extends { summary: string }>(item: RawItem, attempt: () => Promise<T | null>): Promise<T | null> {
+  const source = `${item.title} ${(item.snippet || "").slice(0, 6000)}`;
+  for (let i = 0; i < MAX_SUMMARY_ATTEMPTS; i++) {
+    const result = await attempt();
+    if (!result) continue;
+    const words = result.summary.trim().split(/\s+/).length;
+    if (words >= MIN_ACCEPTED_WORDS && inventedNumbers(result.summary, source).length === 0) return result;
+  }
+  return null;
+}
+
+// Sequential on purpose — the OpenAI-compatible provider path is paced by
+// token-per-minute limits (see summaryLlm.ts), so concurrency just trips 429s.
+async function viaSummaryLlm<T>(items: RawItem[], run: (item: RawItem) => Promise<T | null>): Promise<Map<number, T>> {
+  const results = new Map<number, T>();
+  for (let i = 0; i < items.length; i++) {
+    try {
+      const value = await run(items[i]);
+      if (value) results.set(i, value);
+    } catch (err) {
+      console.error(`[summaryLlm] "${items[i].title.slice(0, 60)}" failed, will fall back for this item:`, err);
+    }
+  }
+  return results;
+}
 
 /**
  * Classifies + summarizes a batch of items in as few API calls as possible.
  * Falls back gracefully (returns an empty map) if no key is configured or a
  * batch call fails — the caller applies the keyword/snippet fallback for any
- * items missing from the returned map.
+ * items missing from the returned map. Synchronous path only — the
+ * scheduled pipeline instead queues buildClassifyChunkParams calls through
+ * the Batches API (see scripts/submitBatch.ts); this stays synchronous for
+ * the on-demand "Refresh now" path, which needs an immediate result.
  */
 export async function classifyAndSummarizeBatch(
   items: RawItem[]
 ): Promise<Map<number, ClassifiedItem>> {
+  if (hasSummaryLlm()) {
+    return viaSummaryLlm(items, (item) =>
+      guarded(item, async () => {
+        const r = await completeJson<{ category: string; summary: string }>(
+          CLASSIFY_SYSTEM_PROMPT,
+          singleItemPrompt(item),
+          SINGLE_CLASSIFY_SCHEMA
+        );
+        if (!r.summary?.trim() || !(CATEGORIES as readonly string[]).includes(r.category)) return null;
+        return { category: r.category as Category, summary: r.summary.trim() };
+      })
+    );
+  }
+
   const anthropic = getAnthropicClient();
   const results = new Map<number, ClassifiedItem>();
   if (!anthropic || items.length === 0) return results;
@@ -51,8 +254,10 @@ export async function classifyAndSummarizeBatch(
     chunkStarts.map(async (offset) => {
       const chunk = items.slice(offset, offset + BATCH_SIZE);
       try {
-        const classified = await classifyChunk(anthropic, chunk);
-        classified.forEach((value, idx) => results.set(offset + idx, value));
+        const response = await anthropic.messages.create(buildClassifyChunkParams(chunk));
+        const textBlock = response.content.find((b) => b.type === "text");
+        if (!textBlock || textBlock.type !== "text") return;
+        parseClassifyChunkResult(textBlock.text).forEach((value, idx) => results.set(offset + idx, value));
       } catch (err) {
         console.error("[claude] classifyChunk failed, will fall back for this batch:", err);
       }
@@ -62,100 +267,29 @@ export async function classifyAndSummarizeBatch(
   return results;
 }
 
-// Phase 10: News summaries widened from a 2-3 sentence blurb to a genuine
-// abstract-style summary — substantial enough to learn the actual finding
-// from the card itself. Applies uniformly to every News source; what
-// differs per source is the *input* text (a real structured abstract for
-// academic sources, a fetched-and-extracted article page for everything
-// else — see buildSummaryTexts in pipeline.ts), not this target.
-const SUMMARY_LENGTH_INSTRUCTION =
-  "A thorough abstract-style summary, roughly 120-200 words, written in your own words — cover " +
-  "what was studied (and methodology/sample size, if given), the key findings, and why it matters. " +
-  "Carry over real numbers, statistics, effect sizes, and percentages from the source when present " +
-  "— factual data points are expected and fine to include. What must be original is the phrasing " +
-  "and structure: never mirror the source text's sentence structure, and never lift phrases from it.";
-
-async function classifyChunk(
-  anthropic: Anthropic,
-  chunk: RawItem[]
-): Promise<Map<number, ClassifiedItem>> {
-  const itemsForPrompt = chunk.map((item, i) => ({
-    index: i,
-    title: item.title,
-    source: item.sourceName,
-    text: (item.snippet || "").slice(0, 6000),
-  }));
-
-  const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 8192,
-    output_config: {
-      format: {
-        type: "json_schema",
-        schema: {
-          type: "object",
-          properties: {
-            results: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  index: { type: "integer" },
-                  category: { type: "string", enum: [...CATEGORIES] },
-                  summary: {
-                    type: "string",
-                    description: SUMMARY_LENGTH_INSTRUCTION,
-                  },
-                },
-                required: ["index", "category", "summary"],
-                additionalProperties: false,
-              },
-            },
-          },
-          required: ["results"],
-          additionalProperties: false,
-        },
-      },
-    },
-    messages: [
-      {
-        role: "user",
-        content:
-          "You are helping compile a personal neuroscience news digest. For each item below, " +
-          "classify it into exactly one category and write a summary in your own words. " +
-          `${SUMMARY_LENGTH_INSTRUCTION} The provided text may be a real abstract, or text ` +
-          "auto-extracted from a webpage that can still contain some navigation/boilerplate — " +
-          "focus only on the actual article content.\n\n" +
-          `Categories: ${CATEGORIES.join(" | ")}\n\n` +
-          "Items:\n" +
-          JSON.stringify(itemsForPrompt, null, 2),
-      },
-    ],
-  });
-
-  const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") return new Map();
-
-  const parsed = JSON.parse(textBlock.text) as {
-    results: { index: number; category: string; summary: string }[];
-  };
-
-  const map = new Map<number, ClassifiedItem>();
-  for (const r of parsed.results) {
-    if (!(CATEGORIES as readonly string[]).includes(r.category)) continue;
-    map.set(r.index, { category: r.category as Category, summary: r.summary });
-  }
-  return map;
-}
-
 /**
  * Abstract-style summarization (see SUMMARY_LENGTH_INSTRUCTION) for
  * interests that don't use the fixed neuroscience category taxonomy —
  * every interest other than Neuroscience, plus Field News Roundup items.
  * Same batching/fallback contract as classifyAndSummarizeBatch: returns an
  * empty map on no-key or failure, caller falls back to a truncated snippet.
+ * Synchronous path only — see the docstring above.
  */
 export async function summarizeBatch(items: RawItem[]): Promise<Map<number, string>> {
+  if (hasSummaryLlm()) {
+    const guardedResults = await viaSummaryLlm(items, (item) =>
+      guarded(item, async () => {
+        const r = await completeJson<{ summary: string }>(
+          SUMMARIZE_SYSTEM_PROMPT,
+          singleItemPrompt(item),
+          SINGLE_SUMMARIZE_SCHEMA
+        );
+        return r.summary?.trim() ? { summary: r.summary.trim() } : null;
+      })
+    );
+    return new Map([...guardedResults].map(([i, r]) => [i, r.summary]));
+  }
+
   const anthropic = getAnthropicClient();
   const results = new Map<number, string>();
   if (!anthropic || items.length === 0) return results;
@@ -167,8 +301,10 @@ export async function summarizeBatch(items: RawItem[]): Promise<Map<number, stri
     chunkStarts.map(async (offset) => {
       const chunk = items.slice(offset, offset + BATCH_SIZE);
       try {
-        const summarized = await summarizeChunk(anthropic, chunk);
-        summarized.forEach((value, idx) => results.set(offset + idx, value));
+        const response = await anthropic.messages.create(buildSummarizeChunkParams(chunk));
+        const textBlock = response.content.find((b) => b.type === "text");
+        if (!textBlock || textBlock.type !== "text") return;
+        parseSummarizeChunkResult(textBlock.text).forEach((value, idx) => results.set(offset + idx, value));
       } catch (err) {
         console.error("[claude] summarizeChunk failed, will fall back for this batch:", err);
       }
@@ -176,68 +312,6 @@ export async function summarizeBatch(items: RawItem[]): Promise<Map<number, stri
   );
 
   return results;
-}
-
-async function summarizeChunk(anthropic: Anthropic, chunk: RawItem[]): Promise<Map<number, string>> {
-  const itemsForPrompt = chunk.map((item, i) => ({
-    index: i,
-    title: item.title,
-    source: item.sourceName,
-    text: (item.snippet || "").slice(0, 6000),
-  }));
-
-  const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 8192,
-    output_config: {
-      format: {
-        type: "json_schema",
-        schema: {
-          type: "object",
-          properties: {
-            results: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  index: { type: "integer" },
-                  summary: {
-                    type: "string",
-                    description: SUMMARY_LENGTH_INSTRUCTION,
-                  },
-                },
-                required: ["index", "summary"],
-                additionalProperties: false,
-              },
-            },
-          },
-          required: ["results"],
-          additionalProperties: false,
-        },
-      },
-    },
-    messages: [
-      {
-        role: "user",
-        content:
-          "You are helping compile a personal knowledge digest. For each item below, write a " +
-          `summary in your own words. ${SUMMARY_LENGTH_INSTRUCTION} The provided text may be a ` +
-          "real abstract, or text auto-extracted from a webpage that can still contain some " +
-          "navigation/boilerplate — focus only on the actual article content.\n\nItems:\n" +
-          JSON.stringify(itemsForPrompt, null, 2),
-      },
-    ],
-  });
-
-  const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") return new Map();
-
-  const parsed = JSON.parse(textBlock.text) as { results: { index: number; summary: string }[] };
-  const map = new Map<number, string>();
-  for (const r of parsed.results) {
-    map.set(r.index, r.summary);
-  }
-  return map;
 }
 
 /**
@@ -255,7 +329,7 @@ export async function generateCandidateBrainFacts(
 
   try {
     const response = await anthropic.messages.create({
-      model: MODEL,
+      model: getModel("brain_game"), // Haiku tier — light generative task, same bucket as brain games
       max_tokens: 2048,
       output_config: {
         format: {

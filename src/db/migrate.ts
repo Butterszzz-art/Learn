@@ -210,6 +210,68 @@ const STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS book_chapters_status_idx ON book_chapters(status);`,
   `CREATE INDEX IF NOT EXISTS book_chapters_digest_idx ON book_chapters(digest_id);`,
   `INSERT OR IGNORE INTO settings (id, frequency, muted_categories) VALUES (1, 'daily', '[]');`,
+  // Phase 14 (Cost Optimization) — batch queue, engagement log, pruning prefs.
+  `CREATE TABLE IF NOT EXISTS batch_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    anthropic_batch_id TEXT NOT NULL UNIQUE,
+    purpose TEXT NOT NULL,
+    daily_cycle_id INTEGER REFERENCES digests(id),
+    weekly_cycle_id INTEGER REFERENCES digests(id),
+    status TEXT NOT NULL DEFAULT 'submitted',
+    request_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (current_timestamp),
+    processed_at TEXT
+  );`,
+  `CREATE TABLE IF NOT EXISTS batch_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_job_id INTEGER REFERENCES batch_jobs(id),
+    custom_id TEXT,
+    content_type TEXT NOT NULL,
+    payload TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'pending',
+    result_text TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL DEFAULT (current_timestamp),
+    completed_at TEXT
+  );`,
+  `CREATE TABLE IF NOT EXISTS engagement_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id INTEGER NOT NULL,
+    item_type TEXT NOT NULL,
+    interest_id INTEGER REFERENCES interests(id),
+    event_type TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (current_timestamp)
+  );`,
+  `CREATE TABLE IF NOT EXISTS content_generation_prefs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    interest_id INTEGER NOT NULL REFERENCES interests(id),
+    content_type TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'auto',
+    switched_at TEXT,
+    notice_dismissed_at TEXT
+  );`,
+  // Phase 15 — syllabus-aware curriculum comparison.
+  `CREATE TABLE IF NOT EXISTS syllabi (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    interest_id INTEGER NOT NULL REFERENCES interests(id),
+    name TEXT NOT NULL,
+    uploaded_at TEXT NOT NULL DEFAULT (current_timestamp),
+    raw_content TEXT NOT NULL
+  );`,
+  `CREATE TABLE IF NOT EXISTS syllabus_topics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    syllabus_id INTEGER NOT NULL REFERENCES syllabi(id),
+    topic TEXT NOT NULL,
+    reference TEXT,
+    reference_year INTEGER
+  );`,
+  `CREATE INDEX IF NOT EXISTS syllabi_interest_idx ON syllabi(interest_id);`,
+  `CREATE INDEX IF NOT EXISTS syllabus_topics_syllabus_idx ON syllabus_topics(syllabus_id);`,
+  `CREATE INDEX IF NOT EXISTS batch_requests_job_idx ON batch_requests(batch_job_id);`,
+  `CREATE INDEX IF NOT EXISTS batch_requests_status_idx ON batch_requests(status);`,
+  `CREATE INDEX IF NOT EXISTS batch_jobs_status_idx ON batch_jobs(status);`,
+  `CREATE INDEX IF NOT EXISTS engagement_events_lookup_idx ON engagement_events(interest_id, item_type, created_at);`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS content_generation_prefs_key_idx ON content_generation_prefs(interest_id, content_type);`,
 ];
 
 // Columns added after the initial release — applied via ALTER TABLE, guarded
@@ -315,6 +377,28 @@ const ADDITIVE_COLUMNS: { table: string; column: string; ddl: string }[] = [
     table: "book_chapters",
     column: "raw_text",
     ddl: "ALTER TABLE book_chapters ADD COLUMN raw_text TEXT;",
+  },
+  // --- Phase 13: Hybrid Cadence ---
+  {
+    table: "settings",
+    column: "last_daily_seen_at",
+    ddl: "ALTER TABLE settings ADD COLUMN last_daily_seen_at TEXT;",
+  },
+  {
+    table: "settings",
+    column: "last_weekly_seen_at",
+    ddl: "ALTER TABLE settings ADD COLUMN last_weekly_seen_at TEXT;",
+  },
+  // --- Phase 15: Syllabus Awareness, Trust Signals, Citation Export ---
+  {
+    table: "items",
+    column: "citation_metadata",
+    ddl: "ALTER TABLE items ADD COLUMN citation_metadata TEXT NOT NULL DEFAULT '{}';",
+  },
+  {
+    table: "deep_dives",
+    column: "syllabus_comparison",
+    ddl: "ALTER TABLE deep_dives ADD COLUMN syllabus_comparison TEXT;",
   },
 ];
 

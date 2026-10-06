@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getBookById } from "@/lib/digest";
+import { CiteButton } from "@/components/CiteButton";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,9 @@ export default async function BookPage({ params }: { params: { bookId: string } 
         <p className="mt-1 text-xs text-neuron-muted">
           {book.totalChapters} chapters · {book.paceChaptersPerCycle}/cycle pace
         </p>
+        <div className="mt-2">
+          <CiteButton kind="book" id={book.id} />
+        </div>
       </div>
 
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neuron-muted">

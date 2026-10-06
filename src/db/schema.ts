@@ -157,6 +157,16 @@ export const deepDives = sqliteTable("deep_dives", {
   // (advanced/research_level interests, ~weekly) set to a real open
   // question drawn from the interest's recent covered topics instead.
   essayPrompt: text("essay_prompt"),
+  // Phase 15 (Syllabus Awareness): null unless this topic was checked
+  // against the interest's attached syllabi and found genuinely notable —
+  // JSON {status: "not_in_syllabus" | "newer_than_assigned", courseName,
+  // note}. Computed once at write time by matching the chosen topic string
+  // against syllabus_topics (see applySyllabusComparison in
+  // src/lib/syllabus.ts) — a provable, per-entry fact, not an implied
+  // background claim. Null for interests with no attached syllabus, or when
+  // the topic matches neither "clearly absent" nor "matches an older
+  // reading" cleanly enough to claim either.
+  syllabusComparison: text("syllabus_comparison"),
 });
 
 // ---------------------------------------------------------------------------
@@ -391,6 +401,42 @@ export const bookChapters = sqliteTable("book_chapters", {
 });
 
 // ---------------------------------------------------------------------------
+// Phase 15 — syllabi / syllabusTopics: per-interest uploaded course reading
+// lists, parsed into a structured topic list. An interest can have multiple
+// syllabi (multiple courses within one major). Used by two things: (1)
+// steering Deep Dive topic selection away from what's already assigned
+// in-class, and (2) tagging feed items that are either genuinely outside the
+// syllabus or that update a topic the syllabus assigned an older reading on
+// — see getSyllabusContext / applySyllabusComparison in src/lib/syllabus.ts.
+// ---------------------------------------------------------------------------
+export const syllabi = sqliteTable("syllabi", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  interestId: integer("interest_id")
+    .notNull()
+    .references(() => interests.id),
+  name: text("name").notNull(), // e.g. "PSYC301 - Cognitive Psychology"
+  uploadedAt: text("uploaded_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+  rawContent: text("raw_content").notNull(), // the pasted/uploaded syllabus text, kept for re-parsing/reference
+});
+
+export const syllabusTopics = sqliteTable("syllabus_topics", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  syllabusId: integer("syllabus_id")
+    .notNull()
+    .references(() => syllabi.id),
+  topic: text("topic").notNull(),
+  // e.g. "Week 4 reading" or a full citation string, if the syllabus lists
+  // one — null when the syllabus just names a topic with no specific reading.
+  reference: text("reference"),
+  // The cited reading's publication year, if the parser could extract one —
+  // drives the "newer than what your syllabus assigned" comparison. Null
+  // when there's no reference, or the reference has no identifiable date.
+  referenceYear: integer("reference_year"),
+});
+
+// ---------------------------------------------------------------------------
 // items — every fetched article/preprint/paper, deduped, categorized, scored.
 // ---------------------------------------------------------------------------
 export const items = sqliteTable("items", {
@@ -420,6 +466,14 @@ export const items = sqliteTable("items", {
   // genuine arguable thesis (skipped for purely descriptive/discovery
   // news), and capped to ~1-2 per interest per cycle.
   steelmanContent: text("steelman_content"),
+  // Phase 15 (Citation Export): whatever structured citation metadata the
+  // source API actually provided at fetch time — JSON, shape CitationMetadata
+  // in src/lib/types.ts (authors[], journal/publisher, year, doi, arxivId).
+  // PubMed/arXiv/bioRxiv populate this richly; plain RSS sources (Quanta,
+  // ScienceDaily, etc.) populate only what they have (publisher/year) —
+  // never fabricated. Defaults to "{}" rather than null so every reader can
+  // treat it as "parse and see what's there" without a null check.
+  citationMetadata: text("citation_metadata").notNull().default("{}"),
 });
 
 // ---------------------------------------------------------------------------
@@ -457,6 +511,11 @@ export const brainFacts = sqliteTable("brain_facts", {
 // ---------------------------------------------------------------------------
 export const settings = sqliteTable("settings", {
   id: integer("id").primaryKey().default(1),
+  // Phase 13: superseded by the always-on hybrid cadence (see
+  // last{Daily,Weekly}SeenAt below) — no longer read by the pipeline or
+  // shown in Settings. Left in place rather than dropped: SQLite column
+  // drops require a table rebuild (see migrate.ts), not worth it for a
+  // vestigial field with no cost to leaving it alone.
   frequency: text("frequency").$type<"daily" | "weekly">().notNull().default("daily"),
   mutedCategories: text("muted_categories").notNull().default("[]"), // JSON string array
   lastRefreshAt: text("last_refresh_at"),
@@ -464,4 +523,140 @@ export const settings = sqliteTable("settings", {
   // Brain Games (Phase 6): opt-in, off by default — deliberately not part
   // of the interests system, since it's a "for fun" break, not a subject.
   includeBrainGames: integer("include_brain_games", { mode: "boolean" }).notNull().default(false),
+  // Phase 13 (Hybrid Cadence): when the daily/weekly cadence's content was
+  // last delivered to the reader — set on every home-feed read (see
+  // getHybridCurrentFeed in digest.ts), so a later read can tell whether
+  // this cadence's current bundle is "fully seen" (nothing new since) or
+  // still fresh. Single local record for now, same as every other column
+  // here — becomes per-user once Phase 12 accounts exist.
+  lastDailySeenAt: text("last_daily_seen_at"),
+  lastWeeklySeenAt: text("last_weekly_seen_at"),
+});
+
+// ---------------------------------------------------------------------------
+// Phase 14 (Cost Optimization) — batchJobs / batchRequests: a small queue
+// sitting in front of Anthropic's Message Batches API. Batch-eligible
+// generation calls (no tool use, no immediate-response requirement — see
+// src/lib/batch.ts) are written here as pending requests, grouped into one
+// Anthropic batch per submission round, then polled until the batch ends and
+// the results written back into the normal content tables (deep_dives,
+// items, drills, etc.) exactly as if they'd been generated synchronously.
+// ---------------------------------------------------------------------------
+export const BATCH_JOB_STATUSES = ["submitted", "in_progress", "ended", "failed"] as const;
+export type BatchJobStatus = (typeof BATCH_JOB_STATUSES)[number];
+
+// "round-a" = independent generation (no dependency on this same cycle's
+// other batch output — deep dive/steelman/roundup/rabbit-hole writes, news
+// summaries, standalone drills). "round-b" = derived generation that needs
+// round-a's results already written back (applied insights, grounded drills,
+// follow-ups/self-check/essay-prompt, mental model lens, steelman needs
+// round-a's News items) — see scripts/processBatches.ts, which submits
+// round-b automatically once a round-a job finishes.
+export const BATCH_JOB_PURPOSES = ["round-a", "round-b"] as const;
+export type BatchJobPurpose = (typeof BATCH_JOB_PURPOSES)[number];
+
+export const batchJobs = sqliteTable("batch_jobs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  anthropicBatchId: text("anthropic_batch_id").notNull().unique(),
+  purpose: text("purpose").$type<BatchJobPurpose>().notNull(),
+  // The cycle this batch's requests were assembled for — round-b requests
+  // for the SAME cycle are submitted once this job's round-a results land.
+  dailyCycleId: integer("daily_cycle_id").references(() => digests.id),
+  weeklyCycleId: integer("weekly_cycle_id").references(() => digests.id),
+  status: text("status").$type<BatchJobStatus>().notNull().default("submitted"),
+  requestCount: integer("request_count").notNull().default(0),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+  // Set once every request in this job has been fetched and written back
+  // (or given up on) — lets the poller skip already-fully-processed jobs
+  // without re-listing their results every run.
+  processedAt: text("processed_at"),
+});
+
+export const BATCH_REQUEST_STATUSES = ["pending", "submitted", "succeeded", "failed"] as const;
+export type BatchRequestStatus = (typeof BATCH_REQUEST_STATUSES)[number];
+
+// One row per individual generation call folded into a batch. `contentType`
+// picks the writer function that parses `resultText` and persists it (see
+// BATCH_WRITERS in src/lib/batchWriters.ts); `payload` is whatever that
+// writer needs to know that isn't in the model's own response (interestId,
+// sourceDeepDiveId, cycle id, gathered sources/material from the
+// synchronous gather step, etc.) — JSON-encoded since it varies per type.
+export const batchRequests = sqliteTable("batch_requests", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  batchJobId: integer("batch_job_id").references(() => batchJobs.id),
+  // Anthropic's custom_id for this request within its batch — null until
+  // the owning batchJob is actually submitted (rows can exist in "pending"
+  // state, queued up, before a submission round runs).
+  customId: text("custom_id"),
+  contentType: text("content_type").notNull(),
+  payload: text("payload").notNull().default("{}"),
+  status: text("status").$type<BatchRequestStatus>().notNull().default("pending"),
+  resultText: text("result_text"),
+  errorMessage: text("error_message"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+  completedAt: text("completed_at"),
+});
+
+// ---------------------------------------------------------------------------
+// Phase 14 — engagementEvents: a lightweight interaction log (viewed /
+// expanded / answered / skipped) per piece of content, used purely to
+// compute a rolling per-(interest, contentType) engagement rate for
+// pruning — see src/lib/engagement.ts. Not a full analytics system: no
+// session/user dimension (single-user app), just enough to answer "is
+// anyone actually looking at this."
+// ---------------------------------------------------------------------------
+export const ENGAGEMENT_EVENT_TYPES = ["viewed", "expanded", "answered", "skipped"] as const;
+export type EngagementEventType = (typeof ENGAGEMENT_EVENT_TYPES)[number];
+
+// Mirrors the generation-side content types pruning can act on. Restricted
+// to content that's genuinely PER-INTEREST (news/deep dive/applied insight/
+// drill/steelman all carry an interestId) — Mental Model of the Week and
+// Rabbit Hole of the Week are deliberately cross-cutting/global content (see
+// their schema comments), so an (interest, content_type) engagement rate
+// doesn't map onto them; they're out of scope for this pruning mechanism.
+// Kept as a plain string union (not a DB enum, sqlite has none) so it's
+// trivial to extend.
+export const PRUNABLE_CONTENT_TYPES = ["news", "deep_dive", "applied_insight", "drill", "steelman"] as const;
+export type PrunableContentType = (typeof PRUNABLE_CONTENT_TYPES)[number];
+
+export const engagementEvents = sqliteTable("engagement_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  itemId: integer("item_id").notNull(), // the source table's row id (items/deep_dives/drills/...)
+  itemType: text("item_type").$type<PrunableContentType>().notNull(),
+  interestId: integer("interest_id").references(() => interests.id),
+  eventType: text("event_type").$type<EngagementEventType>().notNull(),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+});
+
+// ---------------------------------------------------------------------------
+// Phase 14 — contentGenerationPrefs: per (interest, contentType) auto/
+// on-demand mode. Starts "auto" (today's always-generate behavior) for
+// every combination; the pruning sweep (see src/lib/engagement.ts) flips a
+// combination to "on_demand" after a sustained stretch of low engagement,
+// which the scheduled pipeline then reads to skip auto-generating it — see
+// isAutoGenerationEnabled in engagement.ts. The reader can always flip it
+// back via the dismissible notice or Settings, and can always generate one
+// on demand regardless of mode (a separate action, not gated by this table).
+// ---------------------------------------------------------------------------
+export const GENERATION_MODES = ["auto", "on_demand"] as const;
+export type GenerationMode = (typeof GENERATION_MODES)[number];
+
+export const contentGenerationPrefs = sqliteTable("content_generation_prefs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  interestId: integer("interest_id")
+    .notNull()
+    .references(() => interests.id),
+  contentType: text("content_type").$type<PrunableContentType>().notNull(),
+  mode: text("mode").$type<GenerationMode>().notNull().default("auto"),
+  // Set when the pruning sweep (or the reader) last changed `mode` — drives
+  // the "Drills for Philosophy haven't been used recently, switched to
+  // on-demand" notice, and is cleared when the reader dismisses it.
+  switchedAt: text("switched_at"),
+  noticeDismissedAt: text("notice_dismissed_at"),
 });

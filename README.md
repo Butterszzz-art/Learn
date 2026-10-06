@@ -273,7 +273,8 @@ file):
 | Variable | Value |
 |---|---|
 | `ANTHROPIC_API_KEY` | your key from [platform.claude.com](https://platform.claude.com) — required for deep dives, applied insights, and News for any interest without a curated RSS source |
-| `ANTHROPIC_MODEL` | `claude-sonnet-5` (or omit — that's the default) |
+| `ANTHROPIC_MODEL` | `claude-sonnet-5` (or omit — that's the default) — used for content that needs real judgment (Deep Dive writing, Steelman, explain-it-back feedback); see [Cost optimization](#cost-optimization-phase-14) below |
+| `ANTHROPIC_MODEL_HAIKU` | `claude-haiku-4-5` (or omit — that's the default) — used for compression/extraction/light structured tasks (News summaries, Applied Insight, Drills, Mental Model lens, the search-and-gather step of any web-search call) |
 | `TURSO_DATABASE_URL` | from step 1 |
 | `TURSO_AUTH_TOKEN` | from step 1 |
 | `SITE_PASSWORD` | any password of your choosing — gates the whole site behind a login page. Omit this var entirely to leave the site open to anyone with the URL. |
@@ -376,6 +377,141 @@ crontab -e
 0 7 * * * cd /path/to/neuro-digest && /usr/local/bin/npm run fetch >> /tmp/digest.log 2>&1
 ```
 
+`npm run fetch` above is the simple, fully-synchronous pipeline — everything
+generates immediately, in one run. It still works and is the easiest way to
+get started. For lower ongoing API cost on a real schedule, use the batch
+pipeline instead — see the next section.
+
+---
+
+## Cost optimization (Phase 14)
+
+Four changes work together to cut the Anthropic API cost of the generation
+pipeline, with no change to what gets generated or how the feed looks:
+
+### 1. Model tiering
+
+Every content type routes through Haiku or Sonnet by default, per
+`src/lib/modelConfig.ts`'s `MODEL_TIER` map — Haiku for compression/
+extraction/light structured tasks (News summaries, Applied Insight, Drills,
+Mental Model lens, the search-and-gather half of any web-search call),
+Sonnet for content that needs real judgment or sustained argument quality
+(Deep Dive writing, Steelman, explain-it-back feedback). It's a plain
+editable map, not hardcoded inline — move a content type between tiers
+there once you've actually reviewed its output quality on the cheaper tier.
+
+### 2. Prompt caching
+
+Every content type's static system-prompt/instructions text (identical on
+every call of that type) is sent with a `cache_control` breakpoint (see
+`src/lib/promptCache.ts`), and a Deep Dive's full text is cached once and
+reused as shared context across its own grounded Drill, Mental Model lens,
+and explain-back feedback calls rather than re-sent fresh each time.
+
+### 3. Splitting web-search-grounded generation, and batching the writing
+
+The Message Batches API doesn't support tool use, so every web-search-
+grounded content type (Deep Dive, Field News Roundup, Steelman, Rabbit
+Hole) is split into a **gather** step (synchronous, web_search, Haiku) that
+collects real sources and facts, and a **write** step (no tools, batch-
+eligible) that turns that material into the actual finished content. The
+gather step is the only part still running as a normal, immediate API
+call — the bulk of the token volume (the actual writing) moves to the
+Batches API's discounted tier.
+
+Batch-eligible calls — News summaries, every write step above, Applied
+Insight, Drills, Mental Model lens, and follow-ups/self-check questions —
+are queued and submitted together as one Anthropic Message Batch per round,
+instead of one synchronous call each. Two scripts replace `npm run fetch`
+for this:
+
+```bash
+npm run submit-batch     # gathers + queues + submits one round of requests
+npm run process-batches  # polls, writes results back, submits the next round
+```
+
+**Batches can take up to 24 hours to complete.** `submit-batch` is
+therefore something you schedule with real lead time before the content is
+meant to be ready — e.g. trigger the *weekly* run Saturday evening for a
+Monday release, and the *daily* run the evening before. Don't cut it close
+enough that content isn't ready when the cycle opens. `process-batches`
+has no such constraint — it's cheap and safe to run frequently (every
+15–30 minutes is reasonable) via the same cron/Task Scheduler setup as
+`npm run fetch` above; a run with nothing outstanding does almost no work.
+Content simply appears in the feed as its batch round finishes and gets
+written back — there's no separate "release" step.
+
+A few things stay synchronous by design, not batched: the "Refresh now"
+button and curiosity-branching/Binge/pick-your-next-topic (the reader is
+waiting right now, so an immediate result matters more than the batch
+discount), and explain-it-back feedback (same reasoning — it's a live
+response to something the reader just submitted).
+
+### 4. Engagement-based pruning
+
+The app logs a lightweight event (`viewed` / `expanded` / `answered` /
+`skipped`) as you actually interact with News, Deep Dives, Applied
+Insights, Drills, and the Steelman companion. If a (interest, content type)
+combination stays under ~20% actually-viewed for a sustained stretch (several
+cycles' worth), the scheduled pipeline stops auto-generating it for that
+interest — replaced with a **"Generate now"** action in a small dismissible
+note at the top of the feed ("Drills for Philosophy haven't been used
+recently, switched to on-demand"), so it's still available whenever wanted,
+just not silently burning budget unused in the background. "Turn back on"
+re-enables auto-generation at any time, from that same note.
+
+---
+
+## Syllabus awareness, trust signals, citation export (Phase 15)
+
+Three changes aimed at making the app credible and useful for serious
+academic use — none of them change what gets generated, just what the
+reader can see and check about it.
+
+### 1. Syllabus-aware "beyond your curriculum"
+
+Attach a course syllabus or reading list to any interest — via Settings ->
+"Course syllabi" — and it's parsed (Claude, structured extraction) into a
+topic list, capturing any specific reading the syllabus assigns and that
+reading's publication year where identifiable. An interest can have several
+attached syllabi (multiple courses within one major).
+
+That topic list feeds Deep Dive generation two ways: the gather step is
+nudged toward topics genuinely absent from it, and once a topic is chosen,
+`computeSyllabusComparison` (`src/lib/syllabus.ts`) checks it against the
+list with simple, provable string matching — not the model's own say-so —
+and tags the entry "Not in your [Course] syllabus" or "Newer than your
+assigned reading" (with the write step told to actually address what's
+changed since the cited reading). Both labels render right on the Deep Dive
+card and its full page.
+
+### 2. Visible sourcing / trust signals
+
+Every generated card now shows one of two small, honest badges via
+`src/components/TrustBadge.tsx`, computed from existing data in
+`src/lib/trustSignals.ts` — no new generation step:
+
+- **✓ Grounded** — draws directly from a specific identifiable source (a
+  News item's article, a Deep Dive with real found sources, a Library
+  chapter from your own uploaded book). Sources are listed alongside it.
+- **General synthesis — verify specifics before citing.** — the model
+  connecting ideas with no one pinpoint source (Mental Model lenses,
+  Applied Insights, Steelman counterarguments, explain-it-back feedback, a
+  Deep Dive that came up short on real sources).
+
+### 3. Citation export (BibTeX / RIS)
+
+`src/lib/citations.ts` turns whatever structured metadata a source actually
+provided at fetch time into a proper citation entry — PubMed/arXiv/bioRxiv
+populate `items.citation_metadata` with real author lists, journal/venue,
+year, and a DOI or arXiv id (see each fetcher in `src/lib/fetchers/`); plain
+RSS sources export only what they have (publisher, year) and never fabricate
+the rest. A **Cite** action (`src/components/CiteButton.tsx`) on any News
+item, Deep Dive (its sources, as a bulk file), or Library book exports a
+`.bib` or `.ris` entry — see `src/app/api/cite/`. Settings also has a bulk
+"export this week's sources as BibTeX/RIS" action for dropping straight
+into Zotero or Mendeley.
+
 ---
 
 ## Project structure
@@ -394,20 +530,37 @@ src/
     interests.ts        Interest config (level/enabled/custom), covered-
                         topics log (recent + total count, for escalation)
     claude.ts           Categorize/summarize items (Claude, keyword fallback)
-    deepDive.ts         Deep-dive + applied-insight generation (web_search)
-    newsRoundup.ts       Field News Roundup generation (web_search)
+    modelConfig.ts       Phase 14: per-content-type Haiku/Sonnet tier map
+    promptCache.ts        Phase 14: cache_control breakpoint helpers
+    batch.ts             Phase 14: Message Batches API submit/poll wrapper
+    batchWriters.ts       Phase 14: parses+persists a completed batch result
+    engagement.ts         Phase 14: event log + rolling engagement rate + pruning
+    deepDive.ts         Deep dive gather (web_search) + write + applied-insight
+    newsRoundup.ts       Field News Roundup gather (web_search) + write
+    steelman.ts          Steelman gather (web_search) + write
+    rabbitHole.ts        Rabbit Hole gather (web_search) + write
+    syllabus.ts            Phase 15: parses/stores syllabi, computes the
+                            "not in syllabus"/"newer than assigned" tag
+    trustSignals.ts         Phase 15: grounded/synthesized classification
+    citations.ts             Phase 15: builds + renders BibTeX/RIS entries
     dedupe.ts           URL + fuzzy-title deduplication
     score.ts            Per-interest item ranking
     externalSources.ts  OpenAlex + Semantic Scholar paper search (no LLM)
     researchAgent.ts    Research Agent: OpenRouter tool-calling loop over
                         externalSources.ts
     pipeline.ts         Orchestrates News + Deep Dive + Applied Insight,
-                        per interest, per cycle
+                        per interest, per cycle; generateNowForContentType
+                        (Phase 14's on-demand bypass action)
     digest.ts           Read-side feed/archive/settings queries
   app/                  Next.js App Router pages + API routes
+                        (api/cite/, api/syllabi/ — Phase 15)
   components/           UI components (Feed, DeepDiveCard, ItemCard,
-                        AppliedInsightCard, InterestPicker, ...)
-scripts/fetch.ts        Standalone fetch-and-compile script (cron/Task Scheduler)
+                        AppliedInsightCard, InterestPicker, PruningNotices,
+                        TrustBadge, CiteButton, SyllabusManager — Phase 15, ...)
+scripts/
+  fetch.ts              Standalone, fully-synchronous fetch-and-compile script
+  submitBatch.ts         Phase 14: gathers + queues + submits one batch round
+  processBatches.ts      Phase 14: polls, writes results back, chains rounds
 ```
 
 ## Backing up your archive

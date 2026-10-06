@@ -45,6 +45,24 @@
   }
 }
 
+/* Phase 16 — mobile Focus mode. StreamContainer toggles this class on
+   <html> for as long as Focus mode is mounted. Gated to viewports below
+   Tailwind's `sm` breakpoint (640px), so it never touches desktop layout.
+   Bumping the root font-size scales every rem-based Tailwind utility with
+   it — including the spacing scale — so card padding grows along with text
+   size, which is what makes the full-screen card actually feel roomy
+   instead of just being a bigger empty box. `overflow: hidden` stops the
+   page behind the fixed full-screen card from rubber-band scrolling. */
+@media (max-width: 639px) {
+  html.neuron-mobile-focus {
+    font-size: 118%;
+  }
+  html.neuron-mobile-focus,
+  html.neuron-mobile-focus body {
+    overflow: hidden;
+  }
+}
+
 @layer utilities {
   /* Reveal-on-appear — used for content that just arrived (agent answers,
      freshly-fetched cards) so it registers as new rather than popping in.
