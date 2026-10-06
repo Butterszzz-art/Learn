@@ -42,13 +42,14 @@ export interface GatheredSteelmanMaterial {
 
 /**
  * Step 1 (synchronous, web_search): given a batch of candidate news items
- * for one interest, identifies up to 2 that present a genuine arguable
- * thesis and researches the real counter-case for each. Returns [] if none
- * qualify or generation fails.
+ * for one interest, identifies up to maxResults that present a genuine
+ * arguable thesis and researches the real counter-case for each. Returns []
+ * if none qualify or generation fails.
  */
 export async function gatherSteelmanMaterial(
   interestName: string,
-  candidates: SteelmanCandidate[]
+  candidates: SteelmanCandidate[],
+  maxResults = 2
 ): Promise<GatheredSteelmanMaterial[]> {
   const anthropic = getAnthropicClient();
   if (!anthropic || candidates.length === 0) return [];
@@ -56,7 +57,7 @@ export async function gatherSteelmanMaterial(
   const prompt =
     `Here are recent ${interestName} news items (numbered):\n\n` +
     candidates.map((c) => `${c.index}. ${c.title} — ${c.summary}`).join("\n") +
-    "\n\nIdentify AT MOST 2 of these that present a genuine arguable thesis — an opinion piece, a " +
+    `\n\nIdentify AT MOST ${maxResults} of these that present a genuine arguable thesis — an opinion piece, a ` +
     "policy argument, a contested interpretation. Skip purely descriptive/discovery items (a new " +
     "measurement, a new fossil, a factual event report) — those have no 'other side' to steelman. If " +
     "none qualify, that's fine — say so.\n\n" +
@@ -76,9 +77,9 @@ export async function gatherSteelmanMaterial(
     let messages: Anthropic.MessageParam[] = [{ role: "user", content: prompt }];
     let response = await anthropic.messages.create({
       model: getModel("gather"),
-      max_tokens: 2048,
+      max_tokens: 3072,
       system: cachedSystem(GATHER_SYSTEM_PROMPT),
-      tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 4 }],
+      tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }],
       output_config: { effort: "medium" },
       messages,
     });
@@ -88,9 +89,9 @@ export async function gatherSteelmanMaterial(
       messages = [...messages, { role: "assistant", content: response.content }];
       response = await anthropic.messages.create({
         model: getModel("gather"),
-        max_tokens: 2048,
+        max_tokens: 3072,
         system: cachedSystem(GATHER_SYSTEM_PROMPT),
-        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 4 }],
+        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }],
         output_config: { effort: "medium" },
         messages,
       });
@@ -108,14 +109,18 @@ export async function gatherSteelmanMaterial(
       .join("\n\n")
       .trim();
 
-    return parseGatherResponse(fullText, candidates);
+    return parseGatherResponse(fullText, candidates, maxResults);
   } catch (err) {
     console.error(`[steelman] Gathering failed for "${interestName}":`, err);
     return [];
   }
 }
 
-function parseGatherResponse(fullText: string, candidates: SteelmanCandidate[]): GatheredSteelmanMaterial[] {
+function parseGatherResponse(
+  fullText: string,
+  candidates: SteelmanCandidate[],
+  maxResults: number
+): GatheredSteelmanMaterial[] {
   if (/^\s*NONE\s*$/i.test(fullText)) return [];
   const validIndexes = new Map(candidates.map((c) => [c.index, c.title]));
   const blocks = fullText.split(/\n-{3,}\n/);
@@ -131,7 +136,7 @@ function parseGatherResponse(fullText: string, candidates: SteelmanCandidate[]):
     if (!title || !material) continue;
     results.push({ index, title, material });
   }
-  return results.slice(0, 2);
+  return results.slice(0, maxResults);
 }
 
 const WRITE_SYSTEM_PROMPT =
@@ -197,14 +202,18 @@ async function writeSteelmans(gathered: GatheredSteelmanMaterial[]): Promise<Ste
 
 /**
  * Given a batch of candidate news items for one interest, uses web search to
- * identify up to 2 that present a genuine arguable thesis and writes the
+ * identify up to maxResults that present a genuine arguable thesis and writes the
  * strongest good-faith counterargument to each. Synchronous gather-then-
  * write composition, for callers needing an immediate result (the manual
  * "Refresh now" path). The scheduled batch pipeline calls
  * gatherSteelmanMaterial directly instead — see scripts/processBatches.ts.
  */
-export async function generateSteelmans(interestName: string, candidates: SteelmanCandidate[]): Promise<SteelmanResult[]> {
-  const gathered = await gatherSteelmanMaterial(interestName, candidates);
+export async function generateSteelmans(
+  interestName: string,
+  candidates: SteelmanCandidate[],
+  maxResults = 2
+): Promise<SteelmanResult[]> {
+  const gathered = await gatherSteelmanMaterial(interestName, candidates, maxResults);
   if (gathered.length === 0) return [];
   return writeSteelmans(gathered);
 }

@@ -50,8 +50,12 @@ import type { InterestWithConfig } from "./interests";
 import type { RawItem, ProcessedItem } from "./types";
 import { getSyllabusContext } from "./syllabus";
 
-export const TARGET_ITEMS_PER_INTEREST = 8; // curated (RSS/API) sources
-export const TARGET_ROUNDUP_ITEMS = 5; // generated Field News Roundup
+// Volume constants below govern how much content one refresh cycle
+// generates. With no meaningful cap on API usage anymore, they're raised
+// from the original cost-conscious minimums (8 items / 5 roundup items / 1-3
+// deep dives per week / 2 drills) — raise further for an even denser feed.
+export const TARGET_ITEMS_PER_INTEREST = 15; // curated (RSS/API) sources
+export const TARGET_ROUNDUP_ITEMS = 10; // generated Field News Roundup
 // Phase 13 (Hybrid Cadence): Field News Roundup items are the one "stays
 // daily" content type that costs meaningfully more per call than a curated-
 // source item (a fresh web_search every time, vs. an RSS/API fetch). Flip
@@ -59,19 +63,18 @@ export const TARGET_ROUNDUP_ITEMS = 5; // generated Field News Roundup
 // about runRoundupNews keeps working unchanged, it'll just attach to the
 // weekly cycle instead of the daily one.
 const ROUNDUP_ITEMS_CADENCE: "daily" | "weekly" = "daily";
-// Passion Mode: favorited interests get this many deep dives per WEEK
-// instead of 1 (Phase 13 moved Deep Dives from daily to weekly — was
-// FAVORITE_DEEP_DIVE_QUOTA=2/day, i.e. up to ~14/week; now capped at the
-// spec's "2-3 per week, not 7").
-export const WEEKLY_DEEP_DIVE_QUOTA_NORMAL = 1;
-export const WEEKLY_DEEP_DIVE_QUOTA_FAVORITE = 3;
+// Passion Mode: favorited interests get the larger quota; every other
+// enabled interest gets the normal one. Both are per WEEK (Phase 13 moved Deep
+// Dives from daily to weekly, so these are not per-day numbers).
+export const WEEKLY_DEEP_DIVE_QUOTA_NORMAL = 2;
+export const WEEKLY_DEEP_DIVE_QUOTA_FAVORITE = 4;
 // Drills (Phase 5, moved weekly in Phase 13): "1-2 drills" grounded in real
 // recent deep-dive content per cycle (now a week), scanned across ALL
 // interests. Lookback widened from 4 to 10 days so a whole week's worth of
 // (now less frequent) deep dives stays in the candidate pool.
-export const GROUNDED_DRILL_TARGET = 2;
+export const GROUNDED_DRILL_TARGET = 5;
 export const GROUNDED_DRILL_LOOKBACK_DAYS = 10;
-export const GROUNDED_DRILL_MAX_CANDIDATES = 5; // bounds Claude calls even with a large recent-dive pool
+export const GROUNDED_DRILL_MAX_CANDIDATES = 12; // bounds Claude calls even with a large recent-dive pool
 
 // Phase 6 constants.
 // Explain-it-back: for advanced/research_level interests, roughly 1 in 7
@@ -92,8 +95,8 @@ export const MENTAL_MODEL_WEEKLY_TARGET = 3;
 // (Phase 13 — was per day) to control API cost (each generation call uses
 // web_search).
 export const STEELMAN_ELIGIBLE_SLUGS = new Set(["political-science", "economics", "philosophy", "critical-thinking"]);
-export const STEELMAN_TARGET_PER_INTEREST = 2;
-export const STEELMAN_CANDIDATE_POOL = 8;
+export const STEELMAN_TARGET_PER_INTEREST = 4;
+export const STEELMAN_CANDIDATE_POOL = 15;
 // Rabbit Hole of the Week (Phase 13: 1-2/week instead of 1/day): how many
 // recently-shown topic areas to avoid repeating, and the per-week target.
 export const RABBIT_HOLE_AVOID_LOOKBACK = 20;
@@ -724,7 +727,8 @@ export interface DrillsStepResult {
  * once per cycle, after other interests' deep dives are generated, since
  * grounded drills scan across ALL interests' recent deep-dive content. Two
  * parts, each independently idempotent so a retry never duplicates:
- *  1. 1-2 drills grounded in a real, recent deep dive (any interest).
+ *  1. Up to GROUNDED_DRILL_TARGET drills grounded in a real, recent deep
+ *     dive (any interest).
  *  2. 1 standalone formal-logic drill for Critical Thinking & Argumentation
  *     (preferred) or Logic, if either is enabled.
  */
@@ -1269,7 +1273,8 @@ export async function refreshSteelmansForInterest(interestId: number, opts: { by
   try {
     const results = await generateSteelmans(
       interest.name,
-      candidateRows.map((c, idx) => ({ index: idx + 1, title: c.title, summary: c.summary }))
+      candidateRows.map((c, idx) => ({ index: idx + 1, title: c.title, summary: c.summary })),
+      needed
     );
 
     let added = 0;

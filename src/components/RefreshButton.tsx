@@ -29,11 +29,12 @@ async function postCycleStep(path: string): Promise<any> {
 }
 
 // Passion Mode's per-week quota (WEEKLY_DEEP_DIVE_QUOTA_FAVORITE in
-// pipeline.ts) is currently 3, but this loop doesn't need to know the exact
+// pipeline.ts) is currently 4, but this loop doesn't need to know the exact
 // number: each call is a safe no-op once the server-side quota is reached,
 // so looping up to this safety cap converges correctly for both favorited
-// and regular (quota 1) interests without coupling the two constants together.
-const MAX_DIVES_PER_INTEREST = 4;
+// (quota 4) and regular (WEEKLY_DEEP_DIVE_QUOTA_NORMAL, currently 2)
+// interests without coupling the two constants together.
+const MAX_DIVES_PER_INTEREST = 6;
 
 /** Runs News -> Deep Dive(s) -> Applied Insight -> Steelman for one
  * interest, sequentially, updating progress as it goes. */

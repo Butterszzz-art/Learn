@@ -175,7 +175,8 @@ async function assembleRoundB(writtenDeepDives: WrittenDeepDive[]): Promise<Queu
       try {
         const gathered = await gatherSteelmanMaterial(
           interestRow.name,
-          candidateRows.map((c, idx) => ({ index: idx + 1, title: c.title, summary: c.summary }))
+          candidateRows.map((c, idx) => ({ index: idx + 1, title: c.title, summary: c.summary })),
+          needed
         );
         if (gathered.length === 0) continue;
         const itemIdByIndex: Record<number, number> = {};
