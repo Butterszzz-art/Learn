@@ -21,6 +21,7 @@ import { generateFieldNewsRoundup } from "./newsRoundup";
 import { dedupeItems, dedupeKeyFor } from "./dedupe";
 import { categorizeByKeywords } from "./categorize";
 import { classifyAndSummarizeBatch, summarizeBatch, hasClaudeKey } from "./claude";
+import { summaryDeadline } from "./summaryLlm";
 import { fetchArticleText } from "./articleFetch";
 import { indexForSearch } from "./searchIndex";
 import {
@@ -1504,8 +1505,12 @@ async function runCuratedNews(
   // scoring/rawSnippet/cleanSummary-fallback purposes below.
   const summaryTexts = await buildSummaryTexts(items_);
   const itemsForSummary = items_.map((item, i) => ({ ...item, snippet: summaryTexts[i] }));
-  const neuroResults = isNeuro ? await classifyAndSummarizeBatch(itemsForSummary) : null;
-  const otherResults = isNeuro ? null : await summarizeBatch(itemsForSummary);
+  // Bounded on serverless (see summaryDeadline): items the provider doesn't
+  // reach in time keep the truncated-snippet fallback and are upgraded later
+  // by /api/refresh/summaries, rather than the request timing out empty.
+  const deadline = summaryDeadline();
+  const neuroResults = isNeuro ? await classifyAndSummarizeBatch(itemsForSummary, deadline) : null;
+  const otherResults = isNeuro ? null : await summarizeBatch(itemsForSummary, deadline);
 
   const processed: ProcessedItem[] = candidates.map(({ item, score }, idx) => {
     let category: Category | null = null;
@@ -1560,7 +1565,7 @@ async function runRoundupNews(
 
   const summaryTexts = await buildSummaryTexts(fresh);
   const itemsForSummary = fresh.map((item, i) => ({ ...item, snippet: summaryTexts[i] }));
-  const roundupResults = await summarizeBatch(itemsForSummary);
+  const roundupResults = await summarizeBatch(itemsForSummary, summaryDeadline());
 
   const processed: ProcessedItem[] = fresh.map((item, idx) => ({
     ...item,

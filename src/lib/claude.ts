@@ -4,7 +4,7 @@ import { CATEGORIES } from "@/db/schema";
 import type { RawItem } from "./types";
 import { getModel } from "./modelConfig";
 import { cachedSystem } from "./promptCache";
-import { completeJson, hasSummaryLlm, inventedNumbers } from "./summaryLlm";
+import { BudgetExhausted, completeJson, hasSummaryLlm, inventedNumbers } from "./summaryLlm";
 
 let client: Anthropic | null | undefined;
 
@@ -202,13 +202,38 @@ async function guarded<T extends { summary: string }>(item: RawItem, attempt: ()
 
 // Sequential on purpose — the OpenAI-compatible provider path is paced by
 // token-per-minute limits (see summaryLlm.ts), so concurrency just trips 429s.
-async function viaSummaryLlm<T>(items: RawItem[], run: (item: RawItem) => Promise<T | null>): Promise<Map<number, T>> {
+//
+// With a deadline, stops starting new items once there isn't room for one more
+// call (or a rate-limit pause would overrun it): the remaining items simply
+// have no entry, so the caller falls back for them and a later pass can
+// upgrade them — better than the whole request timing out and saving nothing.
+const MIN_TIME_PER_ITEM_MS = 5000;
+
+/** Set by the summarizers when they stopped early to respect the deadline, so a caller can tell "ran out of time" from "failed". */
+export interface SummaryRunStatus {
+  exhausted: boolean;
+}
+
+async function viaSummaryLlm<T>(
+  items: RawItem[],
+  run: (item: RawItem) => Promise<T | null>,
+  deadline?: number,
+  status?: SummaryRunStatus
+): Promise<Map<number, T>> {
   const results = new Map<number, T>();
   for (let i = 0; i < items.length; i++) {
+    if (deadline && Date.now() > deadline - MIN_TIME_PER_ITEM_MS) {
+      if (status) status.exhausted = true;
+      break;
+    }
     try {
       const value = await run(items[i]);
       if (value) results.set(i, value);
     } catch (err) {
+      if (err instanceof BudgetExhausted) {
+        if (status) status.exhausted = true;
+        break;
+      }
       console.error(`[summaryLlm] "${items[i].title.slice(0, 60)}" failed, will fall back for this item:`, err);
     }
   }
@@ -225,19 +250,24 @@ async function viaSummaryLlm<T>(items: RawItem[], run: (item: RawItem) => Promis
  * the on-demand "Refresh now" path, which needs an immediate result.
  */
 export async function classifyAndSummarizeBatch(
-  items: RawItem[]
+  items: RawItem[],
+  deadline?: number
 ): Promise<Map<number, ClassifiedItem>> {
   if (hasSummaryLlm()) {
-    return viaSummaryLlm(items, (item) =>
-      guarded(item, async () => {
-        const r = await completeJson<{ category: string; summary: string }>(
-          CLASSIFY_SYSTEM_PROMPT,
-          singleItemPrompt(item),
-          SINGLE_CLASSIFY_SCHEMA
-        );
-        if (!r.summary?.trim() || !(CATEGORIES as readonly string[]).includes(r.category)) return null;
-        return { category: r.category as Category, summary: r.summary.trim() };
-      })
+    return viaSummaryLlm(
+      items,
+      (item) =>
+        guarded(item, async () => {
+          const r = await completeJson<{ category: string; summary: string }>(
+            CLASSIFY_SYSTEM_PROMPT,
+            singleItemPrompt(item),
+            SINGLE_CLASSIFY_SCHEMA,
+            deadline
+          );
+          if (!r.summary?.trim() || !(CATEGORIES as readonly string[]).includes(r.category)) return null;
+          return { category: r.category as Category, summary: r.summary.trim() };
+        }),
+      deadline
     );
   }
 
@@ -275,17 +305,26 @@ export async function classifyAndSummarizeBatch(
  * empty map on no-key or failure, caller falls back to a truncated snippet.
  * Synchronous path only — see the docstring above.
  */
-export async function summarizeBatch(items: RawItem[]): Promise<Map<number, string>> {
+export async function summarizeBatch(
+  items: RawItem[],
+  deadline?: number,
+  status?: SummaryRunStatus
+): Promise<Map<number, string>> {
   if (hasSummaryLlm()) {
-    const guardedResults = await viaSummaryLlm(items, (item) =>
-      guarded(item, async () => {
-        const r = await completeJson<{ summary: string }>(
-          SUMMARIZE_SYSTEM_PROMPT,
-          singleItemPrompt(item),
-          SINGLE_SUMMARIZE_SCHEMA
-        );
-        return r.summary?.trim() ? { summary: r.summary.trim() } : null;
-      })
+    const guardedResults = await viaSummaryLlm(
+      items,
+      (item) =>
+        guarded(item, async () => {
+          const r = await completeJson<{ summary: string }>(
+            SUMMARIZE_SYSTEM_PROMPT,
+            singleItemPrompt(item),
+            SINGLE_SUMMARIZE_SCHEMA,
+            deadline
+          );
+          return r.summary?.trim() ? { summary: r.summary.trim() } : null;
+        }),
+      deadline,
+      status
     );
     return new Map([...guardedResults].map(([i, r]) => [i, r.summary]));
   }

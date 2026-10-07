@@ -33,15 +33,36 @@ function parseDuration(value: string | null): number | null {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Thrown instead of waiting when a rate-limit pause would outlast the caller's time budget. */
+export class BudgetExhausted extends Error {
+  constructor() {
+    super("summary time budget exhausted");
+  }
+}
+
+/**
+ * Wall-clock deadline for one serverless request's summarization work, so a
+ * rate-limited provider can't push the route past its function time limit
+ * (which returns a 504 and saves nothing). Unset locally / in scripts, where
+ * waiting out the rate limit is fine. SUMMARY_TIME_BUDGET_MS overrides.
+ */
+export function summaryDeadline(): number | undefined {
+  const ms = Number(process.env.SUMMARY_TIME_BUDGET_MS) || (process.env.VERCEL ? 30_000 : 0);
+  return ms ? Date.now() + ms : undefined;
+}
+
 /**
  * One schema-constrained completion. Returns the parsed JSON object, or throws
  * on a non-retryable failure. Retries 429s after the provider's own wait hint,
- * and proactively waits out a nearly-empty token budget before the next call.
+ * and proactively waits out a nearly-empty token budget before the next call —
+ * unless that wait would pass `deadline`, in which case it gives up early
+ * (BudgetExhausted) so the caller can fall back and the work can resume later.
  */
 export async function completeJson<T>(
   system: string,
   user: string,
-  schema: Record<string, unknown>
+  schema: Record<string, unknown>,
+  deadline?: number
 ): Promise<T> {
   const baseUrl = (process.env.SUMMARY_LLM_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
   const model = process.env.SUMMARY_LLM_MODEL || DEFAULT_MODEL;
@@ -69,18 +90,23 @@ export async function completeJson<T>(
     } catch (err) {
       // Transient network failure (e.g. ECONNRESET) — retry rather than drop to the fallback.
       if (attempt < MAX_RETRIES) {
-        await sleep(2000 * (attempt + 1));
+        const backoff = 2000 * (attempt + 1);
+        if (deadline && Date.now() + backoff > deadline) throw new BudgetExhausted();
+        await sleep(backoff);
         continue;
       }
       throw err;
     }
 
     if (res.status === 429 && attempt < MAX_RETRIES) {
-      const waitMs =
-        (Number(res.headers.get("retry-after")) || 0) * 1000 ||
-        parseDuration(res.headers.get("x-ratelimit-reset-tokens")) ||
-        15_000;
-      await sleep(Math.min(waitMs + 500, MAX_WAIT_MS));
+      const waitMs = Math.min(
+        ((Number(res.headers.get("retry-after")) || 0) * 1000 ||
+          parseDuration(res.headers.get("x-ratelimit-reset-tokens")) ||
+          15_000) + 500,
+        MAX_WAIT_MS
+      );
+      if (deadline && Date.now() + waitMs > deadline) throw new BudgetExhausted();
+      await sleep(waitMs);
       continue;
     }
     if (!res.ok) {
@@ -95,7 +121,10 @@ export async function completeJson<T>(
     const parsed = JSON.parse(content) as T;
 
     if (Number.isFinite(remaining) && remaining < LOW_TOKEN_BUDGET && resetMs) {
-      await sleep(Math.min(resetMs + 250, MAX_WAIT_MS));
+      const pause = Math.min(resetMs + 250, MAX_WAIT_MS);
+      // Under a deadline, skip the courtesy pause: the next call will either
+      // succeed or hit BudgetExhausted, and the caller handles both.
+      if (!deadline) await sleep(pause);
     }
     return parsed;
   }

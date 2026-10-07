@@ -1,21 +1,17 @@
 // One-off backfill: re-summarize items still carrying the truncated fallback
 // summary (raw snippet cut at ~300 chars, ending in "…") using the current
-// summary provider and length target. Only items whose stored raw abstract is
-// substantial enough to support a long summary are touched.
+// summary provider and length target. Items with a stored abstract use it;
+// items with only a short RSS snippet get their article page fetched. Each
+// summary is written as soon as it's generated, so the run is safe to stop
+// and re-run (it only touches items that still end in "…").
 //
 // Usage: npm run resummarize            (all eligible items)
 //        npm run resummarize -- --dry   (print what would change, write nothing)
 import { loadEnvConfig } from "@next/env";
 loadEnvConfig(process.cwd());
 import { ensureDb } from "../src/db/bootstrap";
-import { db } from "../src/db";
-import { items } from "../src/db/schema";
-import { eq, like, and, isNotNull } from "drizzle-orm";
-import { summarizeBatch } from "../src/lib/claude";
-import { hasSummaryLlm, inventedNumbers } from "../src/lib/summaryLlm";
-import type { RawItem } from "../src/lib/types";
-
-const MIN_SOURCE_CHARS = 600;
+import { hasSummaryLlm } from "../src/lib/summaryLlm";
+import { listFallbackItems, upgradeSummary } from "../src/lib/summaryUpgrade";
 
 async function main() {
   const dry = process.argv.includes("--dry");
@@ -25,35 +21,32 @@ async function main() {
   }
   await ensureDb();
 
-  const rows = await db
-    .select()
-    .from(items)
-    .where(and(like(items.summary, "%…"), isNotNull(items.rawSnippet)));
-  const eligible = rows.filter((r) => (r.rawSnippet ?? "").length >= MIN_SOURCE_CHARS);
-  console.log(`${rows.length} fallback-summary items, ${eligible.length} with a long enough source abstract.`);
+  const rows = await listFallbackItems();
+  console.log(`${rows.length} fallback-summary items to process.`);
 
-  const raw: RawItem[] = eligible.map((r) => ({
-    title: r.title,
-    authors: r.authors ?? undefined,
-    snippet: r.rawSnippet ?? "",
-    url: r.url,
-    publishedAt: r.publishedAt ?? undefined,
-    sourceName: r.sourceName,
-    sourceType: r.sourceType,
-  }));
-
-  const results = await summarizeBatch(raw);
   let updated = 0;
-  for (let i = 0; i < eligible.length; i++) {
-    const summary = results.get(i);
-    const words = summary ? summary.trim().split(/\s+/).length : 0;
-    const invented = summary ? inventedNumbers(summary, eligible[i].title + " " + (eligible[i].rawSnippet ?? "")) : [];
-    console.log(`[${i + 1}/${eligible.length}] ${eligible[i].title.slice(0, 70)} — ${summary ? words + " words" : "FAILED (kept old)"}${invented.length ? "  NUMBERS NOT IN SOURCE: " + invented.join(", ") : ""}`);
-    if (!summary || dry) continue;
-    await db.update(items).set({ summary }).where(eq(items.id, eligible[i].id));
-    updated++;
+  let noSource = 0;
+  let failed = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const label = `[${i + 1}/${rows.length}] ${rows[i].title.slice(0, 70)}`;
+    const result = await upgradeSummary(rows[i], { write: !dry });
+    if (result.status === "upgraded") {
+      const flag = result.invented.length ? "  NUMBERS NOT IN SOURCE: " + result.invented.join(", ") : "";
+      console.log(`${label} — ${result.words} words${flag}`);
+      updated++;
+    } else if (result.status === "no-source") {
+      console.log(`${label} — skipped (no usable source text)`);
+      noSource++;
+    } else {
+      console.log(`${label} — FAILED (kept old)`);
+      failed++;
+    }
   }
-  console.log(dry ? "Dry run — nothing written." : `Updated ${updated}/${eligible.length}.`);
+  console.log(
+    dry
+      ? "Dry run — nothing written."
+      : `Updated ${updated}/${rows.length}. Skipped (no usable source): ${noSource}. Failed: ${failed}.`
+  );
 }
 
 main().catch((err) => {
