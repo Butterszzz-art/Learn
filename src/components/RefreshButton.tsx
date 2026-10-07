@@ -28,6 +28,45 @@ async function postCycleStep(path: string): Promise<any> {
   return data;
 }
 
+// Items the summary provider couldn't reach within a refresh's time limit are
+// saved with a short fallback summary, then upgraded here in repeated short
+// calls (each fits one serverless request). Capped so one click can't run
+// indefinitely — anything left is picked up by the next refresh.
+const MAX_SUMMARY_CALLS = 8;
+const SUMMARY_RETRY_PAUSE_MS = 15_000;
+
+async function upgradeSummaries(
+  onProgress: (note: string | null) => void
+): Promise<{ upgraded: number; remaining: number }> {
+  let skip = 0;
+  let upgraded = 0;
+  let remaining = 0;
+  for (let call = 0; call < MAX_SUMMARY_CALLS; call++) {
+    const res = await fetch("/api/refresh/summaries", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ skip }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data) break;
+    upgraded += data.upgraded ?? 0;
+    skip = data.nextSkip ?? skip;
+    remaining = data.remaining ?? 0;
+    if (data.done) {
+      remaining = 0;
+      break;
+    }
+    onProgress(`Writing full summaries… ${remaining} left`);
+    // Out of time with nothing written means the provider is rate-limited:
+    // let its per-minute window reset before the next call.
+    if (data.outOfTime && (data.upgraded ?? 0) === 0) {
+      await new Promise((resolve) => setTimeout(resolve, SUMMARY_RETRY_PAUSE_MS));
+    }
+  }
+  onProgress(null);
+  return { upgraded, remaining };
+}
+
 // Passion Mode's per-week quota (WEEKLY_DEEP_DIVE_QUOTA_FAVORITE in
 // pipeline.ts) is currently 4, but this loop doesn't need to know the exact
 // number: each call is a safe no-op once the server-side quota is reached,
@@ -95,6 +134,7 @@ export function RefreshButton() {
   const [progress, setProgress] = useState<InterestProgress[]>([]);
   const [cycleStepStatus, setCycleStepStatus] = useState<Record<string, CycleStepStatus>>({});
   const [summary, setSummary] = useState<string | null>(null);
+  const [summaryNote, setSummaryNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function handleClick() {
@@ -132,6 +172,14 @@ export function RefreshButton() {
         steelmansAdded = results.reduce((sum, r) => sum + r.steelmansAdded, 0);
       }
 
+      // After every interest's news has landed (so they aren't competing for
+      // the summary provider's rate limit), upgrade any fallback summaries.
+      const summaries = await upgradeSummaries(setSummaryNote).catch((err) => {
+        console.error(err);
+        setSummaryNote(null);
+        return { upgraded: 0, remaining: 0 };
+      });
+
       // Cycle-level steps always run, even with zero interests enabled —
       // Library's chapter drip-feed is independent of the interests system.
       let chaptersSurfaced = 0;
@@ -158,6 +206,8 @@ export function RefreshButton() {
         setSummary("No interests enabled and no Library books ready — check Settings or Library.");
       } else {
         const parts = [`+${newsAdded} news`, `+${deepDivesAdded} deep dives`];
+        if (summaries.upgraded > 0) parts.push(`${summaries.upgraded} summaries written`);
+        if (summaries.remaining > 0) parts.push(`${summaries.remaining} summaries left for the next refresh`);
         if (insightsAdded > 0) parts.push(`+${insightsAdded} insights`);
         if (drillsAdded > 0) parts.push(`+${drillsAdded} drills`);
         if (steelmansAdded > 0) parts.push(`+${steelmansAdded} steelmans`);
@@ -214,6 +264,7 @@ export function RefreshButton() {
         </ul>
       )}
 
+      {summaryNote && <p className="max-w-xs text-right text-xs text-neuron-accent">{summaryNote}</p>}
       {summary && <p className="max-w-xs text-right text-xs text-neuron-muted">{summary}</p>}
       {error && <p className="max-w-xs text-right text-xs text-red-400">{error}</p>}
     </div>
