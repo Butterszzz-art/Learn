@@ -20,7 +20,9 @@ export async function GET(req: Request) {
   await ensureDb();
   try {
     const planned = await planWork();
-    const budget = Number(new URL(req.url).searchParams.get("budgetMs")) || 240_000;
+    // Default fits the 60s function limit of hobby-tier hosting. On a plan with
+    // longer functions, set TICK_BUDGET_MS (e.g. 240000) to do more per tick.
+    const budget = Number(new URL(req.url).searchParams.get("budgetMs")) || Number(process.env.TICK_BUDGET_MS) || 45_000;
     const ran = await drain(Math.min(budget, 280_000));
     const nudges = await sendDailyNudges().catch(() => 0);
     return NextResponse.json({ planned, ran, nudges, pending: await pendingJobCount() });

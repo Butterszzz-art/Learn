@@ -9,6 +9,19 @@ export function interestHue(interestId: number | null | undefined): number {
   return HUES[Math.abs(interestId) % HUES.length];
 }
 
+/** Hex colour for an HSL value (the share-image renderer only accepts hex/rgb). */
+export function hslToHex(h: number, sPct: number, lPct: number): string {
+  const s = sPct / 100;
+  const l = lPct / 100;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const c = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(255 * c).toString(16).padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
 /** CSS custom properties for an interest-tinted element. */
 export function interestStyle(interestId: number | null | undefined): React.CSSProperties {
   const h = interestHue(interestId);

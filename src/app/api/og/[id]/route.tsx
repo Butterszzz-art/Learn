@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 import type { PublicCard } from "@/lib/publicCard";
-import { interestHue } from "@/lib/ui";
+import { interestHue, hslToHex } from "@/lib/ui";
 
 // Edge runtime: image generation runs there; the card itself comes from the
 // Node-side JSON route, since the database client is Node-only.
@@ -33,12 +33,12 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
           flexDirection: "column",
           justifyContent: "space-between",
           padding: story ? 90 : 64,
-          background: `linear-gradient(135deg, #120f1e 0%, #1c1830 55%, hsl(${hue} 60% 22%) 100%)`,
+          background: `linear-gradient(135deg, #120f1e 0%, #1c1830 55%, ${hslToHex(hue, 60, 22)} 100%)`,
           color: "#f3f0ff",
           fontFamily: "sans-serif",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", fontSize: story ? 40 : 28, fontWeight: 700, color: `hsl(${hue} 80% 75%)` }}>
+        <div style={{ display: "flex", alignItems: "center", fontSize: story ? 40 : 28, fontWeight: 700, color: hslToHex(hue, 80, 75) }}>
           {card.interestName ?? "Neuron"}
         </div>
         <div style={{ display: "flex", flexDirection: "column" }}>

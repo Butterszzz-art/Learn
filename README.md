@@ -1,395 +1,112 @@
 # Neuron
 
-A personal, local knowledge feed — a doomscrolling replacement. It surfaces
-real current material *and* thorough, level-matched explainers across ANY
-field you choose, at any depth up to genuine research level, plus concrete
-takeaways for applying it to daily life. Runs entirely on your own machine.
-No hosting, no email, no account required.
+A swipe feed for science and ideas. Same thumb motion as any other feed, except every card teaches one real thing — and the app keeps track of what you actually remember.
 
-- **Interests, wide open**: 17 seeded fields (Neuroscience & Psychobiology,
-  Psychology, Philosophy, History, Economics & Finance, Business, Political
-  Science, Computer Science / AI, Physics, Critical Thinking &
-  Argumentation, Exercise Science, Philosophy of Science, Mathematics,
-  Logic, Animal World, Biology, Evolution) are suggestions, not a ceiling —
-  type any topic of your own in onboarding or Settings and it gets the full
-  treatment. Set a level per interest: *new to this*, *some background*,
-  *advanced*, or *research level*.
-- **No depth ceiling**: below research level, each interest's deep dives keep
-  escalating in sophistication over weeks/months of use — the series tracks
-  what it's already covered and pushes a bit further each time, the way a
-  real course sequence would, rather than plateauing at an intro level
-  forever. *Research level* skips that ramp and goes straight to lit-review
-  register — open questions, current debates, recent papers.
-- **News, for every field**: interests with a registered RSS/API source (all
-  the original seven except Business and Political Science) use it. Every
-  other interest — Business, Political Science, or anything you typed
-  yourself — gets a Claude-generated **Field News Roundup** instead: 3-5
-  real, current, web-search-verified developments, each with a genuine
-  source link, summarized in the app's own words.
-- **Real abstracts, not blurbs**: News summaries are a genuine ~120-200 word
-  abstract — substantial enough to learn the actual finding from the card
-  itself, real numbers/statistics/effect sizes carried over when the source
-  gives them, always in the app's own phrasing. Academic sources (PubMed,
-  arXiv, bioRxiv) already return a real structured abstract, so that's
-  summarized directly; everything else (RSS-sourced journalism and
-  web-search-grounded Field News Roundup items) has its linked article page
-  fetched and its main text extracted first, since the RSS snippet alone is
-  too thin to build a real summary from. A "Read source" link to the
-  original always follows. Falls back gracefully to a short snippet if a
-  page fetch or the summarization call fails.
-- **Deep dives**: once per digest cycle, per enabled interest, Claude — with
-  the `web_search` tool — writes one genuinely thorough, several-hundred-word
-  explainer on the next logical syllabus topic, grounded in real current
-  sources. Calibrated to your level, but never condescending — level only
-  changes which concepts are assumed as background, not the register.
-- **Applied Insights**: for interests where it makes sense (Psychology,
-  Business, Economics & Finance, Philosophy, and Neuroscience by default;
-  toggle any interest in Settings), one short, concrete, actionable
-  daily-life takeaway is generated off each deep dive — skipped entirely
-  when a topic genuinely doesn't have a natural one. Quality over
-  completeness.
-- **Unified swipe stream**: the home page is a single-focus, swipeable
-  reading stream — one item fully occupies the screen at a time, no
-  auto-advance or timer ever, just swipe/scroll or arrow/j·k keys to move on
-  at your own pace. Due "Remember this?" cards surface early, favorited
-  interests' content is woven in more densely, and long-form Deep Dive hooks
-  are spaced out so they don't cluster. A one-click **Overview** toggle
-  switches to a scannable list of everything in the cycle to jump straight
-  to any item; optional interest pills above the stream narrow it
-  temporarily. Once you've seen everything, you get a clear "You're caught
-  up" end state — no infinite backfill. Drills and Library chapters get a
-  short pointer card in the stream instead of being embedded — they're
-  denser formats with their own dedicated tabs (see below). Archive's past
-  cycles use the exact same Focus/Overview reader.
-- **Storage**: a single SQLite file at `./data/neuro-digest.db` (via
-  `@libsql/client` + Drizzle ORM — no native build tools required, works
-  out of the box on Windows). Nothing leaves your machine except the
-  outbound fetches to public feeds/APIs, and — for deep dives, insights,
-  and news roundups — requests to the Anthropic API.
-- **Curiosity branching**: every deep dive ends with 2-3 clickable follow-up
-  cards — natural next subtopics it raised, each with a one-line teaser.
-  Clicking one generates and opens that specific entry immediately, for any
-  interest, not waiting for the next cycle.
-- **Passion Mode**: star any interest (feed or Settings) to get more than
-  one deep dive per cycle, framed one notch more advanced than its stored
-  level, plus two on-demand feed controls — **Binge** (algorithm picks,
-  generates now) and **pick your next topic** (see 2-3 candidates, choose
-  one yourself).
-- **Retention tools**: each deep dive ends with a 2-3 question self-check —
-  multiple choice, reveals right/wrong plus a one-line explanation
-  immediately, no score kept or sent anywhere. Topics you've covered
-  resurface later on a simple fixed schedule (3 → 7 → 21 → 60 days) as a
-  "Remember this?" card — a recall prompt first, a refresher from the
-  original entry on request. A plain, non-punitive progress count ("14
-  concepts covered this month across 3 interests") sits at the top of the
-  feed — never a streak, never framed as being "at risk."
-- **Drills**: critical-thinking/logic practice — spot the fallacy,
-  reconstruct the argument, check validity, or strengthen/weaken it.
-  Grounded in real content whenever possible: each cycle, 1-2 drills are
-  built from an actual argument or claim found in a recent deep dive
-  (any interest), with a link back to it. Plus one standalone formal-logic
-  drill per cycle (syllogisms, validity vs. soundness, formal fallacies)
-  for Critical Thinking & Argumentation and/or Logic, which share drill
-  material rather than repeating each other. Same instant-feedback,
-  nothing-persisted UI as the self-check questions; drilled concepts feed
-  into the same spaced-resurfacing system as deep-dive topics. Drills have
-  their own dedicated **Drills** tab (a single-focus, one-question-at-a-time
-  view, separate from the reading stream) — a short pointer card in the
-  stream ("N drills ready") links there when any are due.
-- **Explain it back**: every deep dive ends with a box to explain it in
-  your own words (or, occasionally on advanced/research-level interests, a
-  real open essay question instead) — submit it and get brief, specific,
-  supportive feedback, never a score. Past attempts stay visible if you
-  want to try again.
-- **Mental Model of the Day**: once per cycle, one of ~40 general-purpose
-  thinking tools (base rates, opportunity cost, second-order effects,
-  Occam's razor, inversion, and more) gets connected concretely to one or
-  two of that day's actual items — ideally from different interests, so it
-  doesn't feel like a coincidence.
-- **Steelman companion**: for interests where argument is central
-  (Political Science, Economics, Philosophy, Critical Thinking &
-  Argumentation, and custom interests), qualifying News items — the ones
-  actually making an arguable claim, not discovery news — get a collapsed
-  "See the other side" toggle with the strongest good-faith counterargument,
-  web-search-grounded.
-- **Rabbit Hole of the Day**: once per cycle, one genuinely interesting,
-  current item from entirely outside your active interests — visually
-  distinct, clearly labeled, with a one-click "follow up on this" button
-  that adds it as a real interest if it hooks you.
-- **Brain Games**: opt-in (off by default, one settings toggle), fully
-  separate from the interests system — quick pattern/memory/math/logic
-  puzzles from a static bank, not freshly generated, with an honest note
-  that this style of game is a fun break, not a proven way to improve
-  general thinking — a different evidence tier than the content-grounded
-  Drills above.
-- **Library**: three ways in — upload a PDF (read natively by Claude, no
-  separate text-extraction library), upload an EPUB (parsed locally into
-  per-chapter text, using its own table of contents for real chapter
-  titles), or paste an article URL (fetched and turned into a one-chapter
-  note, titled from the page itself). Every format gets the same detailed
-  notebook per chapter — summary, key concepts, notable arguments, a
-  handful of short quotes — processed once. Multi-chapter books drip-feed
-  into your daily/weekly rhythm at whatever pace you set ("finish in about
-  __ weeks"), one chapter-ready card in the main feed per cycle, while the
-  Library page always shows the full table of contents so you can jump
-  ahead or reread anytime. Wired into everything else: chapter concepts
-  feed spaced resurfacing, notable arguments ground Drills, chapters are
-  eligible for Mental Model of the Day lenses, and each chapter gets its
-  own explain-it-back box.
-- **Search everything**: a search bar reachable from any page (or
-  Cmd/Ctrl+K) full-text-searches every News item, Deep Dive, Applied
-  Insight, Drill, Explain It Back, Mental Model lens, Rabbit Hole, and
-  Library chapter you've ever generated — SQLite FTS5 under the hood,
-  ranked by relevance with recency as the tiebreaker, results grouped by
-  content type and linking straight back into the reading view. Kept
-  up to date incrementally as each cycle generates new content.
-- **Export your knowledge**: any Deep Dive, Library chapter, or
-  explain-it-back entry exports as Markdown or PDF from its own page. A
-  one-click "Export everything" in Settings produces a zip of every Deep
-  Dive and Library chapter as markdown files, organized by interest/book
-  and date, with `[[wiki-links]]` between notes that share a topic or key
-  concept — drop the whole zip into a notes app like Obsidian as a ready-
-  made vault.
-
----
-
-## Setup
-
-```bash
-cd neuro-digest
-npm install
-npm run db:migrate              # creates/updates the SQLite schema in ./data/neuro-digest.db
-npm run db:seed-interests       # loads the 17 seed interests
-npm run db:seed                 # loads the curated brain-fact bank
-npm run db:seed-mental-models   # loads the ~40 mental models
-npm run db:seed-brain-games     # loads the brain-games bank
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000). First run takes you
-through onboarding — pick your interests (or type your own) and levels —
-then click **Refresh now** to compile your first cycle.
-
-### Enabling AI features (needs an API key)
-
-Deep dives, applied insights, and News for any interest without a curated
-source (custom interests, Business, Political Science) all **require** an
-Anthropic API key — curated News still works without one.
-
-1. Copy `.env.example` to `.env.local`.
-2. Set `ANTHROPIC_API_KEY=sk-ant-...` (get one from
-   [platform.claude.com](https://platform.claude.com)). **Add it yourself** —
-   don't paste it into a chat with an AI assistant and ask it to write the
-   file for you.
-3. Optionally set `ANTHROPIC_MODEL` to a different model ID — defaults to
-   `claude-sonnet-5`.
-4. Restart `npm run dev`.
-
----
-
-## Deploying it as a website (Vercel + Turso)
-
-The app runs great purely locally (see **Setup** above) — this section is
-only for making it a real URL you can open from your phone, with your own
-data persisted in the cloud instead of a local file.
-
-Two accounts are needed, both free to start, and you have to create/link
-them yourself (they require your own login/OAuth consent — no assistant can
-do this step for you):
-
-1. **[Turso](https://turso.tech)** — hosted SQLite. Replaces the local
-   `./data/neuro-digest.db` file, since Vercel's serverless filesystem is
-   read-only/ephemeral and can't hold a local SQLite file between requests.
-2. **[Vercel](https://vercel.com)** — hosting, connected directly to this
-   GitHub repo so every push to `main` auto-deploys.
-
-### 1. Create the Turso database
-
-Install the CLI (native Windows isn't supported — run this from WSL, Git
-Bash won't work for the installer itself, though the resulting `turso`
-binary works fine from any shell once it's on your `PATH`):
-
-```bash
-curl -sSfL https://get.tur.so/install.sh | bash
-turso auth login
-turso db create digest
-turso db show digest --url                              # -> TURSO_DATABASE_URL
-turso db tokens create digest --expiration never         # -> TURSO_AUTH_TOKEN
-```
-
-`--expiration never` matters here — the default token expires, and you
-don't want the deployed app to silently lose database access weeks later.
-
-Apply the schema to the new hosted database once, from your machine:
-
-```bash
-TURSO_DATABASE_URL="libsql://..." TURSO_AUTH_TOKEN="..." npm run db:migrate
-TURSO_DATABASE_URL="libsql://..." TURSO_AUTH_TOKEN="..." npm run db:seed-interests
-TURSO_DATABASE_URL="libsql://..." TURSO_AUTH_TOKEN="..." npm run db:seed
-```
-
-That gives the hosted DB the same clean, pre-onboarding state (9 seed
-interests, curated brain-fact bank, no user data) that a fresh local
-install starts from.
-
-### 2. Import the repo into Vercel
-
-In the Vercel dashboard: **Add New… → Project → Import Git Repository**,
-pick `Butterszzz-art/Learn`, and set the **Root Directory** to
-`neuro-digest` (the Next.js app lives in that subfolder, not the repo
-root). Framework preset auto-detects as Next.js — leave build/output
-settings default.
-
-### 3. Set environment variables
-
-In the Vercel project's **Settings → Environment Variables**, add (all as
-plain values, not secrets-file uploads — set them directly in Vercel's own
-dashboard, never by handing the values to an assistant to write into a
-file):
-
-| Variable | Value |
-|---|---|
-| `ANTHROPIC_API_KEY` | your key from [platform.claude.com](https://platform.claude.com) — required for deep dives, applied insights, and News for any interest without a curated RSS source |
-| `ANTHROPIC_MODEL` | `claude-sonnet-5` (or omit — that's the default) |
-| `TURSO_DATABASE_URL` | from step 1 |
-| `TURSO_AUTH_TOKEN` | from step 1 |
-| `SITE_PASSWORD` | any password of your choosing — gates the whole site behind a login page. Omit this var entirely to leave the site open to anyone with the URL. |
-
-Redeploy after adding/changing env vars (Vercel does this automatically on
-the next push, or trigger one manually from the dashboard).
-
-### 4. Open it on your phone
-
-The deployed URL works fully on mobile — onboarding, settings, refresh, and
-the feed are all responsive. Add it to your home screen from the mobile
-browser's share menu for an app-like shortcut.
-
-### Notes on the deployed refresh flow
-
-- The **Refresh now** button calls one small API route per interest per
-  step (News, Deep Dive, Applied Insight) rather than one big call, so that
-  a slow Claude generation for one interest can't block or time out the
-  others. This matters because of Vercel's function time limits:
-  **Hobby tier hard-caps every function at 60 seconds**, no matter what
-  `maxDuration` is configured to — Pro tier allows up to 300s. Deep-dive
-  generation (`web_search` + a long-form write-up) can occasionally run
-  close to or past 60s on Hobby for a research-level entry or a
-  source-heavy interest.
-- Every step is **idempotent** — it checks what already exists for the
-  current cycle before generating anything. So if a step times out on
-  Hobby, clicking **Refresh now** again simply picks up where it left off
-  instead of duplicating or losing progress.
-- If you hit timeouts often on Hobby, either upgrade that Vercel project to
-  Pro, or just get in the habit of clicking Refresh twice.
+- **Feed** — one card per screen: short "bites" drawn from long-form explainers, research summaries with their source and evidence type, diagrams, myth-vs-fact, quick-check questions, and the strongest counterargument to contested claims. It adapts to what you finish, save and skip.
+- **Depth on demand** — every bite opens the full, sourced explainer behind it. From there: self-check questions, explain-it-back with feedback, follow-up topics, and "ask about this".
+- **Levels** — each field is followed at one of four levels, from first principles to research frontier, and is a sequence that builds on itself.
+- **Memory** — quiz answers and recall checks feed a spaced-repetition schedule (FSRS). Reviews are woven into the feed and collected on the Review tab.
+- **Knowledge map and score** — every idea in your fields, shaded by how well you've retained it.
+- **Library** — upload a PDF/EPUB or paste an article link for private chapter-by-chapter notes, released into your feed at a pace you set.
+- **Installable** — works as a home-screen app with offline reading of loaded cards and an optional once-a-day reminder.
 
 ---
 
 ## How it works
 
-- **Refresh** (the button in the UI, or `npm run fetch` from the CLI) does,
-  for every enabled interest, in parallel:
-  1. **News** — curated fetch (dedupe, score, keep the top ~8) for
-     interests with a registered source; a Claude+`web_search` Field News
-     Roundup (3-5 items, capped) for everything else.
-  2. **Deep Dive** — if this cycle hasn't reached its quota yet (1 normally,
-     2 for a favorited/Passion Mode interest), Claude picks the next
-     syllabus topic (escalating in depth as the series grows, unless the
-     interest is at research level) and writes the explainer, plus its
-     follow-up topics and self-check questions.
-  3. **Applied Insight** — one per deep dive written this cycle, for
-     interests that generate them, or nothing if a given topic doesn't have
-     a natural everyday application.
-- **Cycles**: one compiled period — daily or weekly, per Settings.
-  Refreshing multiple times within the same day/week adds new News items to
-  the *same* cycle; Deep Dive and Applied Insight are capped at their quota
-  per interest per cycle regardless of how many times you refresh (see
-  Passion Mode above for what raises that quota above 1). Curiosity
-  branching, Binge, and pick-your-next-topic all add *extra* dives on top of
-  that quota, on demand — they're not capped by it. This is what makes
-  "You're caught up" mean something even with Passion Mode's larger quota.
-- **Brain Fact of the Day**: a Phase 1 holdover — still shown at the top of
-  the feed, but only when Neuroscience & Psychobiology is enabled. Picked
-  from a 75+ entry seed bank, rotated once per day; the bank grows by a
-  handful of Claude-generated (plausibility-checked) facts about once a
-  week if a key is set.
-- **Archive**: every past cycle is kept and browsable by date, showing
-  everything that was in it at the time — including from interests you've
-  since disabled.
-- **Settings**: add custom interests, change levels (including toggling
-  research level), enable/disable interests, override whether an interest
-  generates Applied Insights, or switch daily/weekly cycles — all from one
-  page.
+```
+ curated feeds ─┐                    ┌─ bites, quiz, diagram, myth, insight
+ web search ────┼─► deep dive ─► source check ─► expand ─┤
+ (per interest  │   (once per          │                 └─ concepts + prerequisites
+  and level)    │    topic)         held back if                    │
+                └────────────────── unsupported                     ▼
+                                                            shared card pool
+                                                                    │
+            per person: interests, levels, what they've seen, ──► ranked feed
+            quiz answers, review schedule
+```
+
+The key design decision is that **content is shared and state is personal**. A deep dive is researched and written once for an (interest, level) pair and served to everyone at that level; only the ranking, the seen/answered state and the review schedule are per person. Cost therefore grows with the number of topics covered, not the number of users.
+
+| Area | Where |
+|---|---|
+| Accounts, sessions, account deletion | `src/lib/auth.ts`, `src/middleware.ts` |
+| All Claude calls: model tiers, cost logging | `src/lib/ai.ts` |
+| Content engine: series, expansion, source check, news, queue, scheduler | `src/lib/engine/` |
+| Feed assembly and event recording | `src/lib/feed.ts` |
+| Ranking (pure, unit-tested) | `src/lib/rank.ts` |
+| Spaced repetition, mastery, knowledge map | `src/lib/learning.ts` |
+| Plan limits | `src/lib/plan.ts` |
+| Schema and migrations | `src/db/schema.ts`, `src/db/migrate.ts`, `src/db/migrateV2.ts` |
+| Feed UI and card layouts | `src/components/feed/` |
+
+**Models.** Three tiers, set in `src/lib/ai.ts` and overridable by environment variable: a fast model for summaries, bite splitting, quizzes, feedback and Q&A; a main model for deep dives and web-searched roundups; a deep model for research-level entries. Every call's token usage and estimated cost is written to `ai_usage` and shown on the admin page, including cost per active user per day.
+
+**Generation runs in the background.** A scheduler decides what the pool is short of (it keeps a few entries ahead of the furthest reader in each series, and refreshes news on a timer) and queues jobs; `/api/cron/tick` works through the queue. A person waiting on an on-demand topic nudges the queue themselves, so they aren't stuck until the next tick.
+
+**Quality.** Before an entry is served, its source links are checked and a second model reads it against the fetched source text. Entries that score low are held back for an admin to review. Every card has a report button; a card reported by several readers is hidden until someone looks.
 
 ---
 
-## Hands-off updates (optional)
+## Run it locally
 
-The **Refresh now** button always works, no scheduler required. If you'd
-rather it update automatically every morning, `npm run fetch` runs the exact
-same pipeline outside the web server, so you can hook it into your OS's own
-scheduler.
-
-### Windows (Task Scheduler)
-
-1. Open **Task Scheduler** → **Create Basic Task…**
-2. Trigger: **Daily**, at whatever time you want.
-3. Action: **Start a program**
-   - Program/script: `npm.cmd` (find the full path via `where npm`)
-   - Add arguments: `run fetch`
-   - Start in: this project folder, e.g. `C:\Users\you\Learn\neuro-digest`
-
-### macOS / Linux (cron)
+Requires Node 20+.
 
 ```bash
-crontab -e
+npm install
 ```
 
+```bash
+npm run seed:demo
 ```
-0 7 * * * cd /path/to/neuro-digest && /usr/local/bin/npm run fetch >> /tmp/digest.log 2>&1
+
+```bash
+npm run dev:local
 ```
+
+Open http://localhost:3000, create an account, and pick some interests. The first account becomes the admin (see `/admin`).
+
+- `dev:local` always uses the local SQLite file at `./data/neuro-digest.db`, even if hosted database credentials are in `.env.local`. The schema and the built-in fact / mental-model banks are created automatically on first request.
+- `seed:demo` adds two short hand-written entries so there is something to swipe through without an API key.
+- To generate real content, copy `.env.example` to `.env.local`, add your `ANTHROPIC_API_KEY` yourself, and run `npm run tick` (or use "Run a generation tick now" on the admin page).
+
+| Command | What it does |
+|---|---|
+| `npm run dev:local` | Dev server on the local database |
+| `npm run dev` | Dev server on whatever `.env.local` points at |
+| `npm test` | Unit and integration tests (throwaway database, no AI calls) |
+| `npm run typecheck` | TypeScript check |
+| `npm run build` | Production build |
+| `npm run tick` | Plan and run background generation from the command line |
+| `npm run tick -- --minutes 30` | A longer run, e.g. to fill the pool before launch |
+| `npm run seed:demo` | Demo content (local database only) |
+| `npm run db:migrate` | Apply schema changes |
+| `npm run push:keys` | Generate keys for push notifications |
 
 ---
 
-## Project structure
+## Deploy
 
-```
-src/
-  db/
-    schema.ts          Drizzle schema: interests, user_interests,
-                        covered_topics, deep_dives, applied_insights,
-                        items, digests (cycles), brain_facts, settings
-    interestsSeed.ts    The 9 seed interests + their applied-insight defaults
-    brainFactsSeed.ts   75+ curated brain facts
-  lib/
-    fetchers/           One fetcher per curated interest, plus a registry
-                        mapping interest slug -> fetcher
-    interests.ts        Interest config (level/enabled/custom), covered-
-                        topics log (recent + total count, for escalation)
-    claude.ts           Categorize/summarize items (Claude, keyword fallback)
-    deepDive.ts         Deep-dive + applied-insight generation (web_search)
-    newsRoundup.ts       Field News Roundup generation (web_search)
-    dedupe.ts           URL + fuzzy-title deduplication
-    score.ts            Per-interest item ranking
-    pipeline.ts         Orchestrates News + Deep Dive + Applied Insight,
-                        per interest, per cycle
-    digest.ts           Read-side feed/archive/settings queries
-  app/                  Next.js App Router pages + API routes
-  components/           UI components (Feed, DeepDiveCard, ItemCard,
-                        AppliedInsightCard, InterestPicker, ...)
-scripts/fetch.ts        Standalone fetch-and-compile script (cron/Task Scheduler)
-```
+The app is a standard Next.js app with a libSQL (Turso) database.
 
-## Backing up your archive
+1. **Database** — create a Turso database and note its URL and an auth token that doesn't expire.
+2. **Host** — import the repository into Vercel (framework preset: Next.js, root directory: the repository root).
+3. **Environment variables** — set these in the host's dashboard. Enter the values yourself; don't paste secrets into a chat.
 
-The whole app is a single SQLite file at `./data/neuro-digest.db`. Copy it
-to keep your feed archive, deep-dive history, custom interests, and
-covered-topics progression when reinstalling or moving machines.
+   | Variable | Needed | Purpose |
+   |---|---|---|
+   | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | Yes | Database |
+   | `ANTHROPIC_API_KEY` | Yes | Content generation |
+   | `ADMIN_EMAIL` | Yes | Which account is the admin. Set it **before** the first deploy, or whoever signs up first becomes admin |
+   | `CRON_SECRET` | Yes | Protects the scheduled generation endpoint |
+   | `TICK_BUDGET_MS` | Optional | How long a tick may run. Default 45000 fits a 60-second function limit; raise it on a plan with longer functions |
+   | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Optional | Push notifications |
+   | `NEXT_PUBLIC_BILLING_URL` | Optional | Checkout link for the upgrade page |
 
-## A note on the RSS/API feed URLs
+4. **Schema** — tables are created and upgraded automatically on the first request after each deploy. The upgrade is additive: it adds tables and columns and never rewrites existing rows.
+5. **Scheduled generation** — `vercel.json` runs `/api/cron/tick` once a day, which is the most the free Vercel tier allows. On a paid tier, change the schedule to hourly (`0 * * * *`) and raise `TICK_BUDGET_MS`. Any external scheduler can call the endpoint too, with `Authorization: Bearer <CRON_SECRET>`.
+6. **Fill the pool before inviting people** — run `npm run tick -- --minutes 30` from your machine with the production variables set, a few times, so new readers land on a full feed.
 
-Every feed in `src/lib/fetchers/` was verified to resolve at the time this
-project was generated (one, NBER's, redirects — `fetch()` follows it
-automatically). Publishers occasionally change feed paths; if one starts
-404ing, check the site's own `/rss` or `/feed` listing page for the
-replacement. Custom interests and Business/Political Science don't have
-this concern — their News comes from a live web search each cycle.
+**Upgrading an existing single-user deployment:** the account that signs up with `ADMIN_EMAIL` inherits the previous interests, Library and explain-it-back history. Existing deep dives stay and are expanded into cards by the scheduler over the first few ticks. The old `SITE_PASSWORD` variable is no longer used and can be removed.
+
+Mobile app packaging is covered in [docs/MOBILE.md](docs/MOBILE.md). What is finished and what still needs doing before a public launch is in [docs/LAUNCH_STATUS.md](docs/LAUNCH_STATUS.md).

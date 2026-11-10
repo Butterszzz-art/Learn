@@ -1,0 +1,16 @@
+{
+  "appId": "app.neuron.learn",
+  "appName": "Neuron",
+  "webDir": "capacitor-shell",
+  "server": {
+    "url": "https://YOUR-DEPLOYED-DOMAIN",
+    "cleartext": false
+  },
+  "ios": {
+    "contentInset": "always",
+    "backgroundColor": "#120f1e"
+  },
+  "android": {
+    "backgroundColor": "#120f1e"
+  }
+}

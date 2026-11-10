@@ -32,6 +32,10 @@ export interface RankContext {
 
 const NEWS_HALF_LIFE_DAYS = 3;
 const TIME_SENSITIVE: CardType[] = ["paper", "debate"];
+// Curated one-liners (facts, mental models, games) are palate cleansers
+// between substantial cards, so they rank below anything from a series.
+const FILLER: CardType[] = ["fact", "model", "game"];
+const FILLER_PENALTY = 0.9;
 
 export function parseTime(s: string): number {
   // SQLite's current_timestamp has no zone marker but is UTC.
@@ -71,6 +75,8 @@ export function scoreCandidate(c: Candidate, ctx: RankContext, explore = false):
     const ageDays = Math.max(0, (ctx.now - parseTime(c.createdAt)) / 86400000);
     score += 0.8 * Math.pow(0.5, ageDays / NEWS_HALF_LIFE_DAYS);
   }
+
+  if (FILLER.includes(c.type)) score -= FILLER_PENALTY;
 
   // Series order: the earliest unread entry in a series is the one to read next.
   if (c.diveSeq !== null) score += 0.8 / c.diveSeq;

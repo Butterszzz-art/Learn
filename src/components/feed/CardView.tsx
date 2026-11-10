@@ -233,7 +233,7 @@ function PaperBody({ card, onExpand }: { card: FeedCard; onExpand: () => void })
       ) : (
         <button
           type="button"
-          className="mt-3 text-sm font-extrabold text-neuron-accent"
+          className="mt-3 block min-h-[44px] text-left text-sm font-extrabold text-neuron-accent"
           onClick={() => {
             setOpen(true);
             onExpand();
@@ -244,7 +244,7 @@ function PaperBody({ card, onExpand }: { card: FeedCard; onExpand: () => void })
       )}
       {p.authors && open && <p className="mt-2 text-xs text-neuron-muted">{p.authors}</p>}
       {p.url && (
-        <a href={p.url} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex items-center gap-1.5 text-sm font-extrabold text-neuron-accent">
+        <a href={p.url} target="_blank" rel="noopener noreferrer" className="mt-2 flex min-h-[44px] w-fit items-center gap-1.5 text-sm font-extrabold text-neuron-accent">
           Read the source <Icon name="external" className="h-4 w-4" />
         </a>
       )}

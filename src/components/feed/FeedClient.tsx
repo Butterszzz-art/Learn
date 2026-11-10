@@ -114,7 +114,7 @@ export function FeedClient({ initialCards, initialHasMore, interests }: { initia
       if (!raw) return;
       sessionStorage.removeItem(POSITION_KEY);
       const saved = JSON.parse(raw) as SavedSession;
-      if (Date.now() - saved.at > 20 * 60000 || !saved.cards?.length) return;
+      if (Date.now() - saved.at > 10 * 60000 || !saved.cards?.length) return;
       setCards(saved.cards);
       setIndex(saved.index);
       requestAnimationFrame(() => {

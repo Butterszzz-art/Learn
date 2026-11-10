@@ -46,6 +46,18 @@ function toCandidate(r: any): CardRow {
 
 const CARD_COLUMNS = "c.id, c.type, c.interest_id, c.level, c.concept_id, c.deep_dive_id, c.item_id, c.seq, c.title, c.body, c.payload, c.created_at";
 
+/**
+ * SQL for "this reader has not really seen card c" (takes one user-id
+ * parameter). A card that was only glimpsed — under 1.2 seconds on screen,
+ * never finished — becomes eligible again a day later, so swiping past the
+ * opening card of an entry at speed doesn't lose it for good.
+ */
+function notSeen(): string {
+  const dayAgo = new Date(Date.now() - 86400000).toISOString();
+  return `NOT EXISTS (SELECT 1 FROM user_cards uc WHERE uc.user_id = ? AND uc.card_id = c.id
+            AND NOT (uc.skipped_fast = 1 AND uc.completed = 0 AND uc.dwell_ms < 1200 AND uc.seen_at < '${dayAgo}'))`;
+}
+
 function marks(n: number): string {
   return Array.from({ length: n }, () => "?").join(",");
 }
@@ -60,7 +72,7 @@ async function loadSeriesCards(userId: number, interests: InterestWithConfig[], 
                    ROW_NUMBER() OVER (PARTITION BY c.interest_id, c.level ORDER BY COALESCE(d.seq, 100000), d.id, c.seq) AS rn
             FROM cards c JOIN deep_dives d ON d.id = c.deep_dive_id
             WHERE c.status = 'published' AND d.status = 'published' AND c.interest_id IN (${marks(ids.length)})
-              AND NOT EXISTS (SELECT 1 FROM user_cards uc WHERE uc.user_id = ? AND uc.card_id = c.id)
+              AND ${notSeen()}
               ${exclude.length ? `AND c.id NOT IN (${marks(exclude.length)})` : ""}
           ) WHERE rn <= ?`,
     args: [...ids, userId, ...exclude, PER_SERIES_LIMIT],
@@ -95,7 +107,7 @@ async function loadOtherCards(userId: number, interestIds: number[], exclude: nu
                    ROW_NUMBER() OVER (PARTITION BY c.interest_id ORDER BY c.created_at DESC, c.id DESC) AS rn
             FROM cards c
             WHERE c.status = 'published' AND c.deep_dive_id IS NULL AND c.interest_id IN (${marks(interestIds.length)})
-              AND NOT EXISTS (SELECT 1 FROM user_cards uc WHERE uc.user_id = ? AND uc.card_id = c.id)
+              AND ${notSeen()}
               ${exclude.length ? `AND c.id NOT IN (${marks(exclude.length)})` : ""}
           ) WHERE rn <= ?`,
     args: [...interestIds, userId, ...exclude, PER_INTEREST_OTHER_LIMIT],
@@ -109,7 +121,7 @@ async function loadGeneralCards(userId: number, includeGames: boolean, exclude: 
   const res = await client.execute({
     sql: `SELECT ${CARD_COLUMNS}, NULL AS dive_seq FROM cards c
           WHERE c.status = 'published' AND c.interest_id IS NULL AND c.type IN (${marks(types.length)})
-            AND NOT EXISTS (SELECT 1 FROM user_cards uc WHERE uc.user_id = ? AND uc.card_id = c.id)
+            AND ${notSeen()}
             ${exclude.length ? `AND c.id NOT IN (${marks(exclude.length)})` : ""}
           ORDER BY RANDOM() LIMIT 4`,
     args: [...types, userId, ...exclude],
@@ -126,7 +138,7 @@ async function loadExploreCards(userId: number, followedIds: number[], exclude: 
             AND c.type IN ('bite','paper','myth','fact') AND c.seq = 0
             ${followedIds.length ? `AND c.interest_id NOT IN (${marks(followedIds.length)})` : ""}
             AND (c.level IS NULL OR c.level IN ('new_to_this','some_background'))
-            AND NOT EXISTS (SELECT 1 FROM user_cards uc WHERE uc.user_id = ? AND uc.card_id = c.id)
+            AND ${notSeen()}
             ${exclude.length ? `AND c.id NOT IN (${marks(exclude.length)})` : ""}
           ORDER BY RANDOM() LIMIT 12`,
     args: [...followedIds, userId, ...exclude],
