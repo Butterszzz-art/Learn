@@ -1,8 +1,8 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import { getAnthropicClient } from "./claude";
+import { getAnthropicClient, modelFor } from "./ai";
 import type { RawItem } from "./types";
 
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
+const MODEL = modelFor("main");
 const MAX_RESUME_ATTEMPTS = 3;
 
 const SYSTEM_PROMPT =

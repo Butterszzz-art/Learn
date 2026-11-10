@@ -2,299 +2,189 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { LEVELS, LEVEL_LABELS } from "@/db/schema";
+import { LEVELS } from "@/db/schema";
 import type { Level } from "@/db/schema";
+import { interestStyle, postJson } from "@/lib/ui";
+import { Icon } from "./Icon";
 
 export interface InterestConfig {
   id: number;
   slug: string;
   name: string;
   description: string | null;
-  hasCuratedSource: boolean;
   isCustom: boolean;
-  generatesAppliedInsights: boolean;
   isFavorite: boolean;
   level: Level;
   enabled: boolean;
 }
 
-interface RowConfig {
-  level: Level;
-  enabled: boolean;
-  generatesAppliedInsights: boolean;
-  isFavorite: boolean;
-}
+// Plain-language self-placement: what the reader would say about
+// themselves, not jargon about the content.
+const LEVEL_CHOICES: Record<Level, { label: string; hint: string }> = {
+  new_to_this: { label: "New to it", hint: "Start from the ground up" },
+  some_background: { label: "Know the basics", hint: "Skip the introductions" },
+  advanced: { label: "Studying or working in it", hint: "Mechanisms and open questions" },
+  research_level: { label: "Research level", hint: "Current debates and recent papers" },
+};
+
+const EMOJI: Record<string, string> = {
+  neuroscience: "🧠",
+  psychology: "💭",
+  philosophy: "🏛️",
+  history: "📜",
+  economics: "📈",
+  business: "💼",
+  "political-science": "🗳️",
+  "cs-ai": "🤖",
+  physics: "⚛️",
+  "critical-thinking": "🧐",
+  "exercise-science": "🏃",
+  "philosophy-of-science": "🔬",
+  mathematics: "➗",
+  logic: "🧩",
+  "animal-world": "🦉",
+  biology: "🧬",
+  evolution: "🌱",
+};
+
+const MIN_ONBOARDING = 3;
 
 export function InterestPicker({
   initial,
   mode,
-  onSaved,
+  allowResearchLevel,
 }: {
   initial: InterestConfig[];
   mode: "onboarding" | "settings";
-  onSaved?: () => void;
+  allowResearchLevel: boolean;
 }) {
   const router = useRouter();
-  const [interestList, setInterestList] = useState<InterestConfig[]>(initial);
-  const [config, setConfig] = useState<Map<number, RowConfig>>(
-    new Map(
-      initial.map((i) => [
-        i.id,
-        {
-          level: i.level,
-          enabled: i.enabled,
-          generatesAppliedInsights: i.generatesAppliedInsights,
-          isFavorite: i.isFavorite,
-        },
-      ])
-    )
-  );
+  const [list, setList] = useState(initial);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [customName, setCustomName] = useState("");
-  const [addingCustom, setAddingCustom] = useState(false);
+  const [adding, setAdding] = useState(false);
 
-  const ROW_DEFAULT: RowConfig = {
-    level: "some_background",
-    enabled: false,
-    generatesAppliedInsights: true,
-    isFavorite: false,
-  };
+  const enabledCount = list.filter((i) => i.enabled).length;
+  const needMore = mode === "onboarding" && enabledCount < MIN_ONBOARDING;
 
-  function toggle(id: number) {
-    setConfig((prev) => {
-      const next = new Map(prev);
-      const current = next.get(id) ?? ROW_DEFAULT;
-      next.set(id, { ...current, enabled: !current.enabled });
-      return next;
-    });
+  function update(id: number, patch: Partial<InterestConfig>) {
+    setSaved(false);
+    setList((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
   }
 
-  function setLevel(id: number, level: Level) {
-    setConfig((prev) => {
-      const next = new Map(prev);
-      const current = next.get(id) ?? ROW_DEFAULT;
-      next.set(id, { ...current, level });
-      return next;
-    });
-  }
-
-  function toggleAppliedInsights(id: number) {
-    setConfig((prev) => {
-      const next = new Map(prev);
-      const current = next.get(id) ?? ROW_DEFAULT;
-      next.set(id, { ...current, generatesAppliedInsights: !current.generatesAppliedInsights });
-      return next;
-    });
-  }
-
-  function toggleFavorite(id: number) {
-    setConfig((prev) => {
-      const next = new Map(prev);
-      const current = next.get(id) ?? ROW_DEFAULT;
-      next.set(id, { ...current, isFavorite: !current.isFavorite });
-      return next;
-    });
-  }
-
-  async function addCustomInterest() {
+  async function addCustom(e: React.FormEvent) {
+    e.preventDefault();
     const name = customName.trim();
     if (!name) return;
-    setAddingCustom(true);
+    setAdding(true);
     setError(null);
-    try {
-      const res = await fetch("/api/interests/custom", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error ?? "Failed to add interest");
-
-      const newInterest: InterestConfig = { ...data, level: "some_background", enabled: true };
-      setInterestList((prev) => [...prev, newInterest]);
-      setConfig((prev) => {
-        const next = new Map(prev);
-        next.set(newInterest.id, {
-          level: "some_background",
-          enabled: true,
-          generatesAppliedInsights: newInterest.generatesAppliedInsights,
-          isFavorite: false,
-        });
-        return next;
-      });
+    const res = await postJson<InterestConfig>("/api/interests/custom", { name });
+    if (res.ok && res.data) {
+      const added = res.data;
+      setList((prev) => (prev.some((i) => i.id === added.id) ? prev.map((i) => (i.id === added.id ? { ...i, enabled: true } : i)) : [...prev, { ...added, enabled: true }]));
       setCustomName("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-    } finally {
-      setAddingCustom(false);
-    }
+    } else setError(res.error);
+    setAdding(false);
   }
-
-  const enabledCount = Array.from(config.values()).filter((c) => c.enabled).length;
 
   async function save() {
     setSaving(true);
     setError(null);
-    try {
-      const payload = {
-        interests: interestList.map((i) => {
-          const c = config.get(i.id)!;
-          return {
-            interestId: i.id,
-            level: c.level,
-            enabled: c.enabled,
-            generatesAppliedInsights: c.generatesAppliedInsights,
-            isFavorite: c.isFavorite,
-          };
-        }),
-      };
-      const res = await fetch("/api/interests", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? "Save failed");
-
-      if (mode === "onboarding") {
-        router.push("/");
-        router.refresh();
-      } else {
-        onSaved?.();
-        router.refresh();
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-    } finally {
-      setSaving(false);
+    const res = await postJson("/api/interests", {
+      interests: list.map((i) => ({ interestId: i.id, level: i.level, enabled: i.enabled, isFavorite: i.isFavorite })),
+    });
+    setSaving(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    if (mode === "onboarding") {
+      router.push("/");
+      router.refresh();
+    } else {
+      setSaved(true);
+      router.refresh();
     }
   }
 
   return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2">
-        {interestList.map((interest) => {
-          const c = config.get(interest.id) ?? {
-            level: "some_background" as Level,
-            enabled: false,
-            generatesAppliedInsights: interest.generatesAppliedInsights,
-            isFavorite: interest.isFavorite,
-          };
-          return (
-            <div
-              key={interest.id}
-              className={`card transition ${c.enabled ? "border-neuron-accent/50" : "opacity-70"}`}
-            >
-              <label className="flex cursor-pointer items-start gap-3">
-                <input
-                  type="checkbox"
-                  checked={c.enabled}
-                  onChange={() => toggle(interest.id)}
-                  className="mt-1 h-4 w-4 rounded border-neuron-border bg-neuron-surface2 accent-neuron-accent"
-                />
-                <div className="flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{interest.name}</span>
-                    {interest.isCustom && <span className="pill">custom</span>}
-                    {!interest.hasCuratedSource && <span className="pill">news via web search</span>}
-                  </div>
-                  {interest.description && (
-                    <p className="mt-0.5 text-xs text-neuron-muted">{interest.description}</p>
-                  )}
-                </div>
-              </label>
-
-              {c.enabled && (
-                <div className="mt-3 space-y-3 pl-7">
-                  <div className="flex flex-wrap gap-2">
-                    {LEVELS.map((level) => (
-                      <button
-                        key={level}
-                        type="button"
-                        onClick={() => setLevel(interest.id, level)}
-                        className={
-                          c.level === level
-                            ? "rounded-full bg-neuron-accent px-3 py-1 text-xs font-medium text-neuron-bg"
-                            : "rounded-full border border-neuron-border px-3 py-1 text-xs text-neuron-muted hover:text-neuron-text"
-                        }
-                      >
-                        {LEVEL_LABELS[level]}
-                      </button>
+    <div>
+      <ul className="grid gap-3 sm:grid-cols-2">
+        {list.map((i) => (
+          <li key={i.id} style={interestStyle(i.id)}>
+            <div className={`rounded-3xl border-2 p-4 transition ${i.enabled ? "border-[var(--ic)] bg-[var(--ic-soft)]" : "border-neuron-border bg-neuron-surface"}`}>
+              <div className="flex items-start gap-2">
+                <button type="button" onClick={() => update(i.id, { enabled: !i.enabled })} aria-pressed={i.enabled} className="flex min-h-[44px] flex-1 items-center gap-3 text-left">
+                  <span aria-hidden className="text-2xl">
+                    {EMOJI[i.slug] ?? "✨"}
+                  </span>
+                  <span>
+                    <span className="block font-bold leading-tight">{i.name}</span>
+                    {i.description && <span className="mt-0.5 block text-xs leading-snug text-neuron-muted">{i.description}</span>}
+                  </span>
+                  <span
+                    aria-hidden
+                    className={`ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 ${i.enabled ? "border-[var(--ic)] bg-[var(--ic)] text-white" : "border-neuron-border"}`}
+                  >
+                    {i.enabled && <Icon name="check" className="h-4 w-4" />}
+                  </span>
+                </button>
+              </div>
+              {i.enabled && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <label className="sr-only" htmlFor={`level-${i.id}`}>
+                    How much do you already know about {i.name}?
+                  </label>
+                  <select
+                    id={`level-${i.id}`}
+                    value={i.level}
+                    onChange={(e) => update(i.id, { level: e.target.value as Level })}
+                    className="min-h-[40px] flex-1 rounded-full border border-neuron-border bg-neuron-surface px-3 text-sm font-semibold text-neuron-text"
+                  >
+                    {LEVELS.map((l) => (
+                      <option key={l} value={l} disabled={l === "research_level" && !allowResearchLevel}>
+                        {LEVEL_CHOICES[l].label}
+                        {l === "research_level" && !allowResearchLevel ? " (Pro)" : ` — ${LEVEL_CHOICES[l].hint}`}
+                      </option>
                     ))}
-                  </div>
-
-                  {mode === "settings" && (
-                    <>
-                      <label className="flex items-center gap-2 text-xs text-neuron-muted">
-                        <input
-                          type="checkbox"
-                          checked={c.generatesAppliedInsights}
-                          onChange={() => toggleAppliedInsights(interest.id)}
-                          className="h-3.5 w-3.5 rounded border-neuron-border bg-neuron-surface2 accent-neuron-accent"
-                        />
-                        Generate an Applied Insight card after each deep dive
-                      </label>
-                      <label className="flex items-center gap-2 text-xs text-neuron-muted">
-                        <input
-                          type="checkbox"
-                          checked={c.isFavorite}
-                          onChange={() => toggleFavorite(interest.id)}
-                          className="h-3.5 w-3.5 rounded border-neuron-border bg-neuron-surface2 accent-amber-400"
-                        />
-                        ⭐ Passion Mode — more deep dives per cycle, framed a notch deeper, plus Binge
-                        and topic-picking in the feed
-                      </label>
-                    </>
-                  )}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => update(i.id, { isFavorite: !i.isFavorite })}
+                    aria-pressed={i.isFavorite}
+                    aria-label={i.isFavorite ? `Remove ${i.name} from favourites` : `Mark ${i.name} as a favourite — see more of it`}
+                    title="Favourite: see more of this, and get further ahead"
+                    className={`flex h-10 w-10 items-center justify-center rounded-full border ${i.isFavorite ? "border-neuron-warn bg-neuron-warn/15 text-neuron-warn" : "border-neuron-border text-neuron-muted"}`}
+                  >
+                    <Icon name="star" filled={i.isFavorite} />
+                  </button>
                 </div>
               )}
             </div>
-          );
-        })}
-      </div>
+          </li>
+        ))}
+      </ul>
 
-      <div className="card">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neuron-muted">
-          Don't see your field? Add any topic.
-        </p>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={customName}
-            onChange={(e) => setCustomName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                addCustomInterest();
-              }
-            }}
-            placeholder="e.g. Byzantine history, climate policy, jazz theory…"
-            className="flex-1 rounded-2xl border border-neuron-border bg-neuron-surface2 px-3 py-2 text-sm text-neuron-text placeholder:text-neuron-muted focus:border-neuron-accent focus:outline-none"
-          />
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={addCustomInterest}
-            disabled={addingCustom || !customName.trim()}
-          >
-            {addingCustom ? "Adding…" : "Add"}
-          </button>
-        </div>
-        <p className="mt-2 text-xs text-neuron-muted">
-          Custom interests get a web-search-generated News roundup instead of a fixed RSS feed, plus
-          the same Deep Dive and Applied Insight treatment as everything else.
-        </p>
-      </div>
-
-      {error && <p className="text-xs text-red-400">{error}</p>}
-
-      <div className="flex items-center gap-3">
-        <button className="btn-primary" onClick={save} disabled={saving || enabledCount === 0}>
-          {saving ? "Saving…" : mode === "onboarding" ? "Start my feed →" : "Save interests"}
+      <form onSubmit={addCustom} className="mt-5 flex gap-2">
+        <label htmlFor="custom-interest" className="sr-only">
+          Add your own field
+        </label>
+        <input id="custom-interest" className="field" value={customName} onChange={(e) => setCustomName(e.target.value)} placeholder="Something else? e.g. Volcanology" maxLength={60} />
+        <button type="submit" className="btn-secondary shrink-0" disabled={adding || !customName.trim()}>
+          {adding ? "Adding…" : "Add"}
         </button>
-        {enabledCount === 0 && (
-          <span className="text-xs text-neuron-muted">Enable at least one interest to continue.</span>
-        )}
+      </form>
+
+      <div className={`sticky z-10 ${mode === "onboarding" ? "bottom-4" : "bottom-20 md:bottom-4"} mt-6 flex flex-wrap items-center gap-3 rounded-3xl border border-neuron-border bg-neuron-surface/95 p-3 backdrop-blur`}>
+        <button type="button" className="btn-primary" onClick={save} disabled={saving || needMore || enabledCount === 0}>
+          {saving ? "Saving…" : mode === "onboarding" ? "Start learning" : "Save interests"}
+        </button>
+        <p className="text-sm text-neuron-muted" aria-live="polite">
+          {needMore ? `Pick at least ${MIN_ONBOARDING} — ${MIN_ONBOARDING - enabledCount} to go.` : saved ? "Saved." : `${enabledCount} selected`}
+        </p>
+        {error && <p className="error-text w-full">{error}</p>}
       </div>
     </div>
   );

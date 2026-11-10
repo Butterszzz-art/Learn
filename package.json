@@ -1,19 +1,19 @@
 {
-  "name": "neuro-digest",
-  "version": "0.1.0",
+  "name": "neuron",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:local": "cross-env NEURON_LOCAL_DB=1 next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "db:generate": "drizzle-kit generate",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "db:migrate": "tsx src/db/migrate.ts",
-    "db:seed": "tsx src/db/seed.ts",
-    "db:seed-interests": "tsx src/db/seedInterests.ts",
-    "db:seed-mental-models": "tsx src/db/seedMentalModels.ts",
-    "db:seed-brain-games": "tsx src/db/seedBrainGames.ts",
-    "fetch": "tsx scripts/fetch.ts"
+    "tick": "tsx scripts/tick.ts",
+    "push:keys": "web-push generate-vapid-keys",
+    "dev:test": "cross-env NEURON_LOCAL_DB=1 NEURON_DB_FILE=data/dev.db next dev -p 3100"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
@@ -22,12 +22,15 @@
     "drizzle-orm": "^0.36.4",
     "fast-xml-parser": "^4.5.0",
     "jszip": "^3.10.1",
+    "mermaid": "^11.17.2",
     "next": "^14.2.18",
     "pdfkit": "^0.19.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "ts-fsrs": "^5.4.2",
+    "web-push": "^4.0.0"
   },
   "devDependencies": {
     "@tailwindcss/typography": "^0.5.20",
@@ -35,11 +38,14 @@
     "@types/pdfkit": "^0.17.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "@types/web-push": "^3.6.4",
     "autoprefixer": "^10.4.20",
+    "cross-env": "^10.1.0",
     "drizzle-kit": "^0.28.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.14",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^5.1.0"
   }
 }

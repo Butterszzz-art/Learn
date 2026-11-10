@@ -1,63 +1,44 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getBookById } from "@/lib/digest";
+import { requireUser } from "@/lib/auth";
+import { getBookById } from "@/lib/content";
 
 export const dynamic = "force-dynamic";
 
 export default async function BookPage({ params }: { params: { bookId: string } }) {
-  const id = Number(params.bookId);
-  if (!Number.isFinite(id)) notFound();
-
-  const book = await getBookById(id);
+  const user = await requireUser();
+  const book = await getBookById(Number(params.bookId), user.id);
   if (!book) notFound();
-
+  const ready = book.chapters.filter((c) => c.hasContent).length;
   return (
     <div>
-      <Link href="/library" className="mb-4 inline-block text-xs text-neuron-muted hover:text-neuron-text">
-        ← Back to Library
-      </Link>
-
-      <div className="mb-6">
-        <h1 className="font-display text-2xl font-bold">{book.title}</h1>
-        {book.author && <p className="text-sm text-neuron-muted">{book.author}</p>}
-        <p className="mt-1 text-xs text-neuron-muted">
-          {book.totalChapters} chapters · {book.paceChaptersPerCycle}/cycle pace
-        </p>
-      </div>
-
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neuron-muted">
-        Table of contents
-      </h2>
-      <ul className="space-y-2">
-        {book.chapters.map((chapter) => {
-          const readable = chapter.hasContent;
-          return (
-            <li key={chapter.id}>
-              {readable ? (
-                <Link
-                  href={`/library/chapter/${chapter.id}`}
-                  className="card flex items-center justify-between transition hover:border-neuron-accent3"
-                >
-                  <span>
-                    <span className="text-neuron-muted">Ch. {chapter.chapterNumber}</span> · {chapter.title}
-                  </span>
-                  <span className="flex items-center gap-2 text-xs">
-                    {chapter.status === "pending" && <span className="pill">not yet in your feed</span>}
-                    <span className="text-neuron-accent3">Read →</span>
-                  </span>
-                </Link>
-              ) : (
-                <div className="card flex items-center justify-between opacity-60">
-                  <span>
-                    <span className="text-neuron-muted">Ch. {chapter.chapterNumber}</span> · {chapter.title}
-                  </span>
-                  <span className="pill">processing…</span>
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+      <Link href="/library" className="text-sm font-bold text-neuron-accent">← Library</Link>
+      <h1 className="page-title mt-4">{book.title}</h1>
+      {book.author && <p className="text-neuron-muted">{book.author}</p>}
+      <p className="mt-2 text-sm text-neuron-muted">
+        {ready} of {book.totalChapters} chapters have notes
+        {book.status === "processing" ? " — the rest are still being written." : "."}
+        {book.totalChapters > 1 ? ` New chapters reach your feed ${book.paceChaptersPerCycle} a day; you can also read ahead here.` : ""}
+      </p>
+      <ol className="mt-6 space-y-2">
+        {book.chapters.map((c) => (
+          <li key={c.id}>
+            {c.hasContent ? (
+              <Link href={`/library/chapter/${c.id}`} className="card flex items-center gap-3 !p-4 transition hover:border-neuron-accent">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-neuron-surface2 text-sm font-extrabold">{c.chapterNumber}</span>
+                <span className="flex-1 font-bold leading-snug">{c.title}</span>
+                {c.status === "surfaced" && <span className="pill !border-neuron-accent3/50 !text-neuron-accent3">Read</span>}
+              </Link>
+            ) : (
+              <div className="card flex items-center gap-3 !p-4 opacity-60">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-neuron-surface2 text-sm font-extrabold">{c.chapterNumber}</span>
+                <span className="flex-1 font-bold leading-snug">{c.title}</span>
+                <span className="pill">Notes pending</span>
+              </div>
+            )}
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

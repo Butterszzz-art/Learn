@@ -1,24 +1,22 @@
 import { NextResponse } from "next/server";
-import { ensureDb } from "@/db/bootstrap";
-import { getExplainBackById } from "@/lib/digest";
+import { apiUser, fail, isResponse } from "@/lib/api";
+import { getExplainBackById } from "@/lib/content";
 import { buildExplainBackMarkdown, markdownToPdf, exportFilename } from "@/lib/export";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function GET(req: Request, { params }: { params: { id: string } }) {
-  await ensureDb();
+  const user = await apiUser();
+  if (isResponse(user)) return user;
   const id = Number(params.id);
-  if (!Number.isFinite(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
-
-  const detail = await getExplainBackById(id);
-  if (!detail) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  const format = new URL(req.url).searchParams.get("format") === "pdf" ? "pdf" : "md";
-  const title = `Explain It Back — ${detail.parentTitle}`;
+  if (!Number.isFinite(id)) return fail("Invalid id");
+  const detail = await getExplainBackById(id, user.id);
+  if (!detail) return fail("Not found", 404);
   const markdown = buildExplainBackMarkdown(detail.entry, detail.parentTitle);
-  const filename = exportFilename(detail.entry.createdAt, title);
-
+  const title = `Explain it back — ${detail.parentTitle}`;
+  const filename = exportFilename(detail.entry.createdAt, `explain-back-${detail.parentTitle}`);
+  const format = new URL(req.url).searchParams.get("format") === "pdf" ? "pdf" : "md";
   if (format === "pdf") {
     const pdf = await markdownToPdf(markdown, title);
     return new NextResponse(pdf as unknown as BodyInit, {
@@ -28,11 +26,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
       },
     });
   }
-
   return new NextResponse(markdown, {
-    headers: {
-      "Content-Type": "text/markdown; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-    },
+    headers: { "Content-Type": "text/markdown; charset=utf-8", "Content-Disposition": `attachment; filename="${filename}"` },
   });
 }

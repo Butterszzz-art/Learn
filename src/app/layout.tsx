@@ -1,39 +1,53 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Fredoka, Nunito } from "next/font/google";
-import { ensureDb } from "@/db/bootstrap";
-import { Nav } from "@/components/Nav";
+import { getCurrentUser } from "@/lib/auth";
+import { AppShell } from "@/components/AppShell";
+import { ClientBoot } from "@/components/ClientBoot";
 import "./globals.css";
 
-// Fredoka: bubbly, rounded display face for headings/logo. Nunito: rounded
-// body sans that stays readable at paragraph length — the pairing behind
-// the "bubbly, modern" redesign (formerly a serif/system-sans pairing).
-const fredoka = Fredoka({
-  subsets: ["latin"],
-  weight: ["500", "600", "700"],
-  variable: "--font-display",
-});
-const nunito = Nunito({
-  subsets: ["latin"],
-  weight: ["400", "600", "700", "800"],
-  variable: "--font-body",
-});
+// Fredoka: rounded display face for headings and the wordmark. Nunito:
+// rounded body sans that stays readable at paragraph length.
+const fredoka = Fredoka({ subsets: ["latin"], weight: ["500", "600", "700"], variable: "--font-display" });
+const nunito = Nunito({ subsets: ["latin"], weight: ["400", "600", "700", "800"], variable: "--font-body" });
 
 export const metadata: Metadata = {
-  title: "Neuron",
-  description:
-    "A personal, local knowledge feed — real current material and thorough, level-matched explainers across whatever fields you choose.",
+  title: { default: "Neuron", template: "%s · Neuron" },
+  description: "Swipe through real science, one idea at a time — and actually remember it.",
+  applicationName: "Neuron",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, title: "Neuron", statusBarStyle: "black-translucent" },
+  formatDetection: { telephone: false },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#faf8ff" },
+    { media: "(prefers-color-scheme: dark)", color: "#120f1e" },
+  ],
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  await ensureDb();
+  const user = await getCurrentUser();
+  const theme = user?.prefs.theme && user.prefs.theme !== "system" ? user.prefs.theme : undefined;
+  const scale = user?.prefs.textScale;
   return (
-    <html lang="en" className={`${fredoka.variable} ${nunito.variable}`}>
+    <html
+      lang="en"
+      className={`${fredoka.variable} ${nunito.variable}`}
+      data-theme={theme}
+      style={scale ? ({ "--text-scale": String(scale) } as React.CSSProperties) : undefined}
+    >
       <body>
-        <Nav />
-        <main className="mx-auto max-w-4xl px-6 py-8">{children}</main>
-        <footer className="mx-auto max-w-4xl px-6 py-10 text-center text-xs text-neuron-muted">
-          Runs entirely on your machine. Nothing here is hosted or emailed.
-        </footer>
+        <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-full focus:bg-neuron-surface focus:px-4 focus:py-2">
+          Skip to content
+        </a>
+        <AppShell signedIn={!!user && user.onboarded} isAdmin={user?.role === "admin"}>
+          {children}
+        </AppShell>
+        <ClientBoot />
       </body>
     </html>
   );

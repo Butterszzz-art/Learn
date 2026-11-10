@@ -1,162 +1,114 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-type Phase = "idle" | "uploading" | "structure" | "chapters" | "done" | "error";
-type InputMode = "file" | "url";
+type Mode = "file" | "url";
 
-/** Upload a PDF/EPUB or paste an article URL, then drive its processing
- * loop client-side — same granular-per-step pattern as RefreshButton.tsx's
- * deep-dive loop, since a whole book (structure pass + one call per
- * chapter) can take minutes and would blow past a single serverless
- * request's time limit. */
-export function BookUploadForm() {
+/**
+ * Upload a PDF/EPUB or paste an article link. Processing runs as queued
+ * background jobs (one per chapter); this form just watches progress, so
+ * closing the page doesn't stop it.
+ */
+export function BookUploadForm({ canUpload, limitMessage }: { canUpload: boolean; limitMessage: string }) {
   const router = useRouter();
-  const [mode, setMode] = useState<InputMode>("file");
+  const [mode, setMode] = useState<Mode>("file");
   const [file, setFile] = useState<File | null>(null);
   const [url, setUrl] = useState("");
   const [paceWeeks, setPaceWeeks] = useState("");
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [progressLabel, setProgressLabel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
 
-  async function handleUpload() {
-    if (mode === "file" && !file) return;
-    if (mode === "url" && !url.trim()) return;
+  function watch(bookId: number) {
+    const kick = () => fetch("/api/jobs/kick", { method: "POST" }).catch(() => {});
+    kick();
+    let ticks = 0;
+    timer.current = setInterval(async () => {
+      ticks++;
+      const s = await fetch(`/api/library/${bookId}/status`).then((r) => r.json()).catch(() => null);
+      if (!s) return;
+      if (s.status === "error") {
+        clearInterval(timer.current!);
+        setError(s.errorMessage ?? "This couldn't be processed.");
+        setProgress(null);
+        setBusy(false);
+        router.refresh();
+      } else if (s.status === "ready") {
+        clearInterval(timer.current!);
+        setProgress(null);
+        setBusy(false);
+        router.refresh();
+      } else {
+        setProgress(s.totalChapters > 0 ? `Writing chapter notes: ${s.chaptersProcessed} of ${s.totalChapters} done. You can leave this page.` : "Reading the structure…");
+        if (ticks % 3 === 0) { kick(); router.refresh(); }
+      }
+    }, 5000);
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (mode === "file" ? !file : !url.trim()) return;
+    setBusy(true);
     setError(null);
-    setPhase("uploading");
-    setProgressLabel(mode === "url" ? "Fetching…" : "Uploading…");
-
+    setProgress(mode === "url" ? "Fetching the article…" : "Uploading…");
     try {
       const form = new FormData();
       if (mode === "file" && file) form.append("file", file);
       if (mode === "url") form.append("url", url.trim());
       if (paceWeeks.trim()) form.append("paceWeeks", paceWeeks.trim());
-
-      const uploadRes = await fetch("/api/library/upload", { method: "POST", body: form });
-      const uploadData = await uploadRes.json().catch(() => null);
-      if (!uploadRes.ok) throw new Error(uploadData?.error ?? "Upload failed");
-      const bookId: number = uploadData.id;
-
-      router.refresh(); // book now shows up in the list below, status "processing"
-
-      setPhase("structure");
-      setProgressLabel(mode === "url" ? "Reading the article…" : "Reading the book's structure…");
-      const structRes = await fetch(`/api/library/${bookId}/process-structure`, { method: "POST" });
-      const structData = await structRes.json().catch(() => null);
-      if (!structRes.ok) throw new Error(structData?.error ?? "Structure processing failed");
-      if (structData.status === "error") {
-        setPhase("error");
-        setError(structData.errorMessage || "Couldn't process this.");
-        router.refresh();
-        return;
-      }
-
-      const totalChapters: number = structData.totalChapters;
-      setPhase("chapters");
-      for (let i = 0; i < totalChapters; i++) {
-        setProgressLabel(
-          totalChapters > 1 ? `Processing chapter ${i + 1} of ${totalChapters}…` : "Processing…"
-        );
-        const chRes = await fetch(`/api/library/${bookId}/process-chapter`, { method: "POST" });
-        const chData = await chRes.json().catch(() => null);
-        if (!chRes.ok) throw new Error(chData?.error ?? "Chapter processing failed");
-        if (chData.done) break;
-      }
-
-      setPhase("done");
-      setProgressLabel("Ready!");
+      const res = await fetch("/api/library/upload", { method: "POST", body: form });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error ?? "Upload failed");
       setFile(null);
       setUrl("");
-      setPaceWeeks("");
       router.refresh();
+      watch(data.id);
     } catch (err) {
-      setPhase("error");
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      setError(err instanceof Error ? err.message : "Upload failed");
+      setProgress(null);
+      setBusy(false);
     }
   }
 
-  const busy = phase === "uploading" || phase === "structure" || phase === "chapters";
+  if (!canUpload) return <p className="card text-sm text-neuron-muted">{limitMessage}</p>;
 
   return (
-    <div className="card">
-      <p className="mb-3 font-medium">📖 Add to your Library</p>
-
-      <div className="mb-3 flex gap-2">
-        <button
-          type="button"
-          onClick={() => setMode("file")}
-          disabled={busy}
-          className={mode === "file" ? "nav-link-active" : "nav-link"}
-        >
-          Upload a file
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode("url")}
-          disabled={busy}
-          className={mode === "url" ? "nav-link-active" : "nav-link"}
-        >
-          Paste a URL
-        </button>
+    <form onSubmit={submit} className="card">
+      <div className="mb-4 flex gap-2" role="tablist" aria-label="What to add">
+        {(["file", "url"] as Mode[]).map((m) => (
+          <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => setMode(m)} className={`pill !py-1.5 ${mode === m ? "!border-neuron-accent !bg-neuron-accent/15 !text-neuron-text" : ""}`}>
+            {m === "file" ? "PDF or EPUB" : "Article link"}
+          </button>
+        ))}
       </div>
-
-      <div className="space-y-3">
-        {mode === "file" ? (
-          <>
-            <input
-              type="file"
-              accept="application/pdf,.pdf,application/epub+zip,.epub"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              disabled={busy}
-              className="block w-full text-sm text-neuron-muted file:mr-3 file:rounded-full file:border-0 file:bg-neuron-surface2 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-neuron-text hover:file:bg-neuron-border"
-            />
-            <p className="text-xs text-neuron-muted">PDF or EPUB, up to 32MB.</p>
-          </>
-        ) : (
-          <>
-            <input
-              type="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              disabled={busy}
-              placeholder="https://example.com/a-good-article"
-              className="w-full rounded-2xl border border-neuron-border bg-neuron-surface2 px-3 py-2 text-sm text-neuron-text placeholder:text-neuron-muted focus:border-neuron-accent focus:outline-none"
-            />
-            <p className="text-xs text-neuron-muted">
-              A single article becomes a one-chapter notebook entry, using its own title.
-            </p>
-          </>
-        )}
-
-        {mode === "file" && (
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-neuron-muted">Finish in about</label>
-            <input
-              type="number"
-              min={1}
-              value={paceWeeks}
-              onChange={(e) => setPaceWeeks(e.target.value)}
-              disabled={busy}
-              placeholder="4"
-              className="w-16 rounded-2xl border border-neuron-border bg-neuron-surface2 px-2 py-1 text-sm text-neuron-text focus:border-neuron-accent focus:outline-none"
-            />
-            <span className="text-xs text-neuron-muted">weeks (skip for 1 chapter/cycle)</span>
-          </div>
-        )}
-
-        <button
-          type="button"
-          className="btn-primary"
-          onClick={handleUpload}
-          disabled={(mode === "file" ? !file : !url.trim()) || busy}
-        >
-          {busy ? progressLabel || "Working…" : mode === "url" ? "Fetch & process" : "Upload & process"}
-        </button>
-        {error && <p className="text-xs text-red-400">{error}</p>}
-        {phase === "done" && <p className="text-xs text-neuron-accent3">✓ Ready — see it below.</p>}
+      {mode === "file" ? (
+        <div>
+          <label htmlFor="book-file" className="label">Choose a file (up to 32MB)</label>
+          <input id="book-file" type="file" accept=".pdf,.epub,application/pdf,application/epub+zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="block w-full text-sm text-neuron-muted file:mr-3 file:rounded-full file:border-0 file:bg-neuron-surface2 file:px-4 file:py-2.5 file:font-bold file:text-neuron-text" />
+        </div>
+      ) : (
+        <div>
+          <label htmlFor="book-url" className="label">Link to an article</label>
+          <input id="book-url" type="url" inputMode="url" className="field" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" />
+        </div>
+      )}
+      {mode === "file" && (
+        <div className="mt-4">
+          <label htmlFor="book-pace" className="label">Finish it in about how many weeks? <span className="font-normal text-neuron-muted">(optional)</span></label>
+          <input id="book-pace" type="number" min={1} max={104} inputMode="numeric" className="field max-w-[10rem]" value={paceWeeks} onChange={(e) => setPaceWeeks(e.target.value)} placeholder="e.g. 6" />
+        </div>
+      )}
+      <p className="mt-4 text-xs text-neuron-muted">Only add material you have the right to use for your own study. It stays private to you.</p>
+      <button type="submit" className="btn-primary mt-4" disabled={busy || (mode === "file" ? !file : !url.trim())}>
+        {busy ? "Working…" : "Add to my library"}
+      </button>
+      <div aria-live="polite">
+        {progress && <p className="mt-3 text-sm text-neuron-muted">{progress}</p>}
+        {error && <p className="error-text mt-3">{error}</p>}
       </div>
-    </div>
+    </form>
   );
 }

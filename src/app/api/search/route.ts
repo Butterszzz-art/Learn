@@ -1,18 +1,13 @@
 import { NextResponse } from "next/server";
-import { ensureDb } from "@/db/bootstrap";
+import { apiUser, isResponse } from "@/lib/api";
 import { searchIndex } from "@/lib/searchIndex";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
-  await ensureDb();
-  const { searchParams } = new URL(req.url);
-  const q = searchParams.get("q") ?? "";
-  try {
-    const results = await searchIndex(q);
-    return NextResponse.json({ results });
-  } catch (err) {
-    console.error("[api/search] failed:", err);
-    return NextResponse.json({ error: err instanceof Error ? err.message : "Search failed" }, { status: 500 });
-  }
+  const user = await apiUser();
+  if (isResponse(user)) return user;
+  const q = new URL(req.url).searchParams.get("q") ?? "";
+  if (q.trim().length < 2) return NextResponse.json({ results: [] });
+  return NextResponse.json({ results: await searchIndex(q.slice(0, 120), user.id) });
 }

@@ -1,5 +1,6 @@
-// Ensures the schema exists and the brain-fact bank is seeded. Safe to call
-// from every request — after the first call in a process it's a no-op.
+// Makes sure the schema exists, the curated banks are seeded, and the
+// no-AI starter content is in the card pool. After the first call in a
+// process this is a resolved promise, so calling it per request is free.
 import { runMigrations } from "./migrate";
 import { seedBrainFacts } from "./seed";
 import { seedInterests } from "./seedInterests";
@@ -12,13 +13,16 @@ export function ensureDb(): Promise<void> {
   if (!bootstrapPromise) {
     bootstrapPromise = (async () => {
       await runMigrations();
-      await seedInterests(); // must run before seedBrainFacts backfills anything interest-dependent
+      await seedInterests(); // before anything interest-dependent
       await seedBrainFacts();
       await seedMentalModels();
       await seedBrainGames();
+      // Imported lazily: it pulls in the content engine, which the plain
+      // `npm run db:migrate` script doesn't need.
+      const { bootstrapContent } = await import("@/lib/engine/bootstrapContent");
+      await bootstrapContent();
     })().catch((err) => {
-      // Allow a retry on the next call if bootstrap failed.
-      bootstrapPromise = null;
+      bootstrapPromise = null; // allow a retry on the next call
       throw err;
     });
   }

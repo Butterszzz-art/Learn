@@ -30,6 +30,9 @@ export interface SearchIndexEntry {
   interestId: number | null;
   date: string; // ISO-ish date string, used as the relevance tiebreaker
   url: string; // in-app link this result opens
+  // null = shared content anyone can find; a user id = private to them
+  // (Library chapters, explain-it-back entries).
+  userId?: number | null;
 }
 
 /**
@@ -45,8 +48,8 @@ export async function indexForSearch(entry: SearchIndexEntry): Promise<void> {
   try {
     await client.execute({ sql: "DELETE FROM search_index WHERE dedupe_key = ?", args: [dedupeKey] });
     await client.execute({
-      sql: `INSERT INTO search_index (title, body, content_type, source_id, interest_label, interest_id, date, url, dedupe_key)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO search_index (title, body, content_type, source_id, interest_label, interest_id, date, url, dedupe_key, user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         entry.title,
         entry.body,
@@ -57,6 +60,7 @@ export async function indexForSearch(entry: SearchIndexEntry): Promise<void> {
         entry.date,
         entry.url,
         dedupeKey,
+        entry.userId ?? null,
       ],
     });
   } catch (err) {
@@ -98,7 +102,7 @@ function ftsToken(token: string): string {
  * "synaptic" as the reader is still typing), ranked by FTS5's bm25 (via the
  * implicit `rank` column) with recency as the tiebreaker per the spec.
  */
-export async function searchIndex(query: string, limit = 50): Promise<SearchResult[]> {
+export async function searchIndex(query: string, userId: number, limit = 50): Promise<SearchResult[]> {
   const tokens = query.trim().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return [];
 
@@ -109,10 +113,10 @@ export async function searchIndex(query: string, limit = 50): Promise<SearchResu
       sql: `SELECT title, snippet(search_index, 1, '<mark>', '</mark>', '…', 28) as snip,
                    content_type, source_id, interest_label, date, url
             FROM search_index
-            WHERE search_index MATCH ?
+            WHERE search_index MATCH ? AND (user_id IS NULL OR user_id = ?)
             ORDER BY rank, date DESC
             LIMIT ?`,
-      args: [ftsQuery, limit],
+      args: [ftsQuery, userId, limit],
     });
     return res.rows.map((r: any) => ({
       contentType: r.content_type as SearchContentType,

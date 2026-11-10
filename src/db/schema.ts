@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, primaryKey } from "drizzle-orm/sqlite-core";
 
 // ---------------------------------------------------------------------------
 // Categories are a fixed set (see spec). Stored as plain text, validated in
@@ -85,19 +85,32 @@ export const interests = sqliteTable("interests", {
   // interest picker, never touched by the News/Deep-Dive refresh pipeline
   // — getAllInterests()/getEnabledInterests() filter these out explicitly.
   isLibraryBook: integer("is_library_book", { mode: "boolean" }).notNull().default(false),
+  // Phase 12: who typed a custom interest. Custom interests are shared rows
+  // (two people typing the same field get the same content pool), but only
+  // listed for people who follow them.
+  createdByUserId: integer("created_by_user_id"),
 });
 
 // ---------------------------------------------------------------------------
 // userInterests — which interests are enabled and at what level. One row per
 // interest (single-user app, so this doubles as "my interests config").
 // ---------------------------------------------------------------------------
-export const userInterests = sqliteTable("user_interests", {
-  interestId: integer("interest_id")
-    .primaryKey()
-    .references(() => interests.id),
-  level: text("level").$type<Level>().notNull().default("some_background"),
-  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-});
+// Phase 12: per-user. Lives in a new table (user_interest_prefs) so the old
+// single-user `user_interests` rows stay untouched until the first account
+// claims them (see lib/auth.ts claimLegacyData).
+export const userInterests = sqliteTable(
+  "user_interest_prefs",
+  {
+    userId: integer("user_id").notNull(),
+    interestId: integer("interest_id")
+      .notNull()
+      .references(() => interests.id),
+    level: text("level").$type<Level>().notNull().default("some_background"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    isFavorite: integer("is_favorite", { mode: "boolean" }).notNull().default(false),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.userId, t.interestId] }) })
+);
 
 // ---------------------------------------------------------------------------
 // coveredTopics — the syllabus log: which deep-dive subtopics have already
@@ -157,6 +170,16 @@ export const deepDives = sqliteTable("deep_dives", {
   // (advanced/research_level interests, ~weekly) set to a real open
   // question drawn from the interest's recent covered topics instead.
   essayPrompt: text("essay_prompt"),
+  // Phase 13: shared content pool. A deep dive belongs to the (interest,
+  // level) series, not to a person; seq is its position in that series.
+  seq: integer("seq"),
+  // "syllabus" = next-in-series, "followup" = someone asked for this topic.
+  origin: text("origin").$type<"syllabus" | "followup">().notNull().default("syllabus"),
+  // "published" is served; "flagged" failed the quality pass or was reported.
+  status: text("status").$type<"published" | "flagged">().notNull().default("published"),
+  qualityScore: real("quality_score"),
+  qualityNotes: text("quality_notes"),
+  expandedAt: text("expanded_at"), // set once bites/concepts/quiz cards exist
 });
 
 // ---------------------------------------------------------------------------
@@ -173,6 +196,9 @@ export const explainBacks = sqliteTable("explain_backs", {
   // Exactly one of the two is set per row, never both.
   deepDiveId: integer("deep_dive_id").references(() => deepDives.id),
   chapterId: integer("chapter_id").references(() => bookChapters.id),
+  userId: integer("user_id"),
+  // Private self-progress signal, never shown as a grade: gaps | solid | teach
+  rating: text("rating").$type<"gaps" | "solid" | "teach">(),
   userExplanation: text("user_explanation").notNull(),
   feedback: text("feedback").notNull(),
   createdAt: text("created_at")
@@ -326,6 +352,7 @@ export type BookSourceType = (typeof BOOK_SOURCE_TYPES)[number];
 
 export const books = sqliteTable("books", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id"),
   title: text("title").notNull(), // "Untitled" until the structure pass identifies it
   author: text("author"),
   originalFilename: text("original_filename").notNull(),
@@ -387,7 +414,8 @@ export const bookChapters = sqliteTable("book_chapters", {
   notableArguments: text("notable_arguments").notNull().default("[]"), // JSON array of strings — grounds drills
   quotes: text("quotes").notNull().default("[]"), // JSON array of short strings — a handful of words each, never long passages
   status: text("status").$type<ChapterStatus>().notNull().default("pending"),
-  digestId: integer("digest_id").references(() => digests.id), // which cycle this chapter was surfaced in, once surfaced
+  digestId: integer("digest_id").references(() => digests.id), // legacy (pre-Phase 12 cycles)
+  surfacedAt: text("surfaced_at"), // when the drip-feed released it to the reader
 });
 
 // ---------------------------------------------------------------------------
@@ -464,4 +492,213 @@ export const settings = sqliteTable("settings", {
   // Brain Games (Phase 6): opt-in, off by default — deliberately not part
   // of the interests system, since it's a "for fun" break, not a subject.
   includeBrainGames: integer("include_brain_games", { mode: "boolean" }).notNull().default(false),
+});
+
+// ===========================================================================
+// Phase 12+ — accounts, shared content pool, feed, learning state.
+// ===========================================================================
+export type Plan = "free" | "pro";
+
+export interface UserPrefs {
+  includeBrainGames?: boolean;
+  dailyGoal?: number; // cards per day, 0 = no goal
+  streakOptIn?: boolean;
+  theme?: "system" | "light" | "dark";
+  notifyHour?: number | null; // UTC hour for the one optional daily nudge
+  textScale?: number;
+}
+
+export const users = sqliteTable("users", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  displayName: text("display_name"),
+  plan: text("plan").$type<Plan>().notNull().default("free"),
+  role: text("role").$type<"user" | "admin">().notNull().default("user"),
+  prefs: text("prefs").notNull().default("{}"), // JSON UserPrefs
+  onboardedAt: text("onboarded_at"),
+  lastActiveAt: text("last_active_at"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+});
+
+export const sessions = sqliteTable("sessions", {
+  tokenHash: text("token_hash").primaryKey(),
+  userId: integer("user_id").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+});
+
+// concepts — the nodes of the knowledge map. One per idea a deep dive
+// teaches; edges record what should be understood first.
+export const concepts = sqliteTable("concepts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  interestId: integer("interest_id")
+    .notNull()
+    .references(() => interests.id),
+  slug: text("slug").notNull(),
+  name: text("name").notNull(),
+  definition: text("definition").notNull(),
+  difficulty: integer("difficulty").notNull().default(2), // 1 (intro) – 5 (research)
+  deepDiveId: integer("deep_dive_id"),
+  chapterId: integer("chapter_id"),
+  ownerUserId: integer("owner_user_id"), // set for private Library concepts
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+});
+
+export const conceptEdges = sqliteTable(
+  "concept_edges",
+  {
+    fromConceptId: integer("from_concept_id").notNull(), // prerequisite
+    toConceptId: integer("to_concept_id").notNull(),
+    kind: text("kind").$type<"prereq" | "related">().notNull().default("prereq"),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.fromConceptId, t.toConceptId] }) })
+);
+
+export const CARD_TYPES = [
+  "bite", // one idea from a deep dive, 40-90 words
+  "paper", // a news/research item
+  "quiz", // one multiple-choice question
+  "debate", // a claim and its strongest counterargument
+  "insight", // apply-it-today takeaway
+  "visual", // a diagram
+  "myth", // myth vs fact
+  "model", // mental model
+  "fact", // short curated fact
+  "game", // opt-in brain game
+] as const;
+export type CardType = (typeof CARD_TYPES)[number];
+
+// cards — the unit of the feed. Shared by everyone; per-person state lives
+// in user_cards. payload is type-specific JSON (see lib/cards.ts).
+export const cards = sqliteTable("cards", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  type: text("type").$type<CardType>().notNull(),
+  interestId: integer("interest_id"),
+  level: text("level").$type<Level>(), // null = fits any level
+  conceptId: integer("concept_id"),
+  deepDiveId: integer("deep_dive_id"),
+  itemId: integer("item_id"),
+  seq: integer("seq").notNull().default(0), // order within its deep dive
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  payload: text("payload").notNull().default("{}"),
+  status: text("status").$type<"published" | "flagged">().notNull().default("published"),
+  dedupeKey: text("dedupe_key").unique(),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+});
+
+// user_cards — one row per (person, card) once it has been shown.
+export const userCards = sqliteTable(
+  "user_cards",
+  {
+    userId: integer("user_id").notNull(),
+    cardId: integer("card_id").notNull(),
+    interestId: integer("interest_id"),
+    cardType: text("card_type").$type<CardType>().notNull(),
+    seenAt: text("seen_at").notNull(),
+    dwellMs: integer("dwell_ms").notNull().default(0),
+    completed: integer("completed", { mode: "boolean" }).notNull().default(false),
+    expanded: integer("expanded", { mode: "boolean" }).notNull().default(false),
+    saved: integer("saved", { mode: "boolean" }).notNull().default(false),
+    shared: integer("shared", { mode: "boolean" }).notNull().default(false),
+    skippedFast: integer("skipped_fast", { mode: "boolean" }).notNull().default(false),
+    answeredCorrect: integer("answered_correct", { mode: "boolean" }), // quiz cards only
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.userId, t.cardId] }) })
+);
+
+// user_concepts — what each person knows. FSRS scheduling fields plus simple
+// counters; mastery is derived (see lib/learning.ts).
+export const userConcepts = sqliteTable(
+  "user_concepts",
+  {
+    userId: integer("user_id").notNull(),
+    conceptId: integer("concept_id").notNull(),
+    firstSeenAt: text("first_seen_at").notNull(),
+    due: text("due"), // ISO; null until the first graded answer
+    stability: real("stability").notNull().default(0),
+    difficulty: real("difficulty").notNull().default(0),
+    reps: integer("reps").notNull().default(0),
+    lapses: integer("lapses").notNull().default(0),
+    state: integer("state").notNull().default(0), // FSRS State enum
+    lastReview: text("last_review"),
+    scheduledDays: integer("scheduled_days").notNull().default(0),
+    learningSteps: integer("learning_steps").notNull().default(0),
+    correctCount: integer("correct_count").notNull().default(0),
+    wrongCount: integer("wrong_count").notNull().default(0),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.userId, t.conceptId] }) })
+);
+
+export const aiUsage = sqliteTable("ai_usage", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id"), // null = shared-pool generation
+  purpose: text("purpose").notNull(),
+  model: text("model").notNull(),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+  costUsd: real("cost_usd").notNull().default(0),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+});
+
+export const jobs = sqliteTable("jobs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  type: text("type").notNull(),
+  payload: text("payload").notNull().default("{}"),
+  status: text("status").$type<"queued" | "running" | "done" | "failed">().notNull().default("queued"),
+  dedupeKey: text("dedupe_key"),
+  userId: integer("user_id"), // who asked, for on-demand jobs
+  attempts: integer("attempts").notNull().default(0),
+  runAfter: text("run_after"),
+  lockedAt: text("locked_at"),
+  error: text("error"),
+  result: text("result"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+  finishedAt: text("finished_at"),
+});
+
+export const reports = sqliteTable("reports", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  cardId: integer("card_id"),
+  deepDiveId: integer("deep_dive_id"),
+  reason: text("reason").notNull(),
+  status: text("status").$type<"open" | "resolved">().notNull().default("open"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+});
+
+export const pushSubscriptions = sqliteTable("push_subscriptions", {
+  endpoint: text("endpoint").primaryKey(),
+  userId: integer("user_id").notNull(),
+  keys: text("keys").notNull(), // JSON {p256dh, auth}
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
+});
+
+export const errorLog = sqliteTable("error_log", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id"),
+  source: text("source").notNull(), // "client" | "server" | "job"
+  message: text("message").notNull(),
+  detail: text("detail"),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(current_timestamp)`),
 });

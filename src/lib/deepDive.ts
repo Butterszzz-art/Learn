@@ -1,9 +1,9 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Level } from "@/db/schema";
-import { getAnthropicClient } from "./claude";
+import { getAnthropicClient, modelFor } from "./ai";
 import type { CoveredTopicsInfo } from "./interests";
 
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
+const MODEL = modelFor("fast"); // follow-ups, self-check, insight, candidates
 const MAX_RESUME_ATTEMPTS = 3; // guards against pause_turn looping forever
 
 export interface DeepDiveResult {
@@ -118,10 +118,11 @@ export async function generateDeepDive(
   if (!anthropic) return null;
 
   try {
+    const writeModel = modelFor(level === "research_level" ? "deep" : "main");
     const userPrompt = buildUserPrompt(interestName, level, covered, forcedTopic);
     let messages: Anthropic.MessageParam[] = [{ role: "user", content: userPrompt }];
     let response = await anthropic.messages.create({
-      model: MODEL,
+      model: writeModel,
       max_tokens: 4096,
       system: SYSTEM_PROMPT,
       tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 6 }],
@@ -135,7 +136,7 @@ export async function generateDeepDive(
     while (response.stop_reason === "pause_turn" && resumeAttempts < MAX_RESUME_ATTEMPTS) {
       messages = [...messages, { role: "assistant", content: response.content }];
       response = await anthropic.messages.create({
-        model: MODEL,
+        model: writeModel,
         max_tokens: 4096,
         system: SYSTEM_PROMPT,
         tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 6 }],

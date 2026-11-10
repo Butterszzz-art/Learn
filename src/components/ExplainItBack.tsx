@@ -1,93 +1,72 @@
 "use client";
 
 import { useState } from "react";
-import type { ExplainBackEntry } from "@/lib/digest";
+import type { ExplainBackEntry } from "@/lib/content";
+import { postJson } from "@/lib/ui";
 import { ExportButtons } from "./ExportButtons";
 
 type Source = { type: "deepDive"; id: number } | { type: "chapter"; id: number };
 
-/** Retrieval practice via free-form writing: explain the content back in
- * your own words (or answer an essay prompt, for advanced/research_level
- * deep dives), get brief supportive feedback — never a score or grade.
- * Works for either a deep dive or a Library book chapter (Phase 7) — same
- * UI, different API endpoint underneath. Past attempts on this entry are
- * shown above the input, most recent first. */
-export function ExplainItBack({
-  source,
-  prompt,
-  initialEntries,
-}: {
-  source: Source;
-  prompt: string;
-  initialEntries: ExplainBackEntry[];
-}) {
+const RATING_NOTE: Record<NonNullable<ExplainBackEntry["rating"]>, string> = {
+  gaps: "Some gaps — this will come back for review soon.",
+  solid: "You've got the core of it.",
+  teach: "Clear enough to teach someone else.",
+};
+
+/**
+ * Explain the entry back in your own words and get specific, supportive
+ * feedback. Never a score — but privately it updates how well the app
+ * thinks you know these ideas, which sets when they come back for review.
+ */
+export function ExplainItBack({ source, prompt, initialEntries }: { source: Source; prompt: string; initialEntries: ExplainBackEntry[] }) {
   const [entries, setEntries] = useState(initialEntries);
   const [text, setText] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function submit() {
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
     const trimmed = text.trim();
     if (!trimmed) return;
-    setSubmitting(true);
+    setBusy(true);
     setError(null);
-    try {
-      const path = source.type === "deepDive" ? "/api/deep-dive/explain-back" : "/api/library/chapter/explain-back";
-      const body =
-        source.type === "deepDive"
-          ? { deepDiveId: source.id, userExplanation: trimmed }
-          : { chapterId: source.id, userExplanation: trimmed };
-      const res = await fetch(path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error ?? "Couldn't generate feedback");
-      setEntries((prev) => [
-        { id: data.id, userExplanation: trimmed, feedback: data.feedback, createdAt: new Date().toISOString() },
-        ...prev,
-      ]);
+    const res = await postJson<{ id: number; feedback: string; rating: ExplainBackEntry["rating"] }>(
+      source.type === "deepDive" ? "/api/deep-dive/explain-back" : "/api/library/chapter/explain-back",
+      source.type === "deepDive" ? { deepDiveId: source.id, explanation: trimmed } : { chapterId: source.id, explanation: trimmed }
+    );
+    if (res.ok && res.data) {
+      setEntries((prev) => [{ id: res.data!.id, userExplanation: trimmed, feedback: res.data!.feedback, rating: res.data!.rating, createdAt: new Date().toISOString() }, ...prev]);
       setText("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-    } finally {
-      setSubmitting(false);
-    }
+    } else setError(res.error);
+    setBusy(false);
   }
 
   return (
-    <div className="mt-10 border-t border-neuron-border pt-6">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neuron-muted">
-        Explain it back
-      </h2>
-      <p className="mb-3 text-sm text-neuron-text/90">{prompt}</p>
-
-      <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        rows={4}
-        placeholder="Write your explanation here…"
-        className="w-full rounded-2xl border border-neuron-border bg-neuron-surface2 px-3 py-2 text-sm text-neuron-text placeholder:text-neuron-muted focus:border-neuron-accent focus:outline-none"
-      />
-      <div className="mt-2 flex items-center gap-3">
-        <button type="button" className="btn-secondary" onClick={submit} disabled={submitting || !text.trim()}>
-          {submitting ? "Getting feedback…" : "Submit"}
-        </button>
-        {error && <span className="text-xs text-red-400">{error}</span>}
-      </div>
-
-      {entries.length > 0 && (
-        <div className="mt-5 space-y-3">
-          {entries.map((entry) => (
-            <div key={entry.id} className="card">
-              <p className="mb-2 text-sm text-neuron-text/90">{entry.userExplanation}</p>
-              <p className="mb-3 text-xs leading-relaxed text-neuron-accent3">{entry.feedback}</p>
-              <ExportButtons kind="explain-back" id={entry.id} />
-            </div>
-          ))}
+    <section className="mt-10 border-t border-neuron-border pt-6" aria-labelledby="eib-heading">
+      <h2 id="eib-heading" className="eyebrow mb-2">Explain it back</h2>
+      <p className="mb-3 text-base font-semibold">{prompt}</p>
+      <form onSubmit={submit}>
+        <label htmlFor="eib-text" className="sr-only">Your explanation</label>
+        <textarea id="eib-text" className="field" rows={5} value={text} onChange={(e) => setText(e.target.value)} placeholder="Write it as if you were explaining to a friend…" maxLength={6000} />
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button type="submit" className="btn-secondary" disabled={busy || text.trim().length < 20}>
+            {busy ? "Reading your explanation…" : "Get feedback"}
+          </button>
+          <span aria-live="polite">{error && <span className="error-text">{error}</span>}</span>
         </div>
+      </form>
+      {entries.length > 0 && (
+        <ul className="mt-5 space-y-3">
+          {entries.map((entry) => (
+            <li key={entry.id} className="card">
+              <p className="whitespace-pre-line text-sm text-neuron-text/90">{entry.userExplanation}</p>
+              <p className="mt-3 rounded-2xl bg-neuron-surface2 p-3 text-sm leading-relaxed">{entry.feedback}</p>
+              {entry.rating && <p className="mt-2 text-xs font-bold text-neuron-accent3">{RATING_NOTE[entry.rating]}</p>}
+              <div className="mt-3"><ExportButtons kind="explain-back" id={entry.id} /></div>
+            </li>
+          ))}
+        </ul>
       )}
-    </div>
+    </section>
   );
 }

@@ -1,25 +1,24 @@
-import { getAllInterests } from "@/lib/interests";
+import { redirect } from "next/navigation";
+import { requireUser } from "@/lib/auth";
+import { getCatalog } from "@/lib/interests";
+import { PLAN_LIMITS } from "@/lib/plan";
 import { InterestPicker } from "@/components/InterestPicker";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Pick your interests" };
 
 export default async function OnboardingPage() {
-  // Library books get a hidden pseudo-interest (see getOrCreateLibraryInterest)
-  // purely for spaced-resurfacing plumbing — never shown as a pickable interest.
-  const interests = (await getAllInterests()).filter((i) => !i.isLibraryBook);
-
+  const user = await requireUser({ allowNotOnboarded: true });
+  if (user.onboarded) redirect("/");
+  const catalog = await getCatalog(user.id);
   return (
     <div>
-      <h1 className="mb-2 font-display text-2xl font-bold">Welcome to Neuron</h1>
-      <p className="mb-6 max-w-2xl text-sm text-neuron-muted">
-        Pick whatever fields you want to follow — the list below is a starting point, not a ceiling;
-        add any topic of your own at the bottom. For each one, set how much background you already
-        have, up to research level. This only changes which concepts get assumed vs. explained — every
-        deep dive is written at the same level of rigor, for a reader who's generally sharp, not
-        talked down to. Levels below research level have no fixed ceiling either — sustained daily use
-        gradually escalates each interest's depth over time.
+      <p className="eyebrow">Step 1 of 1</p>
+      <h1 className="page-title mt-1">What do you want to know more about?</h1>
+      <p className="mb-6 mt-2 text-neuron-muted">
+        Pick at least three, and say roughly where you're starting from in each. You can change any of this later.
       </p>
-      <InterestPicker initial={interests} mode="onboarding" />
+      <InterestPicker initial={catalog} mode="onboarding" allowResearchLevel={PLAN_LIMITS[user.plan].researchLevel} />
     </div>
   );
 }

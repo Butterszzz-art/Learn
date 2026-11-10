@@ -1,8 +1,8 @@
-import { getAnthropicClient } from "./claude";
+import { getAnthropicClient, modelFor } from "./ai";
 import { DRILL_TYPES } from "@/db/schema";
 import type { DrillType } from "@/db/schema";
 
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
+const MODEL = modelFor("fast");
 
 export interface DrillGenResult {
   drillType: DrillType;

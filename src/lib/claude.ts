@@ -1,26 +1,12 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient, hasClaudeKey, modelFor, type AiClient } from "./ai";
 import type { Category } from "@/db/schema";
 import { CATEGORIES } from "@/db/schema";
 import type { RawItem } from "./types";
 
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
+const MODEL = modelFor("fast");
 
-let client: Anthropic | null | undefined;
-
-/** Returns a shared client, or null if no API key is configured. */
-export function getAnthropicClient(): Anthropic | null {
-  if (client !== undefined) return client;
-  if (!process.env.ANTHROPIC_API_KEY) {
-    client = null;
-    return client;
-  }
-  client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return client;
-}
-
-export function hasClaudeKey(): boolean {
-  return getAnthropicClient() !== null;
-}
+export { getAnthropicClient, hasClaudeKey };
 
 interface ClassifiedItem {
   category: Category;
@@ -76,7 +62,7 @@ const SUMMARY_LENGTH_INSTRUCTION =
   "and structure: never mirror the source text's sentence structure, and never lift phrases from it.";
 
 async function classifyChunk(
-  anthropic: Anthropic,
+  anthropic: AiClient,
   chunk: RawItem[]
 ): Promise<Map<number, ClassifiedItem>> {
   const itemsForPrompt = chunk.map((item, i) => ({
@@ -178,7 +164,7 @@ export async function summarizeBatch(items: RawItem[]): Promise<Map<number, stri
   return results;
 }
 
-async function summarizeChunk(anthropic: Anthropic, chunk: RawItem[]): Promise<Map<number, string>> {
+async function summarizeChunk(anthropic: AiClient, chunk: RawItem[]): Promise<Map<number, string>> {
   const itemsForPrompt = chunk.map((item, i) => ({
     index: i,
     title: item.title,

@@ -1,33 +1,30 @@
-import { getLibraryBooks } from "@/lib/digest";
-import { BookUploadForm } from "@/components/BookUploadForm";
+import { requireUser } from "@/lib/auth";
+import { getLibraryBooks } from "@/lib/content";
+import { checkQuota } from "@/lib/plan";
+import { hasClaudeKey } from "@/lib/ai";
 import { BookCard } from "@/components/BookCard";
+import { BookUploadForm } from "@/components/BookUploadForm";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Library" };
 
 export default async function LibraryPage() {
-  const books = await getLibraryBooks();
-
+  const user = await requireUser();
+  const [books, quota] = await Promise.all([getLibraryBooks(user.id), checkQuota(user.id, user.plan, "libraryBook")]);
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="font-display text-2xl font-bold">Library</h1>
-        <p className="mt-1 text-sm text-neuron-muted">
-          Upload a book and get a detailed chapter-by-chapter notebook, drip-fed into your daily/weekly
-          rhythm — one book-chapter card shows up in the main feed each cycle. The table of contents
-          below always shows everything, so you can jump ahead or reread any time.
-        </p>
-      </div>
-
-      <BookUploadForm />
-
-      {books.length === 0 ? (
-        <p className="text-sm text-neuron-muted">No books uploaded yet.</p>
+    <div>
+      <h1 className="page-title">Library</h1>
+      <p className="mb-6 mt-1 text-neuron-muted">Add a book or an article and get chapter-by-chapter notes, fed into your feed at the pace you choose. Private to you.</p>
+      {hasClaudeKey() ? (
+        <BookUploadForm canUpload={quota.ok} limitMessage={quota.message} />
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {books.map((book) => (
-            <BookCard key={book.id} book={book} />
-          ))}
-        </div>
+        <p className="card text-sm text-neuron-muted">Library processing isn't configured on this server.</p>
+      )}
+      <h2 className="eyebrow mb-3 mt-8">Your books</h2>
+      {books.length === 0 ? (
+        <p className="text-neuron-muted">Nothing here yet.</p>
+      ) : (
+        <ul className="grid gap-3 sm:grid-cols-2">{books.map((b) => <li key={b.id}><BookCard book={b} /></li>)}</ul>
       )}
     </div>
   );

@@ -13,7 +13,8 @@ export type SearchContentType =
   | "explain_back"
   | "mental_model"
   | "rabbit_hole"
-  | "chapter";
+  | "chapter"
+  | "concept";
 
 export const SEARCH_CONTENT_TYPE_LABELS: Record<SearchContentType, string> = {
   news: "News",
@@ -24,6 +25,7 @@ export const SEARCH_CONTENT_TYPE_LABELS: Record<SearchContentType, string> = {
   mental_model: "Mental Model",
   rabbit_hole: "Rabbit Hole",
   chapter: "Library Chapter",
+  concept: "Concept",
 };
 
 export const SEARCH_CONTENT_TYPE_ICONS: Record<SearchContentType, string> = {
@@ -35,4 +37,5 @@ export const SEARCH_CONTENT_TYPE_ICONS: Record<SearchContentType, string> = {
   mental_model: "🔎",
   rabbit_hole: "🕳️",
   chapter: "📚",
+  concept: "🧩",
 };

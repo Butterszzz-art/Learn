@@ -11,20 +11,26 @@ declare global {
   var __neuroDigestLibsql: Client | undefined;
 }
 
+// NEURON_LOCAL_DB=1 forces the local file even when Turso credentials are in
+// .env.local, so development and tests never write to the live database.
+const useHosted = !!process.env.TURSO_DATABASE_URL && process.env.NEURON_LOCAL_DB !== "1";
+
 function createDbClient(): Client {
   // Hosted mode (Vercel, or any read-only-filesystem host): point at a
   // Turso (libSQL) database instead of a local file. Same client library,
   // same SQL dialect — this is the only branch that differs.
-  if (process.env.TURSO_DATABASE_URL) {
+  if (useHosted) {
     return createClient({
-      url: process.env.TURSO_DATABASE_URL,
+      url: process.env.TURSO_DATABASE_URL as string,
       authToken: process.env.TURSO_AUTH_TOKEN,
     });
   }
 
   // Local dev / self-hosted: a plain file on disk.
   const DATA_DIR = path.join(process.cwd(), "data");
-  const DB_PATH = path.join(DATA_DIR, "neuro-digest.db");
+  const DB_PATH = process.env.NEURON_DB_FILE
+    ? path.resolve(process.env.NEURON_DB_FILE)
+    : path.join(DATA_DIR, "neuro-digest.db");
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
@@ -38,4 +44,4 @@ globalThis.__neuroDigestLibsql = client;
 
 export const db = drizzle(client, { schema });
 export { client };
-export const usingHostedDb = !!process.env.TURSO_DATABASE_URL;
+export const usingHostedDb = useHosted;

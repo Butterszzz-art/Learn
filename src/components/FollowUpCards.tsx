@@ -1,75 +1,86 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { postJson } from "@/lib/ui";
 
-interface FollowUpTopic {
-  topic: string;
-  teaser: string;
-}
+interface Topic { topic: string; teaser: string }
 
-/** Curiosity branching: clickable follow-up cards at the end of a deep
- * dive's reading view. Clicking one generates that specific topic
- * immediately (not waiting for the next cycle) and navigates to it once
- * ready. Works for any interest — branching isn't a Passion Mode feature. */
-export function FollowUpCards({
-  interestId,
-  topics,
-}: {
-  interestId: number;
-  topics: FollowUpTopic[];
-}) {
+/**
+ * "Keep going": follow-up topics raised by this entry. If someone has
+ * already had that topic written at this level it opens straight away;
+ * otherwise it is queued and this waits for it (usually a minute or two).
+ */
+export function FollowUpCards({ interestId, topics, allowPick }: { interestId: number; topics: Topic[]; allowPick?: boolean }) {
   const router = useRouter();
-  const [loadingTopic, setLoadingTopic] = useState<string | null>(null);
+  const [list, setList] = useState(topics);
+  const [waiting, setWaiting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
 
-  if (topics.length === 0) return null;
-
-  async function handleClick(topic: string) {
-    setLoadingTopic(topic);
+  async function open(topic: string) {
+    setWaiting(topic);
     setError(null);
-    try {
-      const res = await fetch("/api/deep-dive/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ interestId, forcedTopic: topic }),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error ?? "Generation failed");
-      if (!data?.deepDiveId) throw new Error("No API key configured, or generation didn't return a result.");
-      router.push(`/deep-dive/${data.deepDiveId}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-      setLoadingTopic(null);
+    const res = await postJson<{ deepDiveId?: number; jobId?: number }>("/api/deep-dive/request", { interestId, topic });
+    if (!res.ok || !res.data) {
+      setError(res.error);
+      setWaiting(null);
+      return;
     }
+    if (res.data.deepDiveId) {
+      router.push(`/deep-dive/${res.data.deepDiveId}`);
+      return;
+    }
+    const jobId = res.data.jobId;
+    fetch("/api/jobs/kick", { method: "POST" }).catch(() => {});
+    let ticks = 0;
+    timer.current = setInterval(async () => {
+      ticks++;
+      const r = await fetch(`/api/jobs/${jobId}`).then((x) => x.json()).catch(() => null);
+      if (r?.status === "done" && r.deepDiveId && !r.flagged) {
+        clearInterval(timer.current!);
+        router.push(`/deep-dive/${r.deepDiveId}`);
+      } else if (r?.status === "failed" || (r?.status === "done" && (r.flagged || !r.deepDiveId)) || ticks > 90) {
+        clearInterval(timer.current!);
+        setError(r?.flagged ? "That entry didn't pass our source check, so it wasn't published. Try a different topic." : "That one couldn't be written just now. Try again in a bit.");
+        setWaiting(null);
+      } else if (ticks % 10 === 0) {
+        fetch("/api/jobs/kick", { method: "POST" }).catch(() => {});
+      }
+    }, 4000);
   }
 
+  async function moreOptions() {
+    setLoadingMore(true);
+    setError(null);
+    const res = await postJson<{ candidates: Topic[] }>("/api/deep-dive/candidates", { interestId });
+    if (res.ok && res.data) setList((prev) => [...prev, ...res.data!.candidates.filter((c) => !prev.some((p) => p.topic === c.topic))]);
+    else setError(res.error);
+    setLoadingMore(false);
+  }
+
+  if (list.length === 0 && !allowPick) return null;
   return (
-    <div className="mt-10 border-t border-neuron-border pt-6">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neuron-muted">
-        Keep going →
-      </h2>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {topics.map((t) => {
-          const isLoading = loadingTopic === t.topic;
-          return (
-            <button
-              key={t.topic}
-              type="button"
-              onClick={() => handleClick(t.topic)}
-              disabled={loadingTopic !== null}
-              className="card block text-left transition hover:-translate-y-0.5 hover:border-neuron-accent2 hover:shadow-xl hover:shadow-neuron-accent2/10 disabled:opacity-60 disabled:hover:translate-y-0"
-            >
-              <p className="mb-1 font-display text-base leading-snug">{t.topic}</p>
-              <p className="text-xs leading-relaxed text-neuron-muted">{t.teaser}</p>
-              {isLoading && (
-                <p className="mt-2 text-xs text-neuron-accent2">Researching and writing this now…</p>
-              )}
+    <section className="mt-10 border-t border-neuron-border pt-6" aria-labelledby="next-heading">
+      <h2 id="next-heading" className="eyebrow mb-3">Keep going</h2>
+      <ul className="grid gap-3 sm:grid-cols-2">
+        {list.map((t) => (
+          <li key={t.topic}>
+            <button type="button" onClick={() => open(t.topic)} disabled={waiting !== null} className="card h-full w-full text-left transition hover:border-neuron-accent disabled:opacity-60">
+              <span className="block font-bold leading-snug">{t.topic}</span>
+              <span className="mt-1 block text-sm text-neuron-muted">{waiting === t.topic ? "Researching and writing this — about a minute…" : t.teaser}</span>
             </button>
-          );
-        })}
-      </div>
-      {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
-    </div>
+          </li>
+        ))}
+      </ul>
+      {allowPick && (
+        <button type="button" className="btn-ghost mt-3" onClick={moreOptions} disabled={loadingMore || waiting !== null}>
+          {loadingMore ? "Finding options…" : "Suggest other next topics"}
+        </button>
+      )}
+      <div aria-live="polite">{error && <p className="error-text mt-3">{error}</p>}</div>
+    </section>
   );
 }

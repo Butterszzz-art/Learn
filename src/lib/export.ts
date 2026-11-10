@@ -1,10 +1,10 @@
 import PDFDocument from "pdfkit";
 import JSZip from "jszip";
-import { db } from "@/db";
+import { db, client } from "@/db";
 import { deepDives, interests, bookChapters, books } from "@/db/schema";
-import { isNotNull } from "drizzle-orm";
+import { isNotNull, eq } from "drizzle-orm";
 import { LEVEL_LABELS } from "@/db/schema";
-import type { DeepDiveDetail, ChapterDetail, ExplainBackEntry } from "./digest";
+import type { DeepDiveDetail, ChapterDetail, ExplainBackEntry } from "./content";
 
 // ---------------------------------------------------------------------------
 // Filenames — "Neuroscience/2026-08-11-synaptic-pruning-rewrites-old-
@@ -207,18 +207,30 @@ interface ExportableFile {
  * metadata and to find what else to [[link]] from it. Exact (case-
  * insensitive) topic-string matches only — "where practical" per the spec;
  * this app doesn't have a real concept graph to do fuzzier matching from. */
-async function buildExportableFileIndex(): Promise<{
+async function buildExportableFileIndex(userId: number): Promise<{
   dives: (typeof deepDives.$inferSelect & { interestName: string })[];
   chapters: (typeof bookChapters.$inferSelect & { bookTitle: string })[];
   files: ExportableFile[];
   keywordMap: Map<string, ExportableFile[]>;
 }> {
-  const [diveRows, interestRows, chapterRows, bookRows] = await Promise.all([
+  // Deep dives this person has actually met in their feed or opened, and
+  // only their own Library books.
+  const seenRes = await client.execute({
+    sql: `SELECT DISTINCT c.deep_dive_id AS id FROM user_cards uc JOIN cards c ON c.id = uc.card_id
+          WHERE uc.user_id = ? AND c.deep_dive_id IS NOT NULL
+          UNION SELECT deep_dive_id FROM explain_backs WHERE user_id = ? AND deep_dive_id IS NOT NULL`,
+    args: [userId, userId],
+  });
+  const seenIds = new Set((seenRes.rows as any[]).map((r) => Number(r.id)));
+  const [allDiveRows, interestRows, allChapterRows, bookRows] = await Promise.all([
     db.select().from(deepDives),
     db.select().from(interests),
     db.select().from(bookChapters).where(isNotNull(bookChapters.summary)),
-    db.select().from(books),
+    db.select().from(books).where(eq(books.userId, userId)),
   ]);
+  const diveRows = allDiveRows.filter((d) => seenIds.has(d.id));
+  const ownBookIds = new Set(bookRows.map((b) => b.id));
+  const chapterRows = allChapterRows.filter((c) => ownBookIds.has(c.bookId));
   const interestNameById = new Map(interestRows.map((i) => [i.id, i.name]));
   const bookTitleById = new Map(bookRows.map((b) => [b.id, b.title]));
 
@@ -277,8 +289,8 @@ function relatedLinksFor(file: ExportableFile, keywordMap: Map<string, Exportabl
  * notes. Wiki-links are inserted between files that share an (exact,
  * case-insensitive) topic/key-concept string.
  */
-export async function generateFullExportZip(): Promise<Buffer> {
-  const { dives, chapters, files, keywordMap } = await buildExportableFileIndex();
+export async function generateFullExportZip(userId: number): Promise<Buffer> {
+  const { dives, chapters, files, keywordMap } = await buildExportableFileIndex(userId);
   const zip = new JSZip();
 
   const diveFileByIndex = files.filter((f) => f.contentType === "deep_dive");
@@ -295,11 +307,15 @@ export async function generateFullExportZip(): Promise<Buffer> {
       interestName: d.interestName,
       interestSlug: "",
       createdAt: d.createdAt,
+      status: d.status,
       appliedInsight: null,
       followUpTopics: [],
       selfCheckQuestions: [],
       essayPrompt: null,
       explainBacks: [],
+      concepts: [],
+      quizCards: [],
+      takeaways: [],
     };
     const md = buildDeepDiveMarkdown(detail, related);
     zip.file(`${file.folder}/${file.basename}.md`, md);

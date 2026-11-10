@@ -2,45 +2,172 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---------------------------------------------------------------------------
+   Design tokens (Phase 16). Colours are RGB triplets so Tailwind's opacity
+   modifiers work (bg-neuron-accent/20). Light is the base; dark applies when
+   the system asks for it, or when the reader picks it in Settings
+   (data-theme on <html>).
+--------------------------------------------------------------------------- */
+:root {
+  --n-bg: 250 248 255;
+  --n-surface: 255 255 255;
+  --n-surface2: 243 240 252;
+  --n-border: 223 216 241;
+  --n-text: 30 24 54;
+  --n-muted: 101 92 138;
+  --n-accent: 109 76 230;
+  --n-accent2: 213 38 116;
+  --n-accent3: 13 138 126;
+  --n-danger: 207 34 46;
+  --n-warn: 166 82 10;
+  --n-on-accent: 255 255 255;
+  --n-wash: 0.1;
+  --text-scale: 1;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --n-bg: 18 15 30;
+    --n-surface: 28 24 48;
+    --n-surface2: 37 32 65;
+    --n-border: 55 47 86;
+    --n-text: 243 240 255;
+    --n-muted: 168 159 201;
+    --n-accent: 167 139 250;
+    --n-accent2: 244 114 182;
+    --n-accent3: 45 212 191;
+    --n-danger: 248 113 113;
+    --n-warn: 251 191 36;
+    --n-on-accent: 18 15 30;
+    --n-wash: 0.18;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --n-bg: 18 15 30;
+  --n-surface: 28 24 48;
+  --n-surface2: 37 32 65;
+  --n-border: 55 47 86;
+  --n-text: 243 240 255;
+  --n-muted: 168 159 201;
+  --n-accent: 167 139 250;
+  --n-accent2: 244 114 182;
+  --n-accent3: 45 212 191;
+  --n-danger: 248 113 113;
+  --n-warn: 251 191 36;
+  --n-on-accent: 18 15 30;
+  --n-wash: 0.18;
+  color-scheme: dark;
+}
+
 @layer base {
   html {
-    color-scheme: dark;
+    font-size: calc(16px * var(--text-scale));
+    -webkit-text-size-adjust: 100%;
   }
   body {
     @apply bg-neuron-bg text-neuron-text antialiased;
-    /* Soft, blurred color-wash "bubbles" behind the whole app — the bubbly
-       ambiance, pure CSS, no extra DOM elements or images. */
-    background-image: radial-gradient(900px circle at 8% -10%, rgba(167, 139, 250, 0.20), transparent 45%),
-      radial-gradient(800px circle at 100% 0%, rgba(244, 114, 182, 0.16), transparent 45%),
-      radial-gradient(700px circle at 45% 100%, rgba(45, 212, 191, 0.12), transparent 45%);
+    background-image: radial-gradient(900px circle at 8% -10%, rgb(var(--n-accent) / var(--n-wash)), transparent 45%),
+      radial-gradient(800px circle at 100% 0%, rgb(var(--n-accent2) / calc(var(--n-wash) * 0.8)), transparent 45%);
     background-attachment: fixed;
     background-repeat: no-repeat;
+    overscroll-behavior-y: none;
+  }
+  :focus-visible {
+    outline: 2px solid rgb(var(--n-accent));
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
 @layer components {
   .card {
-    @apply rounded-3xl border border-neuron-border bg-neuron-surface p-5 shadow-lg shadow-black/20;
+    @apply rounded-3xl border border-neuron-border bg-neuron-surface p-5 shadow-sm;
   }
   .pill {
     @apply inline-flex items-center gap-1 rounded-full border border-neuron-border bg-neuron-surface2 px-3 py-1 text-xs font-semibold text-neuron-muted;
   }
   .btn-primary {
-    @apply inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-neuron-accent to-neuron-accent2 px-5 py-2.5 text-sm font-bold text-neuron-bg shadow-lg shadow-neuron-accent/25 transition hover:-translate-y-0.5 hover:shadow-xl hover:shadow-neuron-accent/30 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-lg;
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-gradient-to-r from-neuron-accent to-neuron-accent2 px-5 py-2.5 text-sm font-bold text-neuron-onaccent shadow-md transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
   }
   .btn-secondary {
-    @apply inline-flex items-center gap-2 rounded-full border-2 border-neuron-border bg-neuron-surface2 px-5 py-2.5 text-sm font-bold text-neuron-text transition hover:-translate-y-0.5 hover:border-neuron-accent/60 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0;
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full border-2 border-neuron-border bg-neuron-surface2 px-5 py-2.5 text-sm font-bold text-neuron-text transition hover:border-neuron-accent/60 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
   }
-  .nav-link {
-    @apply rounded-full px-3 py-1.5 text-sm font-bold text-neuron-muted transition hover:bg-neuron-surface2 hover:text-neuron-text;
+  .btn-ghost {
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-bold text-neuron-muted transition hover:bg-neuron-surface2 hover:text-neuron-text;
   }
-  .nav-link-active {
-    @apply rounded-full bg-gradient-to-r from-neuron-accent to-neuron-accent2 px-3 py-1.5 text-sm font-bold text-neuron-bg;
+  .field {
+    @apply w-full rounded-2xl border border-neuron-border bg-neuron-surface2 px-4 py-3 text-base text-neuron-text placeholder:text-neuron-muted focus:border-neuron-accent focus:outline-none;
   }
-  /* Search result snippet highlighting (Phase 11) — FTS5's snippet()
-     wraps matched terms in <mark>, rendered via dangerouslySetInnerHTML
-     in SearchOverlay.tsx. */
+  .label {
+    @apply mb-1.5 block text-sm font-bold text-neuron-text;
+  }
+  .eyebrow {
+    @apply text-xs font-extrabold uppercase tracking-wider text-neuron-muted;
+  }
+  .page-title {
+    @apply font-display text-2xl font-bold tracking-tight sm:text-3xl;
+  }
+  .error-text {
+    @apply text-sm font-semibold text-neuron-danger;
+  }
   mark {
-    @apply rounded bg-neuron-accent/30 text-neuron-text;
+    @apply rounded bg-neuron-accent/25 px-0.5 text-neuron-text;
+  }
+  /* The swipe feed: one card per screen, native scroll-snap. */
+  .feed-scroller {
+    @apply h-full snap-y snap-mandatory overflow-y-auto;
+    scrollbar-width: none;
+    overscroll-behavior-y: contain;
+  }
+  .feed-scroller::-webkit-scrollbar {
+    display: none;
+  }
+  .feed-slot {
+    @apply h-full w-full snap-start snap-always;
+  }
+  .sheet-backdrop {
+    @apply fixed inset-0 z-40 bg-black/50 backdrop-blur-sm;
+  }
+  .sheet {
+    @apply fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[88dvh] w-full max-w-2xl flex-col rounded-t-3xl border border-b-0 border-neuron-border bg-neuron-surface shadow-2xl;
+    animation: sheet-up 0.22s ease-out;
+  }
+  @keyframes sheet-up {
+    from {
+      transform: translateY(24px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+}
+
+/* Space for the bottom tab bar plus the phone's home indicator. */
+.pb-tabbar {
+  padding-bottom: calc(4rem + env(safe-area-inset-bottom));
+}
+.h-screen-minus-tabbar {
+  height: calc(100dvh - 4rem - env(safe-area-inset-bottom));
+}
+@media (min-width: 768px) {
+  .pb-tabbar {
+    padding-bottom: 0;
+  }
+  .h-screen-minus-tabbar {
+    height: 100dvh;
   }
 }

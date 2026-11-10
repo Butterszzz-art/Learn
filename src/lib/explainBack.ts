@@ -1,6 +1,11 @@
-import { getAnthropicClient } from "./claude";
+import { getAnthropicClient, modelFor } from "./ai";
 
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
+const MODEL = modelFor("fast");
+
+export interface ExplainBackFeedback {
+  feedback: string;
+  rating: "gaps" | "solid" | "teach";
+}
 
 /**
  * Feedback on a reader's own-words explanation (or essay response) of a
@@ -13,7 +18,7 @@ export async function generateExplainBackFeedback(
   deepDiveContent: string,
   prompt: string,
   userExplanation: string
-): Promise<string | null> {
+): Promise<ExplainBackFeedback | null> {
   const anthropic = getAnthropicClient();
   if (!anthropic) return null;
 
@@ -27,6 +32,13 @@ export async function generateExplainBackFeedback(
           schema: {
             type: "object",
             properties: {
+              rating: {
+                type: "string",
+                enum: ["gaps", "solid", "teach"],
+                description:
+                  "Private progress signal, never shown as a grade. gaps = important parts missing or wrong; " +
+                  "solid = the core idea is right; teach = accurate and complete enough to teach someone else.",
+              },
               feedback: {
                 type: "string",
                 description:
@@ -35,7 +47,7 @@ export async function generateExplainBackFeedback(
                   "practice, not a grade. Never assign a score, letter grade, or percentage.",
               },
             },
-            required: ["feedback"],
+            required: ["feedback", "rating"],
             additionalProperties: false,
           },
         },
@@ -55,8 +67,10 @@ export async function generateExplainBackFeedback(
 
     const textBlock = response.content.find((b) => b.type === "text");
     if (!textBlock || textBlock.type !== "text") return null;
-    const parsed = JSON.parse(textBlock.text) as { feedback: string };
-    return parsed.feedback?.trim() || null;
+    const parsed = JSON.parse(textBlock.text) as { feedback: string; rating: ExplainBackFeedback["rating"] };
+    if (!parsed.feedback?.trim()) return null;
+    const rating = ["gaps", "solid", "teach"].includes(parsed.rating) ? parsed.rating : "solid";
+    return { feedback: parsed.feedback.trim(), rating };
   } catch (err) {
     console.error(`[explainBack] Feedback generation failed for "${deepDiveTopic}":`, err);
     return null;

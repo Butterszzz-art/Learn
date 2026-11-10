@@ -1,30 +1,26 @@
 import { NextResponse } from "next/server";
-import { ensureDb } from "@/db/bootstrap";
-import { submitChapterExplainBack } from "@/lib/pipeline";
+import { apiUser, fail, isResponse, readJson } from "@/lib/api";
+import { submitChapterExplainBack } from "@/lib/content";
+import { hasClaudeKey, withAiContext } from "@/lib/ai";
+import { checkQuota } from "@/lib/plan";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
-  await ensureDb();
-  const body = await req.json().catch(() => null);
-  const chapterId = Number(body?.chapterId);
-  const userExplanation = typeof body?.userExplanation === "string" ? body.userExplanation : "";
-  if (!Number.isFinite(chapterId) || !userExplanation.trim()) {
-    return NextResponse.json({ error: "chapterId and a non-empty userExplanation are required" }, { status: 400 });
-  }
+  const user = await apiUser();
+  if (isResponse(user)) return user;
+  const body = await readJson<{ chapterId?: number; explanation?: string }>(req);
+  const text = typeof body?.explanation === "string" ? body.explanation.trim() : "";
+  if (typeof body?.chapterId !== "number" || text.length < 20) return fail("Write at least a couple of sentences first");
+  if (text.length > 6000) return fail("That's too long — keep it under 6,000 characters");
+  if (!hasClaudeKey()) return fail("Feedback isn't configured on this server", 503);
+  const quota = await checkQuota(user.id, user.plan, "explainBack");
+  if (!quota.ok) return fail(quota.message, 402);
 
-  try {
-    const result = await submitChapterExplainBack(chapterId, userExplanation);
-    if (!result) {
-      return NextResponse.json(
-        { error: "Couldn't generate feedback — the chapter may not exist or isn't processed yet, or no API key is configured." },
-        { status: 404 }
-      );
-    }
-    return NextResponse.json(result);
-  } catch (err) {
-    console.error("[api/library/chapter/explain-back] failed:", err);
-    return NextResponse.json({ error: err instanceof Error ? err.message : "Explain-back failed" }, { status: 500 });
-  }
+  const result = await withAiContext({ userId: user.id, purpose: "explain_back" }, () =>
+    submitChapterExplainBack(user.id, body.chapterId!, text)
+  );
+  if (!result) return fail("Couldn't generate feedback just now — try again", 502);
+  return NextResponse.json(result);
 }
