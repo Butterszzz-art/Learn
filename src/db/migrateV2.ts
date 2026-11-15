@@ -143,6 +143,21 @@ const TABLES = [
     keys TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (current_timestamp)
   );`,
+  `CREATE TABLE IF NOT EXISTS user_feed_mutes (
+    user_id INTEGER NOT NULL,
+    interest_id INTEGER NOT NULL,
+    card_type TEXT NOT NULL,
+    muted_at TEXT NOT NULL,
+    notice_dismissed_at TEXT,
+    PRIMARY KEY (user_id, interest_id, card_type)
+  );`,
+  `CREATE TABLE IF NOT EXISTS user_feed_mutes_resumed (
+    user_id INTEGER NOT NULL,
+    interest_id INTEGER NOT NULL,
+    card_type TEXT NOT NULL,
+    resumed_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, interest_id, card_type)
+  );`,
   `CREATE TABLE IF NOT EXISTS error_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
@@ -164,6 +179,7 @@ const COLUMNS: { table: string; column: string; ddl: string }[] = [
   { table: "explain_backs", column: "user_id", ddl: "ALTER TABLE explain_backs ADD COLUMN user_id INTEGER;" },
   { table: "explain_backs", column: "rating", ddl: "ALTER TABLE explain_backs ADD COLUMN rating TEXT;" },
   { table: "books", column: "user_id", ddl: "ALTER TABLE books ADD COLUMN user_id INTEGER;" },
+  { table: "syllabi", column: "user_id", ddl: "ALTER TABLE syllabi ADD COLUMN user_id INTEGER;" },
   { table: "book_chapters", column: "surfaced_at", ddl: "ALTER TABLE book_chapters ADD COLUMN surfaced_at TEXT;" },
 ];
 
@@ -191,6 +207,7 @@ const INDEXES = [
   `CREATE INDEX IF NOT EXISTS books_user_idx ON books(user_id);`,
   `CREATE INDEX IF NOT EXISTS reports_status_idx ON reports(status, created_at);`,
   `CREATE INDEX IF NOT EXISTS items_fetched_idx ON items(interest_id, fetched_at);`,
+  `CREATE INDEX IF NOT EXISTS syllabi_user_idx ON syllabi(user_id, interest_id);`,
 ];
 
 const SEARCH_TABLE = `CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(

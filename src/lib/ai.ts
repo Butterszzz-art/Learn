@@ -15,7 +15,7 @@ import { client as dbClient } from "@/db";
 export type ModelTier = "fast" | "main" | "deep";
 
 const TIER_MODELS: Record<ModelTier, string> = {
-  fast: process.env.ANTHROPIC_MODEL_FAST || "claude-haiku-5-5",
+  fast: process.env.ANTHROPIC_MODEL_FAST || process.env.ANTHROPIC_MODEL_HAIKU || "claude-haiku-5-5",
   main: process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5",
   deep: process.env.ANTHROPIC_MODEL_DEEP || "claude-opus-5-5",
 };
@@ -77,7 +77,7 @@ const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 const SUPPORTS_FALLBACK = new Set(["claude-sonnet-5-5", "claude-opus-5-5", "claude-opus-5", "claude-fable-5-2", "claude-fable-5-1"]);
 let fallbackDisabled = false; // flipped if the API rejects the parameter for this account
 
-async function recordUsage(model: string, usage: any): Promise<void> {
+async function recordUsage(model: string, usage: any, opts: { purpose?: string; costMultiplier?: number } = {}): Promise<void> {
   const ctx = aiContext.getStore();
   const u: UsageNumbers = {
     inputTokens: usage?.input_tokens ?? 0,
@@ -92,17 +92,33 @@ async function recordUsage(model: string, usage: any): Promise<void> {
             VALUES (?, ?, ?, ?, ?, ?, ?)`,
       args: [
         ctx?.userId ?? null,
-        ctx?.purpose ?? "unlabeled",
+        opts.purpose ?? ctx?.purpose ?? "unlabeled",
         model,
         u.inputTokens + u.cacheWriteTokens,
         u.outputTokens,
         u.cacheReadTokens,
-        estimateCostUsd(model, u),
+        estimateCostUsd(model, u) * (opts.costMultiplier ?? 1),
       ],
     });
   } catch (err) {
     console.error("[ai] failed to record usage:", err);
   }
+}
+
+/**
+ * The unwrapped SDK client, for the Message Batches API only. Batch results
+ * arrive later and out of band, so their usage is recorded with
+ * recordBatchUsage rather than by the metered facade below.
+ */
+export function getBatchClient(): Anthropic | null {
+  return getRawClient();
+}
+
+/** Batch requests are billed at half price. */
+export const BATCH_COST_MULTIPLIER = 0.5;
+
+export function recordBatchUsage(model: string, usage: unknown, purpose: string): Promise<void> {
+  return recordUsage(model, usage, { purpose, costMultiplier: BATCH_COST_MULTIPLIER });
 }
 
 type CreateParams = Anthropic.MessageCreateParamsNonStreaming;

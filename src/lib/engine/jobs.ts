@@ -12,7 +12,16 @@ import { withAiContext } from "../ai";
 import { generateNextInSeries, findOrGenerateTopicDive, expandExistingDeepDive, generateLogicDrill } from "./series";
 import { refreshNews } from "./news";
 
-export type JobType = "series_next" | "topic_dive" | "expand" | "news" | "logic_drill" | "book_structure" | "book_chapter";
+export type JobType =
+  | "series_next"
+  | "topic_dive"
+  | "expand"
+  | "news"
+  | "logic_drill"
+  | "book_structure"
+  | "book_chapter"
+  | "batch_collect"
+  | "upgrade_summaries";
 
 export interface JobPayloads {
   series_next: { interestId: number; level: Level };
@@ -22,6 +31,8 @@ export interface JobPayloads {
   logic_drill: { interestId: number };
   book_structure: { bookId: number };
   book_chapter: { bookId: number };
+  batch_collect: Record<string, never>;
+  upgrade_summaries: Record<string, never>;
 }
 
 const MAX_ATTEMPTS = 3;
@@ -99,8 +110,21 @@ async function claimNext(preferUserId?: number): Promise<JobRow | null> {
 async function runJob(job: JobRow): Promise<unknown> {
   const payload = JSON.parse(job.payload);
   switch (job.type) {
-    case "series_next":
+    case "series_next": {
+      // Nobody is waiting on scheduler-originated entries, so their write-up
+      // goes through the half-price batch path; a person's own request is live.
+      const { batchWritesEnabled, submitSeriesWrite } = await import("./batchSeries");
+      if (job.user_id === null && batchWritesEnabled()) return submitSeriesWrite(payload.interestId, payload.level);
       return generateNextInSeries(payload.interestId, payload.level);
+    }
+    case "batch_collect": {
+      const { collectSeriesWrites } = await import("./batchSeries");
+      return { published: await collectSeriesWrites() };
+    }
+    case "upgrade_summaries": {
+      const { upgradeFallbackSummaries } = await import("../summaryUpgrade");
+      return upgradeFallbackSummaries();
+    }
     case "topic_dive":
       return findOrGenerateTopicDive(payload.interestId, payload.level, payload.topic);
     case "expand":

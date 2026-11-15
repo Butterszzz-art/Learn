@@ -7,7 +7,7 @@ import type { IconName } from "./Icon";
 
 const TABS: { href: string; label: string; icon: IconName; match: (p: string) => boolean }[] = [
   { href: "/", label: "Feed", icon: "feed", match: (p) => p === "/" || p.startsWith("/card") },
-  { href: "/explore", label: "Explore", icon: "explore", match: (p) => p.startsWith("/explore") || p.startsWith("/deep-dive") },
+  { href: "/explore", label: "Explore", icon: "explore", match: (p) => p.startsWith("/explore") || p.startsWith("/deep-dive") || p.startsWith("/research") },
   { href: "/review", label: "Review", icon: "review", match: (p) => p.startsWith("/review") },
   { href: "/library", label: "Library", icon: "library", match: (p) => p.startsWith("/library") },
   {

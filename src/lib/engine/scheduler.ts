@@ -6,6 +6,9 @@
 import { client } from "@/db";
 import type { Level } from "@/db/schema";
 import { enqueue } from "./jobs";
+import { hasPendingSeriesWrite, openBatchCount } from "./batchSeries";
+import { hasSummaryLlm } from "../summaryLlm";
+import { hasClaudeKey } from "../ai";
 
 const ACTIVE_DAYS = 14;
 const AHEAD_TARGET = 3; // unread series entries to keep ahead of the furthest reader
@@ -58,7 +61,9 @@ export async function planWork(userId?: number): Promise<PlanResult> {
   for (const r of pairs.rows as any[]) {
     const ahead = Number(r.depth) - Number(r.furthest ?? 0);
     const target = Number(r.fav) ? AHEAD_TARGET_FAVORITE : AHEAD_TARGET;
-    if (ahead < target) {
+    // An entry already being written in a batch counts as one ahead.
+    const inFlight = (await hasPendingSeriesWrite(Number(r.interest_id), r.level as Level)) ? 1 : 0;
+    if (ahead + inFlight < target) {
       await enqueue("series_next", { interestId: Number(r.interest_id), level: r.level as Level }, { userId: userId ?? null });
       result.series++;
     }
@@ -95,6 +100,14 @@ export async function planWork(userId?: number): Promise<PlanResult> {
   }
 
   if (!userId) {
+    // Publish anything whose batch has finished since the last tick.
+    if ((await openBatchCount()) > 0) await enqueue("batch_collect", {});
+    // News items saved with a truncated fallback summary get a proper one
+    // when there is time (see summaryUpgrade.ts).
+    if (hasSummaryLlm() || hasClaudeKey()) {
+      const fallback = await client.execute("SELECT 1 FROM items WHERE summary LIKE '%…' AND raw_snippet IS NOT NULL LIMIT 1");
+      if (fallback.rows.length > 0) await enqueue("upgrade_summaries", {});
+    }
     // Deep dives written before launch have no cards yet. Expand the ones
     // readers can actually reach first.
     const unexpanded = await client.execute({

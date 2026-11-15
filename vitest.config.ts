@@ -7,6 +7,7 @@ export default defineConfig({
     environment: "node",
     include: ["tests/**/*.test.ts"],
     testTimeout: 30000,
+    hookTimeout: 60000,
     // The integration test owns a database file; keep files from sharing a process.
     pool: "forks",
   },

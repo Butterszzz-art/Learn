@@ -56,21 +56,38 @@ export async function fetchPubMed(days = 3, retmax = 25): Promise<RawItem[]> {
       if (!doc) continue;
       const title: string = (doc.title ?? "").replace(/\s+/g, " ").trim();
       if (!title) continue;
-      const authors = Array.isArray(doc.authors)
-        ? doc.authors.map((a: any) => a.name).filter(Boolean).join(", ")
-        : undefined;
+      const authorList: string[] = Array.isArray(doc.authors)
+        ? doc.authors.map((a: any) => a.name).filter(Boolean).map(formatPubMedAuthorName)
+        : [];
+      const authors = authorList.length > 0 ? authorList.join(", ") : undefined;
       const pubDateRaw: string = doc.pubdate ?? doc.sortpubdate ?? "";
+      const publishedAt = normalizePubDate(pubDateRaw);
+      // esummary's articleids array carries the DOI when PubMed has one on
+      // file (idtype "doi") — see doc comment on CitationMetadata for why
+      // this is only populated when actually present, never guessed.
+      const doi: string | undefined = Array.isArray(doc.articleids)
+        ? doc.articleids.find((a: any) => a?.idtype === "doi")?.value
+        : undefined;
+      const journal: string | undefined = doc.fulljournalname || doc.source || undefined;
+      const year = publishedAt ? String(new Date(publishedAt).getUTCFullYear()) : undefined;
+
       items.push({
         title,
         authors,
         snippet: abstracts.get(id) ?? "",
         url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
-        publishedAt: normalizePubDate(pubDateRaw),
+        publishedAt,
         sourceName: "PubMed",
         sourceType: "academic",
         // A real structured abstract from efetch — see hasFullAbstract's
         // doc comment in types.ts.
         hasFullAbstract: true,
+        citationMetadata: {
+          authors: authorList.length > 0 ? authorList : undefined,
+          journal,
+          year,
+          doi,
+        },
       });
     }
     return items;
@@ -113,7 +130,7 @@ async function fetchAbstracts(ids: string[]): Promise<Map<string, string>> {
         .replace(/\s+/g, " ")
         .trim();
       // Phase 10: raised from 800 — News summaries now write a thorough
-      // ~120-200 word abstract-style summary and need the real abstract's
+      // ~250-320 word abstract-style summary and need the real abstract's
       // full substance, not a truncated fragment of it.
       if (abstract) map.set(pmid, abstract.slice(0, 3000));
     }
@@ -123,6 +140,20 @@ async function fetchAbstracts(ids: string[]): Promise<Map<string, string>> {
     clearTimeout(t);
   }
   return map;
+}
+
+// PubMed's esummary author names come as "Surname II" (surname, then 1-3
+// bare initial letters, no comma, no periods — e.g. "Herdman N", "Padiath
+// QS"). Reformatted to the standard "Surname, I. I." citation convention so
+// citations.ts's cite-key/BibTeX author handling (which looks for a comma
+// to find the surname) works correctly — without this, "Herdman N" reads as
+// surname "N" instead of "Herdman".
+function formatPubMedAuthorName(name: string): string {
+  const trimmed = name.trim();
+  const match = trimmed.match(/^(.+?)\s+([A-Z]{1,3})$/);
+  if (!match) return trimmed;
+  const [, surname, initials] = match;
+  return `${surname}, ${initials.split("").join(". ")}.`;
 }
 
 function normalizePubDate(raw: string): string | undefined {

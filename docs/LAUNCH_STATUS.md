@@ -1,15 +1,35 @@
 # Launch status
 
-Where the app stands against [LAUNCH_PLAN.md](LAUNCH_PLAN.md), as of 10 November 2026.
+Where the app stands against [LAUNCH_PLAN.md](LAUNCH_PLAN.md), as of 15 November 2026.
 
 ## How it was verified
 
-- `npm run typecheck`, `npm run build` and `npm test` (56 tests) all pass.
+- `npm run typecheck`, `npm run build` and `npm test` (71 tests) all pass.
 - The tests cover ranking, review scheduling, accounts and lockout, isolation between accounts, feed assembly, event recording, plan limits, the job queue, and the whole generate → source check → expand → feed path.
 - Walked through in a browser at phone size: sign-up, onboarding, the swipe feed. Every other page was requested over HTTP while signed in and returned correctly, and the main API flows (events, saving, settings, reports, custom interests, search, share image) were exercised.
 - News ingestion from the free research feeds was run for real (24 cards from three fields).
 
 **Not verified: live AI generation.** There was no Anthropic API key on the development machine, so no deep dive has actually been written and expanded by the model through the new pipeline. The path is covered by tests using stand-in responses, and the request code is unchanged from the previous working version apart from model routing. The first real `npm run tick` should be watched — see "First run" below.
+
+## Merged with main
+
+The launch branch was built from an out-of-date copy of `main`. `main` had since gained a Research Agent, its own phases 12–15 (batching, model tiers, citations, syllabi, engagement pruning), extended news summaries on an OpenAI-compatible provider, and higher content volumes — all on the cycle-based code this branch replaces. They were brought across like this:
+
+| From main | Now |
+|---|---|
+| Split research-then-write generators, model tiers, prompt caching | Taken as they were; they run through the metered AI layer |
+| Extended summaries, summary provider, number guard, time-bounded summarizing | Taken as they were; fallback summaries are upgraded by a background job and the feed card is refreshed |
+| Higher volumes (15 curated / 10 roundup news items, 4 counterarguments) | Applied to the shared per-field news run |
+| Research Agent | Kept, behind sign-in, with a daily question limit per plan; linked from Explore |
+| Citation export | Kept. "This week" now means research you were shown in the last seven days |
+| Syllabi | Private per person. The comparison note is worked out when you open an entry, since entries are shared. A syllabus no longer steers which topics get written |
+| Engagement pruning | Per person: the feed stops showing a card type you keep skipping in a field, with a notice and a way back. Nothing stops being generated, because content is shared |
+| Batch generation | Rebuilt for the new engine: unattended deep-dive write-ups go through the Batches API at half price |
+| Refresh button, daily/weekly cycles, per-cycle quotas, weekly bundle header, batch scripts for cycles | Dropped; the scheduler and job queue replace them |
+
+Two behaviour changes worth knowing: a syllabus used to influence topic choice and no longer does (you can still request any topic from an entry's "Keep going" section), and the Research Agent's OpenRouter key is now shared by all signed-in users, hence the daily limit.
+
+**Not verified live:** batch writing and the summary provider have only been exercised with stand-ins, for the same reason as the rest of generation — no API keys on the development machine.
 
 ## What differs from the plan
 
@@ -22,7 +42,7 @@ The plan named several hosted services. None of the accounts existed, so each pi
 | Inngest | Database job queue + cron endpoint | No dashboard beyond the admin page; throughput is bounded by how often the tick runs |
 | Upstash rate limits | Limits counted in the database | Fine at this scale |
 | Cloudflare R2 for uploads | Not needed | Uploaded files were already deleted from the database once processed |
-| Batch API, prompt caching | One merged fast-model call per deep dive (was three main-model calls) | Bigger saving for less complexity. The prompts are too short to benefit from caching |
+| Batch API, prompt caching | Both now in, from main: batch for unattended write-ups, caching on the long system prompts. Plus one merged fast-model call for expansion | Batch results arrive on a later tick, so a daily schedule means a day's delay for top-ups |
 | Sentry, PostHog | Error log and usage numbers on the admin page | No alerting, no funnels |
 | Stripe, RevenueCat | Plan limits and an upgrade page; plans are switched from the admin page | **No payment is taken anywhere yet** |
 | Capacitor store builds | Config and instructions only | See [MOBILE.md](MOBILE.md) |

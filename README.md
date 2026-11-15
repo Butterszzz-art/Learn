@@ -8,6 +8,10 @@ A swipe feed for science and ideas. Same thumb motion as any other feed, except 
 - **Memory** — quiz answers and recall checks feed a spaced-repetition schedule (FSRS). Reviews are woven into the feed and collected on the Review tab.
 - **Knowledge map and score** — every idea in your fields, shaded by how well you've retained it.
 - **Library** — upload a PDF/EPUB or paste an article link for private chapter-by-chapter notes, released into your feed at a pace you set.
+- **Research Agent** — ask a question and it searches OpenAlex and Semantic Scholar for real papers before answering (optional, via OpenRouter).
+- **Citations** — export any research item, a deep dive's sources, a Library book, or everything you were shown this week as BibTeX or RIS.
+- **Course syllabi** — attach a syllabus to a field and entries tell you when a topic isn't on it, or covers newer work than your assigned reading.
+- **Stays out of your way** — if you keep skipping one kind of card in a field, the feed stops showing it there, tells you, and lets you bring it back.
 - **Installable** — works as a home-screen app with offline reading of loaded cards and an optional once-a-day reminder.
 
 ---
@@ -37,12 +41,20 @@ The key design decision is that **content is shared and state is personal**. A d
 | Ranking (pure, unit-tested) | `src/lib/rank.ts` |
 | Spaced repetition, mastery, knowledge map | `src/lib/learning.ts` |
 | Plan limits | `src/lib/plan.ts` |
+| Batch writing | `src/lib/batch.ts`, `src/lib/engine/batchSeries.ts` |
+| Engagement-based muting | `src/lib/mutes.ts` |
+| Citations, syllabi, Research Agent | `src/lib/citations.ts`, `src/lib/syllabus.ts`, `src/lib/researchAgent.ts` |
+| Summary provider and upgrades | `src/lib/summaryLlm.ts`, `src/lib/summaryUpgrade.ts` |
 | Schema and migrations | `src/db/schema.ts`, `src/db/migrate.ts`, `src/db/migrateV2.ts` |
 | Feed UI and card layouts | `src/components/feed/` |
 
 **Models.** Three tiers, set in `src/lib/ai.ts` and overridable by environment variable: a fast model for summaries, bite splitting, quizzes, feedback and Q&A; a main model for deep dives and web-searched roundups; a deep model for research-level entries. Every call's token usage and estimated cost is written to `ai_usage` and shown on the admin page, including cost per active user per day.
 
 **Generation runs in the background.** A scheduler decides what the pool is short of (it keeps a few entries ahead of the furthest reader in each series, and refreshes news on a timer) and queues jobs; `/api/cron/tick` works through the queue. A person waiting on an on-demand topic nudges the queue themselves, so they aren't stuck until the next tick.
+
+**Half-price writing.** A deep dive is produced in two steps: a fast model researches the topic with web search, then a stronger model writes it up. When nobody is waiting on the entry (the scheduler is just keeping a series ahead), the write-up goes through the Message Batches API at half price and is published on a later tick; set `BATCH_WRITES=0` to write everything live. Requests a person is waiting on are always live.
+
+**News summaries** are 250–320 words in three paragraphs and can run on any OpenAI-compatible provider (`SUMMARY_LLM_*`, Groq's free tier by default) instead of Anthropic. A guard rejects summaries containing numbers that are not in the source. Summarization is time-bounded on serverless hosts: items it doesn't reach are saved with a short fallback and upgraded by a background job (or `npm run resummarize`).
 
 **Quality.** Before an entry is served, its source links are checked and a second model reads it against the fetched source text. Entries that score low are held back for an admin to review. Every card has a report button; a card reported by several readers is hidden until someone looks.
 
@@ -80,6 +92,7 @@ Open http://localhost:3000, create an account, and pick some interests. The firs
 | `npm run tick` | Plan and run background generation from the command line |
 | `npm run tick -- --minutes 30` | A longer run, e.g. to fill the pool before launch |
 | `npm run seed:demo` | Demo content (local database only) |
+| `npm run resummarize` | Upgrade news items still carrying a fallback summary (`-- --dry` to preview) |
 | `npm run db:migrate` | Apply schema changes |
 | `npm run push:keys` | Generate keys for push notifications |
 
@@ -100,6 +113,9 @@ The app is a standard Next.js app with a libSQL (Turso) database.
    | `ADMIN_EMAIL` | Yes | Which account is the admin. Set it **before** the first deploy, or whoever signs up first becomes admin |
    | `CRON_SECRET` | Yes | Protects the scheduled generation endpoint |
    | `TICK_BUDGET_MS` | Optional | How long a tick may run. Default 45000 fits a 60-second function limit; raise it on a plan with longer functions |
+   | `SUMMARY_LLM_API_KEY`, `SUMMARY_LLM_BASE_URL`, `SUMMARY_LLM_MODEL` | Optional | Cheaper provider for news summaries |
+   | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` | Optional | Research Agent. The tab is hidden without it |
+   | `BATCH_WRITES` | Optional | `0` turns off half-price batch writing |
    | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Optional | Push notifications |
    | `NEXT_PUBLIC_BILLING_URL` | Optional | Checkout link for the upgrade page |
 

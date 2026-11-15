@@ -10,6 +10,9 @@ import { FollowUpCards } from "@/components/FollowUpCards";
 import { ExplainItBack } from "@/components/ExplainItBack";
 import { ExportButtons } from "@/components/ExportButtons";
 import { DeepDiveQuiz, DeepDiveTools } from "@/components/DeepDiveExtras";
+import { TrustBadge } from "@/components/TrustBadge";
+import { CiteButton } from "@/components/CiteButton";
+import { classifyDeepDive } from "@/lib/trustSignals";
 
 export const dynamic = "force-dynamic";
 
@@ -40,10 +43,17 @@ export default async function DeepDivePage({ params }: { params: { id: string } 
         <div className="flex flex-wrap items-center gap-2">
           <span className="pill !text-neuron-text">{dive.interestName}</span>
           <span className="pill">{LEVEL_LABELS[dive.level]}</span>
+          <TrustBadge classification={classifyDeepDive(dive.sources.length)} />
+          {dive.syllabusNote && (
+            <span className="pill !border-neuron-accent/50 !text-neuron-text" title={dive.syllabusNote.reference ?? undefined}>
+              🎓 {dive.syllabusNote.status === "not_in_syllabus" ? "Not in your syllabus" : "Newer than your assigned reading"}
+            </span>
+          )}
           <span className="text-xs text-neuron-muted">{readingMinutes(dive.content)} min read · {formatDate(dive.createdAt)}</span>
         </div>
         <h1 className="mt-3 font-display text-3xl font-bold leading-tight sm:text-4xl">{dive.topic}</h1>
         <p className="mt-2 text-xs text-neuron-muted">Written by AI from the sources listed below, then checked against them automatically. Spot a mistake? Report it.</p>
+        {dive.syllabusNote && <p className="mt-2 text-sm text-neuron-muted">{dive.syllabusNote.note}.</p>}
         <div className="mt-4"><DeepDiveTools deepDiveId={dive.id} speechText={dive.content.replace(/[#*_>\[\]()]/g, "")} /></div>
       </header>
 
@@ -92,6 +102,7 @@ export default async function DeepDivePage({ params }: { params: { id: string } 
               </li>
             ))}
           </ol>
+          <div className="mt-4"><CiteButton kind="deep-dive" id={dive.id} label="Cite these sources" /></div>
         </section>
       )}
 

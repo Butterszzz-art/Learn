@@ -5,6 +5,8 @@ import type { FeedCard, CardEvent, CardEventName } from "@/lib/cardTypes";
 import { CardView } from "./CardView";
 import type { CardHandlers } from "./CardView";
 import { AskSheet, DeepDiveSheet, ReportSheet } from "./Sheets";
+import { MuteNotices } from "../MuteNotices";
+import type { MuteNoticeItem } from "../MuteNotices";
 
 const PAGE_SIZE = 10;
 const PREFETCH_WHEN_LEFT = 4; // ask for the next page this many cards before the end
@@ -31,7 +33,17 @@ interface SavedSession {
  * is no loading state mid-swipe. Only the cards near the current one are
  * mounted.
  */
-export function FeedClient({ initialCards, initialHasMore, interests }: { initialCards: FeedCard[]; initialHasMore: boolean; interests: FeedInterest[] }) {
+export function FeedClient({
+  initialCards,
+  initialHasMore,
+  interests,
+  muteNotices = [],
+}: {
+  initialCards: FeedCard[];
+  initialHasMore: boolean;
+  interests: FeedInterest[];
+  muteNotices?: MuteNoticeItem[];
+}) {
   const [cards, setCards] = useState<FeedCard[]>(initialCards);
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [index, setIndex] = useState(0);
@@ -257,6 +269,7 @@ export function FeedClient({ initialCards, initialHasMore, interests }: { initia
 
   return (
     <div className="relative flex h-full flex-col">
+      <MuteNotices initial={muteNotices} compact />
       {interests.length > 1 && (
         <div className="flex shrink-0 gap-2 overflow-x-auto px-4 pb-1 pt-3 sm:px-6 [scrollbar-width:none]" role="toolbar" aria-label="Filter the feed by interest">
           <button type="button" onClick={() => changeFilter(null)} aria-pressed={filter === null} className={`pill shrink-0 !py-1.5 ${filter === null ? "!border-neuron-accent !bg-neuron-accent/15 !text-neuron-text" : ""}`}>

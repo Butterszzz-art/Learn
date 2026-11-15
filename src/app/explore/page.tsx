@@ -5,6 +5,7 @@ import { getLearningPaths, getTrendingConcepts } from "@/lib/explore";
 import { LEVEL_LABELS } from "@/db/schema";
 import { interestStyle } from "@/lib/ui";
 import { SearchBox } from "@/components/SearchBox";
+import { hasOpenRouterKey } from "@/lib/researchAgent";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Explore" };
@@ -22,6 +23,15 @@ export default async function ExplorePage() {
     <div>
       <h1 className="page-title">Explore</h1>
       <div className="mt-4"><SearchBox /></div>
+      {hasOpenRouterKey() && (
+        <Link href="/research" className="card mt-4 flex items-center gap-3 !p-4 transition hover:border-neuron-accent">
+          <span aria-hidden className="text-2xl">🔬</span>
+          <span>
+            <span className="block font-bold">Research Agent</span>
+            <span className="block text-sm text-neuron-muted">Ask a question; it finds and cites real papers.</span>
+          </span>
+        </Link>
+      )}
 
       <section className="mt-8" aria-labelledby="paths-heading">
         <h2 id="paths-heading" className="font-display text-xl font-bold">Your learning paths</h2>

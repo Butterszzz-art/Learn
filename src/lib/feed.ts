@@ -12,6 +12,7 @@ import type { Candidate, RankContext } from "./rank";
 import type { CardEvent, FeedCard } from "./cardTypes";
 import { getDueConcepts, gradeConcept, markConceptSeen } from "./learning";
 import { planWork } from "./engine/scheduler";
+import { isMuted, sweepIfDue } from "./mutes";
 
 const PER_SERIES_LIMIT = 30; // unseen deep-dive cards considered per (interest, level)
 const PER_INTEREST_OTHER_LIMIT = 25; // unseen news / fact cards considered per interest
@@ -230,7 +231,7 @@ async function hydrate(rows: { card: CardRow; explore: boolean }[], userId: numb
     level: c.level,
     title: c.title,
     body: c.body,
-    payload: parsePayload(c.payload),
+    payload: { ...parsePayload(c.payload), ...(c.itemId !== null ? { itemId: c.itemId } : {}) },
     conceptId: c.conceptId,
     conceptName: c.conceptId !== null ? conceptNames.get(c.conceptId) ?? null : null,
     deepDiveId: c.deepDiveId,
@@ -359,7 +360,9 @@ export async function getFeedPage(user: CurrentUser, req: FeedRequest = {}): Pro
     req.interestId ? Promise.resolve([]) : loadGeneralCards(user.id, !!user.prefs.includeBrainGames, exclude),
     req.interestId ? Promise.resolve([]) : loadExploreCards(user.id, interestIds, exclude),
   ]);
-  const main = [...series, ...other, ...general];
+  // Card types this person consistently ignores in a field are left out (see mutes.ts).
+  const mutes = await sweepIfDue(user.id, user.prefs.lastMuteSweep);
+  const main = [...series, ...other, ...general].filter((c) => !isMuted(mutes, c.interestId, c.type));
   const conceptIds = [...new Set(main.map((c) => c.conceptId).filter((x): x is number => x !== null))];
   const ctx = await loadRankContext(user.id, interests, conceptIds);
 

@@ -316,6 +316,7 @@ export async function generateFullExportZip(userId: number): Promise<Buffer> {
       concepts: [],
       quizCards: [],
       takeaways: [],
+      syllabusNote: null,
     };
     const md = buildDeepDiveMarkdown(detail, related);
     zip.file(`${file.folder}/${file.basename}.md`, md);

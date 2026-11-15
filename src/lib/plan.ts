@@ -11,6 +11,8 @@ export interface PlanLimits {
   explainBacksPerDay: number;
   customInterests: number;
   libraryBooks: number;
+  syllabi: number;
+  researchQuestionsPerDay: number; // Research tab
   researchLevel: boolean;
   exportAll: boolean;
   dailyAiUsd: number; // hard ceiling on AI spend attributed to this person
@@ -24,6 +26,8 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     explainBacksPerDay: 5,
     customInterests: 1,
     libraryBooks: 1,
+    syllabi: 2,
+    researchQuestionsPerDay: 5,
     researchLevel: false,
     exportAll: false,
     dailyAiUsd: 0.15,
@@ -35,13 +39,15 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     explainBacksPerDay: 50,
     customInterests: 20,
     libraryBooks: 50,
+    syllabi: 20,
+    researchQuestionsPerDay: 60,
     researchLevel: true,
     exportAll: true,
     dailyAiUsd: 3,
   },
 };
 
-export type QuotaKind = "onDemandDive" | "ask" | "explainBack" | "customInterest" | "libraryBook";
+export type QuotaKind = "onDemandDive" | "ask" | "explainBack" | "customInterest" | "libraryBook" | "syllabus" | "research";
 
 export interface QuotaCheck {
   ok: boolean;
@@ -75,6 +81,8 @@ const UPGRADE_HINT: Record<QuotaKind, string> = {
   explainBack: "explain-it-back reviews today",
   customInterest: "custom interests",
   libraryBook: "Library uploads",
+  syllabus: "attached syllabi",
+  research: "research questions today",
 };
 
 export async function checkQuota(userId: number, plan: Plan, kind: QuotaKind): Promise<QuotaCheck> {
@@ -103,6 +111,14 @@ export async function checkQuota(userId: number, plan: Plan, kind: QuotaKind): P
         [userId]
       );
       break;
+    case "syllabus":
+      limit = limits.syllabi;
+      used = await count("SELECT COUNT(*) AS n FROM syllabi WHERE user_id = ?", [userId]);
+      break;
+    case "research":
+      limit = limits.researchQuestionsPerDay;
+      used = await count("SELECT COUNT(*) AS n FROM ai_usage WHERE user_id = ? AND purpose = 'research' AND created_at >= ?", [userId, since]);
+      break;
     case "libraryBook":
       limit = limits.libraryBooks;
       used = await count("SELECT COUNT(*) AS n FROM books WHERE user_id = ?", [userId]);
@@ -120,7 +136,7 @@ export async function checkQuota(userId: number, plan: Plan, kind: QuotaKind): P
     };
   }
   // The dollar ceiling backs up the per-feature counters.
-  if (kind !== "customInterest" && kind !== "libraryBook" && (await aiSpendToday(userId)) >= limits.dailyAiUsd) {
+  if (kind !== "customInterest" && kind !== "libraryBook" && kind !== "syllabus" && kind !== "research" && (await aiSpendToday(userId)) >= limits.dailyAiUsd) {
     return { ok: false, used, limit, message: "You've reached today's usage limit. It resets at midnight UTC." };
   }
   return { ok: true, used, limit, message: "" };

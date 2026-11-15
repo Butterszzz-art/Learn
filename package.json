@@ -14,7 +14,8 @@
     "tick": "tsx scripts/tick.ts",
     "push:keys": "web-push generate-vapid-keys",
     "dev:test": "cross-env NEURON_LOCAL_DB=1 NEURON_DB_FILE=data/dev.db next dev -p 3100",
-    "seed:demo": "tsx scripts/seed-demo.ts"
+    "seed:demo": "tsx scripts/seed-demo.ts",
+    "resummarize": "tsx scripts/resummarize.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

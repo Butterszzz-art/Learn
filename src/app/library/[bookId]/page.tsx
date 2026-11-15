@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { getBookById } from "@/lib/content";
+import { CiteButton } from "@/components/CiteButton";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +21,7 @@ export default async function BookPage({ params }: { params: { bookId: string } 
         {book.status === "processing" ? " — the rest are still being written." : "."}
         {book.totalChapters > 1 ? ` New chapters reach your feed ${book.paceChaptersPerCycle} a day; you can also read ahead here.` : ""}
       </p>
+      <div className="mt-3"><CiteButton kind="book" id={book.id} label="Cite this book" /></div>
       <ol className="mt-6 space-y-2">
         {book.chapters.map((c) => (
           <li key={c.id}>

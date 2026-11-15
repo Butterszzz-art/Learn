@@ -10,6 +10,8 @@ import { generateExplainBackFeedback } from "./explainBack";
 import { indexForSearch } from "./searchIndex";
 import { gradeConcept, markConceptSeen } from "./learning";
 import type { Grade3 } from "./learning";
+import { getSyllabusContext, computeSyllabusComparison } from "./syllabus";
+import type { SyllabusComparison } from "./syllabus";
 
 export interface ExplainBackEntry {
   id: number;
@@ -38,6 +40,8 @@ export interface DeepDiveDetail {
   concepts: { id: number; name: string; definition: string }[];
   quizCards: { cardId: number; conceptId: number | null; question: string; options: string[]; correctIndex: number; explanation: string }[];
   takeaways: string[]; // one line per bite — the "3 bullets" layer
+  // How this entry relates to the reader's own attached syllabus, if any.
+  syllabusNote: SyllabusComparison | null;
 }
 
 export function parseJsonArray<T>(raw: string | null | undefined): T[] {
@@ -123,6 +127,7 @@ export async function getDeepDiveDetail(id: number, userId: number): Promise<Dee
     concepts: (conceptRes.rows as any[]).map((c) => ({ id: Number(c.id), name: c.name, definition: c.definition })),
     quizCards,
     takeaways: takeaways.slice(0, 4),
+    syllabusNote: computeSyllabusComparison(row.topic, await getSyllabusContext(userId, row.interestId)),
   };
 }
 

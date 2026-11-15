@@ -15,6 +15,7 @@ import { classifyAndSummarizeBatch, summarizeBatch } from "../claude";
 import { hasClaudeKey } from "../ai";
 import { fetchArticleText } from "../articleFetch";
 import { generateSteelmans } from "../steelman";
+import { summaryDeadline } from "../summaryLlm";
 import { scoreItem } from "../score";
 import { indexForSearch } from "../searchIndex";
 import { getInterestRow } from "../interests";
@@ -23,11 +24,11 @@ import type { RawItem, ProcessedItem } from "../types";
 import type { PaperPayload, SourceBadge, DebatePayload } from "../cardTypes";
 import { upsertCard } from "./cards";
 
-const TARGET_ITEMS_PER_INTEREST = 8;
-const TARGET_ROUNDUP_ITEMS = 5;
+const TARGET_ITEMS_PER_INTEREST = 15;
+const TARGET_ROUNDUP_ITEMS = 10;
 const STEELMAN_ELIGIBLE_SLUGS = new Set(["political-science", "economics", "philosophy", "critical-thinking"]);
-const STEELMAN_CANDIDATE_POOL = 8;
-const STEELMAN_PER_RUN = 2;
+const STEELMAN_CANDIDATE_POOL = 15;
+const STEELMAN_PER_RUN = 4;
 
 const ROUNDUP_FOCUS_OVERRIDES: Record<string, string> = {
   "critical-thinking":
@@ -71,7 +72,7 @@ function cleanSummary(summary: string | undefined | null, fallbackSnippet: strin
 }
 
 /** Real abstracts are summarized directly; everything else has its article page fetched first. */
-async function buildSummaryTexts(raw: RawItem[]): Promise<string[]> {
+export async function buildSummaryTexts(raw: RawItem[]): Promise<string[]> {
   return Promise.all(
     raw.map(async (item) => {
       if (item.hasFullAbstract) return item.snippet;
@@ -151,6 +152,7 @@ async function insertItems(processed: ProcessedItem[], interest: InterestRow): P
           dedupeKey: item.dedupeKey,
           publishedAt: item.publishedAt,
           score: item.score,
+          citationMetadata: JSON.stringify(item.citationMetadata ?? {}),
         })
         .returning({ id: items.id });
       inserted++;
@@ -200,8 +202,12 @@ async function runCuratedNews(interest: InterestRow): Promise<{ added: number; f
   const forSummary = shortlist.map((item, i) => ({ ...item, snippet: summaryTexts[i] }));
 
   const isNeuro = interest.slug === "neuroscience";
-  const neuroResults = isNeuro ? await classifyAndSummarizeBatch(forSummary) : null;
-  const otherResults = isNeuro ? null : await summarizeBatch(forSummary);
+  // Bounded on serverless (see summaryDeadline): items the provider doesn't
+  // reach in time keep the truncated fallback and are saved rather than lost;
+  // the upgrade_summaries job finishes them later.
+  const deadline = summaryDeadline();
+  const neuroResults = isNeuro ? await classifyAndSummarizeBatch(forSummary, deadline) : null;
+  const otherResults = isNeuro ? null : await summarizeBatch(forSummary, deadline);
 
   const processed: ProcessedItem[] = candidates.map(({ item, score }, idx) => {
     let category: Category | null = null;
@@ -227,7 +233,7 @@ async function runRoundupNews(interest: InterestRow): Promise<{ added: number; f
 
   const summaryTexts = await buildSummaryTexts(fresh);
   const forSummary = fresh.map((item, i) => ({ ...item, snippet: summaryTexts[i] }));
-  const results = await summarizeBatch(forSummary);
+  const results = await summarizeBatch(forSummary, summaryDeadline());
   const processed: ProcessedItem[] = fresh
     .map((item, idx) => ({
       ...item,
@@ -254,7 +260,8 @@ async function addSteelmans(interest: InterestRow): Promise<number> {
 
   const results = await generateSteelmans(
     interest.name,
-    candidates.map((c, idx) => ({ index: idx + 1, title: c.title, summary: c.summary }))
+    candidates.map((c, idx) => ({ index: idx + 1, title: c.title, summary: c.summary })),
+    STEELMAN_PER_RUN
   ).catch(() => []);
   let added = 0;
   for (const r of results.slice(0, STEELMAN_PER_RUN)) {

@@ -68,31 +68,39 @@ async function addDrillCard(interest: InterestRow, level: Level, deepDiveId: num
   });
 }
 
-async function writeAndPublish(
+export interface WrittenDive {
+  topic: string;
+  content: string;
+  sources: { title: string; url: string }[];
+}
+
+/**
+ * Stores a finished deep dive in its series, then runs the source check and
+ * the expansion into cards. Shared by the live path and the batch path.
+ */
+export async function publishDeepDive(
   interest: InterestRow,
   level: Level,
-  opts: { forcedTopic?: string; origin: "syllabus" | "followup" }
-): Promise<SeriesResult | null> {
+  written: WrittenDive,
+  origin: "syllabus" | "followup"
+): Promise<SeriesResult> {
   const covered = await getSeriesTopics(interest.id, level);
-  const result = await generateDeepDive(interest.name, level, covered, opts.forcedTopic);
-  if (!result) return null;
-
   const essayPrompt =
     ESSAY_PROMPT_LEVELS.includes(level) && Math.random() < ESSAY_PROMPT_CHANCE
-      ? await generateEssayPrompt(interest.name, [...covered.recent, result.topic]).catch(() => null)
+      ? await generateEssayPrompt(interest.name, [...covered.recent, written.topic]).catch(() => null)
       : null;
 
-  const seq = opts.origin === "syllabus" ? covered.totalCount + 1 : null;
+  const seq = origin === "syllabus" ? covered.totalCount + 1 : null;
   const inserted = await db
     .insert(deepDives)
     .values({
       interestId: interest.id,
-      topic: result.topic,
-      content: result.content,
-      sources: JSON.stringify(result.sources),
+      topic: written.topic,
+      content: written.content,
+      sources: JSON.stringify(written.sources),
       level,
       seq,
-      origin: opts.origin,
+      origin,
       essayPrompt,
     })
     .returning({ id: deepDives.id });
@@ -104,26 +112,26 @@ async function writeAndPublish(
       interestId: interest.id,
       interestName: interest.name,
       level,
-      topic: result.topic,
-      content: result.content,
+      topic: written.topic,
+      content: written.content,
       generatesAppliedInsights: interest.generatesAppliedInsights,
     }).catch((err) => {
       console.error(`[series] expand failed for deep dive ${deepDiveId}:`, err);
       return null;
     }),
-    checkDeepDiveQuality(result.topic, result.content, result.sources),
+    checkDeepDiveQuality(written.topic, written.content, written.sources),
   ]);
   await applyQualityResult(deepDiveId, quality);
 
   if (!quality.flagged) {
     if (seq !== null && seq % DRILL_EVERY_N === 0) {
-      await addDrillCard(interest, level, deepDiveId, result.topic, result.content);
+      await addDrillCard(interest, level, deepDiveId, written.topic, written.content);
     }
     await indexForSearch({
       contentType: "deep_dive",
       sourceId: deepDiveId,
-      title: result.topic,
-      body: result.content,
+      title: written.topic,
+      body: written.content,
       interestLabel: interest.name,
       interestId: interest.id,
       date: new Date().toISOString(),
@@ -131,7 +139,18 @@ async function writeAndPublish(
       userId: null,
     });
   }
-  return { deepDiveId, topic: result.topic, cards: cards ?? 0, flagged: quality.flagged };
+  return { deepDiveId, topic: written.topic, cards: cards ?? 0, flagged: quality.flagged };
+}
+
+async function writeAndPublish(
+  interest: InterestRow,
+  level: Level,
+  opts: { forcedTopic?: string; origin: "syllabus" | "followup" }
+): Promise<SeriesResult | null> {
+  const covered = await getSeriesTopics(interest.id, level);
+  const result = await generateDeepDive(interest.name, level, covered, opts.forcedTopic);
+  if (!result) return null;
+  return publishDeepDive(interest, level, result, opts.origin);
 }
 
 /** Writes the next entry in an (interest, level) series. */

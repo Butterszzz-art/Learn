@@ -251,6 +251,7 @@ export async function claimLegacyData(userId: number): Promise<void> {
   });
   await client.execute({ sql: "UPDATE books SET user_id = ? WHERE user_id IS NULL", args: [userId] });
   await client.execute({ sql: "UPDATE explain_backs SET user_id = ? WHERE user_id IS NULL", args: [userId] });
+  await client.execute({ sql: "UPDATE syllabi SET user_id = ? WHERE user_id IS NULL", args: [userId] });
   await client.execute({ sql: "UPDATE search_index SET user_id = ? WHERE content_type IN ('chapter','explain_back') AND user_id IS NULL", args: [userId] });
 }
 
@@ -275,6 +276,10 @@ export async function deleteAccount(userId: number): Promise<void> {
     "DELETE FROM user_cards WHERE user_id = ?",
     "DELETE FROM user_concepts WHERE user_id = ?",
     "DELETE FROM push_subscriptions WHERE user_id = ?",
+    "DELETE FROM syllabus_topics WHERE syllabus_id IN (SELECT id FROM syllabi WHERE user_id = ?)",
+    "DELETE FROM syllabi WHERE user_id = ?",
+    "DELETE FROM user_feed_mutes WHERE user_id = ?",
+    "DELETE FROM user_feed_mutes_resumed WHERE user_id = ?",
     "DELETE FROM reports WHERE user_id = ?",
     "DELETE FROM jobs WHERE user_id = ? AND status IN ('queued','failed')",
     "UPDATE ai_usage SET user_id = NULL WHERE user_id = ?",

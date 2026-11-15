@@ -69,11 +69,19 @@ export async function queryArxiv(searchQuery: string, maxResults: number): Promi
     link = alt?.["@_href"] ?? "";
     const published = entry.published ? new Date(entry.published).toISOString() : undefined;
 
+    // arXiv's own <id> is a stable abs-page URL like
+    // "http://arxiv.org/abs/2101.12345v1" — strip the prefix and version
+    // suffix to get the bare arXiv id for citation purposes.
+    const idText = String(entry.id ?? "");
+    const arxivIdMatch = idText.match(/abs\/([^\/]+?)(v\d+)?$/);
+    const arxivId = arxivIdMatch?.[1];
+    const authorList = authors ? authors.split(", ").filter(Boolean) : [];
+
     items.push({
       title,
       authors: authors || undefined,
       // Phase 10: raised from 800 — the real abstract's full substance is
-      // needed now that News summaries target ~120-200 words, not a
+      // needed now that News summaries target ~250-320 words, not a
       // truncated fragment of it.
       snippet: summary.slice(0, 3000),
       url: link,
@@ -83,6 +91,12 @@ export async function queryArxiv(searchQuery: string, maxResults: number): Promi
       // A real structured abstract from arXiv's API — see hasFullAbstract's
       // doc comment in types.ts.
       hasFullAbstract: true,
+      citationMetadata: {
+        authors: authorList.length > 0 ? authorList : undefined,
+        publisher: "arXiv",
+        year: published ? String(new Date(published).getUTCFullYear()) : undefined,
+        arxivId,
+      },
     });
   }
   return items;

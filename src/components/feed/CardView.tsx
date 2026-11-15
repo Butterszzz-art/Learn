@@ -229,7 +229,7 @@ function PaperBody({ card, onExpand }: { card: FeedCard; onExpand: () => void })
       <h2 className="font-display text-2xl font-bold leading-tight sm:text-3xl">{card.title}</h2>
       {p.takeaway && <p className="mt-3 text-lg font-bold leading-snug text-neuron-text">{p.takeaway}</p>}
       {open ? (
-        <p className="mt-3 text-base leading-relaxed text-neuron-text/90">{card.body}</p>
+        <p className="mt-3 whitespace-pre-line text-base leading-relaxed text-neuron-text/90">{card.body}</p>
       ) : (
         <button
           type="button"
@@ -243,6 +243,13 @@ function PaperBody({ card, onExpand }: { card: FeedCard; onExpand: () => void })
         </button>
       )}
       {p.authors && open && <p className="mt-2 text-xs text-neuron-muted">{p.authors}</p>}
+      {open && p.itemId && (
+        <p className="mt-2 text-sm text-neuron-muted">
+          Cite:{" "}
+          <a href={`/api/cite/item/${p.itemId}?format=bib`} className="font-bold text-neuron-accent">BibTeX</a>{" · "}
+          <a href={`/api/cite/item/${p.itemId}?format=ris`} className="font-bold text-neuron-accent">RIS</a>
+        </p>
+      )}
       {p.url && (
         <a href={p.url} target="_blank" rel="noopener noreferrer" className="mt-2 flex min-h-[44px] w-fit items-center gap-1.5 text-sm font-extrabold text-neuron-accent">
           Read the source <Icon name="external" className="h-4 w-4" />
