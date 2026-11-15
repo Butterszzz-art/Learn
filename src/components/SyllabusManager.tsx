@@ -128,7 +128,7 @@ export function SyllabusManager({ interests }: { interests: InterestOption[] }) 
                   <button type="button" className="text-neuron-accent hover:underline" onClick={() => toggleExpanded(s.id)}>
                     {expanded.has(s.id) ? "Hide topics" : "Show topics"}
                   </button>
-                  <button type="button" className="text-red-400 hover:underline" onClick={() => removeSyllabus(s.id)}>
+                  <button type="button" className="text-neuron-danger hover:underline" onClick={() => removeSyllabus(s.id)}>
                     Remove
                   </button>
                 </div>
@@ -193,7 +193,7 @@ export function SyllabusManager({ interests }: { interests: InterestOption[] }) 
           >
             {saving ? "Parsing…" : "Add syllabus"}
           </button>
-          {error && <p className="text-xs text-red-400">{error}</p>}
+          {error && <p className="text-xs text-neuron-danger">{error}</p>}
         </div>
         <p className="mt-3 text-xs text-neuron-muted">
           Parsed into a topic list, with any specific assigned readings and their publication years —

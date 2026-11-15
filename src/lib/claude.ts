@@ -1,4 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient, hasClaudeKey } from "./ai";
 import type { Category } from "@/db/schema";
 import { CATEGORIES } from "@/db/schema";
 import type { RawItem } from "./types";
@@ -6,22 +7,9 @@ import { getModel } from "./modelConfig";
 import { cachedSystem } from "./promptCache";
 import { BudgetExhausted, completeJson, hasSummaryLlm, inventedNumbers } from "./summaryLlm";
 
-let client: Anthropic | null | undefined;
-
-/** Returns a shared client, or null if no API key is configured. */
-export function getAnthropicClient(): Anthropic | null {
-  if (client !== undefined) return client;
-  if (!process.env.ANTHROPIC_API_KEY) {
-    client = null;
-    return client;
-  }
-  client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return client;
-}
-
-export function hasClaudeKey(): boolean {
-  return getAnthropicClient() !== null;
-}
+// Re-exported so existing imports keep working; the client itself lives in
+// ai.ts, where every call is metered.
+export { getAnthropicClient, hasClaudeKey };
 
 interface ClassifiedItem {
   category: Category;

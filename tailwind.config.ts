@@ -1,31 +1,30 @@
 import type { Config } from "tailwindcss";
 
+// Colours resolve to CSS variables defined in globals.css, so one set of
+// class names serves both the light and dark themes.
+const token = (name: string) => `rgb(var(--n-${name}) / <alpha-value>)`;
+
 const config: Config = {
-  content: [
-    "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
-    "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
-  ],
+  content: ["./src/app/**/*.{js,ts,jsx,tsx,mdx}", "./src/components/**/*.{js,ts,jsx,tsx,mdx}"],
   theme: {
     extend: {
       colors: {
-        // "neuron" — renamed from the Phase 1 "brain" palette (Digest ->
-        // Neuron) and re-tuned from a flat slate-blue scheme to a warmer,
-        // more saturated violet/pink/teal trio for the bubbly redesign.
         neuron: {
-          bg: "#120f1e",
-          surface: "#1c1830",
-          surface2: "#252041",
-          border: "#372f56",
-          text: "#f3f0ff",
-          muted: "#a89fc9",
-          accent: "#a78bfa", // violet — primary
-          accent2: "#f472b6", // pink — secondary
-          accent3: "#2dd4bf", // teal — sparing third pop (used for success-ish accents)
+          bg: token("bg"),
+          surface: token("surface"),
+          surface2: token("surface2"),
+          border: token("border"),
+          text: token("text"),
+          muted: token("muted"),
+          accent: token("accent"), // violet — primary
+          accent2: token("accent2"), // pink — secondary
+          accent3: token("accent3"), // teal — success / "correct"
+          danger: token("danger"),
+          warn: token("warn"),
+          onaccent: token("on-accent"),
         },
       },
       fontFamily: {
-        // Nunito (rounded body sans) + Fredoka (bubbly display face for
-        // headings/logo) — see layout.tsx for the next/font/google setup.
         sans: ["var(--font-body)", "ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
         display: ["var(--font-display)", "ui-rounded", "system-ui", "sans-serif"],
       },

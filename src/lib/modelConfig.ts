@@ -1,12 +1,14 @@
-// Phase 14 (Cost Optimization) — per-content-type model tiering, kept as an
-// editable config map (not hardcoded inline in every generation call) so a
-// content type can be moved between tiers later based on actually reviewing
-// output quality, not just assumption. `ANTHROPIC_MODEL`/`ANTHROPIC_MODEL_HAIKU`
-// env vars override the tier's default model id, in case the deployed alias
-// names ever diverge from these.
+// Which model tier each kind of generation runs on. The tier → model mapping
+// (and its environment overrides) lives in ai.ts; this file only says which
+// tier a content type needs.
+//
+// "haiku" tier: compression, extraction, light structured tasks, and the
+// search-and-gather step of any web-search call. "sonnet" tier: sustained
+// writing that needs real judgment.
+import { modelFor } from "./ai";
+import type { ModelTier as AiTier } from "./ai";
 
 export type ContentType =
-  // Haiku tier — compression, extraction, and short structured writing.
   | "news_summary" // curated-source classify/summarize, and Field News Roundup's write step
   | "applied_insight"
   | "drill_grounded"
@@ -19,26 +21,16 @@ export type ContentType =
   | "candidate_topics"
   | "essay_prompt" // the open QUESTION itself, distinct from feedback on it
   | "rabbit_hole_write"
-  | "syllabus_parse" // Phase 15 — structured extraction, not sustained writing
-  // Sonnet tier — real judgment / sustained argument quality.
+  | "syllabus_parse" // structured extraction, not sustained writing
   | "deep_dive_write"
+  | "deep_dive_write_research" // research-level entries get the deepest model
   | "steelman_write"
   | "explain_back_feedback";
 
-export type ModelTier = "haiku" | "sonnet";
+export type ModelTier = "haiku" | "sonnet" | "opus";
 
-const TIER_MODEL: Record<ModelTier, string> = {
-  haiku: process.env.ANTHROPIC_MODEL_HAIKU || "claude-haiku-4-5",
-  sonnet: process.env.ANTHROPIC_MODEL || "claude-sonnet-5",
-};
+const TO_AI_TIER: Record<ModelTier, AiTier> = { haiku: "fast", sonnet: "main", opus: "deep" };
 
-/**
- * The tier map itself — this is the thing to edit when a content type's
- * output quality justifies moving it up (or down) a tier. Defaults follow
- * the Phase 14 spec exactly: Haiku for compression/extraction/light
- * structured tasks and the gather half of any split call, Sonnet for the
- * actual long-form writing and anything needing real argumentative judgment.
- */
 export const MODEL_TIER: Record<ContentType, ModelTier> = {
   news_summary: "haiku",
   applied_insight: "haiku",
@@ -54,12 +46,11 @@ export const MODEL_TIER: Record<ContentType, ModelTier> = {
   rabbit_hole_write: "haiku",
   syllabus_parse: "haiku",
   deep_dive_write: "sonnet",
+  deep_dive_write_research: "opus",
   steelman_write: "sonnet",
   explain_back_feedback: "sonnet",
 };
 
-/** The model id to use for a given content type — the one thing every
- * generation call site should reach for instead of a hardcoded model string. */
 export function getModel(contentType: ContentType): string {
-  return TIER_MODEL[MODEL_TIER[contentType]];
+  return modelFor(TO_AI_TIER[MODEL_TIER[contentType]]);
 }

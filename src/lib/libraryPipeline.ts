@@ -5,7 +5,9 @@ import { eq, asc, isNull, and } from "drizzle-orm";
 import { identifyBookStructure, processChapterContent, processChapterContentFromText } from "./library";
 import { parseEpub } from "./epub";
 import { fetchArticleWithTitle } from "./articleFetch";
-import { hasClaudeKey } from "./claude";
+import { hasClaudeKey } from "./ai";
+import { getOrCreateLibraryInterest } from "./interests";
+import { upsertConcept } from "./engine/cards";
 import { indexForSearch } from "./searchIndex";
 
 // Default when the user skips "finish in about __ weeks" at upload time.
@@ -30,6 +32,7 @@ function fallbackTitle(originalFilename: string, sourceType: BookSourceType): st
  * fetched page's title).
  */
 export async function createBook(
+  userId: number,
   originalFilename: string,
   base64File: string,
   paceWeeksRequested: number | null,
@@ -39,6 +42,7 @@ export async function createBook(
   const inserted = await db
     .insert(books)
     .values({
+      userId,
       title: fallbackTitle(originalFilename, sourceType),
       originalFilename,
       fileBase64: base64File,
@@ -264,6 +268,21 @@ export async function processNextChapter(bookId: number): Promise<ChapterStepRes
           rawText: null, // no longer needed once processed
         })
         .where(eq(bookChapters.id, next.id));
+      // Each key concept joins the owner's private knowledge map.
+      if (book.userId) {
+        const libraryInterest = await getOrCreateLibraryInterest(book.id, book.title);
+        for (const kc of content.keyConcepts) {
+          if (!kc.term?.trim() || !kc.definition?.trim()) continue;
+          await upsertConcept({
+            interestId: libraryInterest.id,
+            name: kc.term,
+            definition: kc.definition,
+            difficulty: 3,
+            chapterId: next.id,
+            ownerUserId: book.userId,
+          });
+        }
+      }
       const keyConceptsText = content.keyConcepts.map((c) => `${c.term}: ${c.definition}`).join("\n");
       indexForSearch({
         contentType: "chapter",
@@ -274,6 +293,7 @@ export async function processNextChapter(bookId: number): Promise<ChapterStepRes
         interestId: null,
         date: new Date().toISOString(),
         url: `/library/chapter/${next.id}`,
+        userId: book.userId,
       }).catch((err) => console.error("[libraryPipeline] search-index failed for chapter:", err));
     } else {
       // Leave summary null so this chapter gets retried on the next call —

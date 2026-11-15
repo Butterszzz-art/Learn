@@ -10,7 +10,7 @@ export const INTERESTS_SEED: InterestSeed[] = [
   {
     slug: "neuroscience",
     name: "Neuroscience & Psychobiology",
-    description: "Brain and behavior — from molecules to cognition. The original Phase 1 pipeline.",
+    description: "Brain and behavior — from molecules to cognition.",
     hasCuratedSource: true,
     generatesAppliedInsights: true,
   },
@@ -45,14 +45,14 @@ export const INTERESTS_SEED: InterestSeed[] = [
   {
     slug: "business",
     name: "Business",
-    description: "Strategy, management, and how companies actually work. News is a generated roundup.",
+    description: "Strategy, management, and how companies actually work.",
     hasCuratedSource: false,
     generatesAppliedInsights: true,
   },
   {
     slug: "political-science",
     name: "Political Science",
-    description: "Institutions, governance, and political behavior. News is a generated roundup.",
+    description: "Institutions, governance, and political behavior.",
     hasCuratedSource: false,
     generatesAppliedInsights: false,
   },

@@ -298,7 +298,7 @@ export function buildDeepDiveWriteParams(
     "\n---";
 
   return {
-    model: getModel("deep_dive_write"),
+    model: getModel(level === "research_level" ? "deep_dive_write_research" : "deep_dive_write"),
     max_tokens: 4096,
     system: cachedSystem(WRITE_SYSTEM_PROMPT),
     messages: [{ role: "user", content: userPrompt }],

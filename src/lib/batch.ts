@@ -13,7 +13,7 @@ import { db } from "@/db";
 import { batchJobs, batchRequests } from "@/db/schema";
 import type { BatchJobPurpose } from "@/db/schema";
 import { eq, inArray } from "drizzle-orm";
-import { getAnthropicClient } from "./claude";
+import { getBatchClient, recordBatchUsage } from "./ai";
 
 export interface QueuedBatchRequest {
   contentType: string;
@@ -37,7 +37,7 @@ export async function submitBatch(opts: {
   weeklyCycleId?: number | null;
   requests: QueuedBatchRequest[];
 }): Promise<number | null> {
-  const anthropic = getAnthropicClient();
+  const anthropic = getBatchClient();
   if (!anthropic || opts.requests.length === 0) return null;
 
   // Insert request rows first — their own ids double as a stable, unique
@@ -115,7 +115,7 @@ export interface CompletedBatchJob {
  * you like; a run with nothing outstanding is a fast no-op.
  */
 export async function pollAndProcessBatches(): Promise<CompletedBatchJob[]> {
-  const anthropic = getAnthropicClient();
+  const anthropic = getBatchClient();
   if (!anthropic) return [];
 
   const openJobs = await db
@@ -154,7 +154,9 @@ export async function pollAndProcessBatches(): Promise<CompletedBatchJob[]> {
         let text: string | null = null;
         let errorMessage: string | null = null;
         if (entry.result.type === "succeeded") {
-          const textBlock = entry.result.message.content.find((b) => b.type === "text");
+          const message = entry.result.message;
+          await recordBatchUsage(message.model, message.usage, `batch:${row.contentType}`);
+          const textBlock = message.content.find((b) => b.type === "text");
           text = textBlock && textBlock.type === "text" ? textBlock.text : null;
           ok = text != null;
           if (!ok) errorMessage = "empty response";

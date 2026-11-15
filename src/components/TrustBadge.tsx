@@ -1,20 +1,14 @@
 import type { SourceClassification } from "@/lib/trustSignals";
 import { SYNTHESIZED_NOTE } from "@/lib/trustSignals";
 
-/** Phase 15 — the visible half of the trust-signals transparency layer.
- * "Grounded" renders as a small pill (matching the sources list it usually
- * sits next to); "synthesized" renders as a plain, honest note rather than a
- * pill, so it reads as a caveat, not a badge of approval. */
+/** "Grounded" = drawn from specific cited sources; otherwise a plain note that it is general synthesis. */
 export function TrustBadge({ classification }: { classification: SourceClassification }) {
   if (classification === "grounded") {
     return (
-      <span
-        className="pill border-emerald-500/40 text-emerald-400"
-        title="Draws directly from a specific identifiable source"
-      >
-        ✓ Grounded
+      <span className="pill !border-neuron-accent3/50 !bg-neuron-accent3/10 !text-neuron-accent3" title="Draws directly from specific, identifiable sources">
+        ✓ Grounded in sources
       </span>
     );
   }
-  return <span className="text-[11px] italic text-neuron-muted">{SYNTHESIZED_NOTE}</span>;
+  return <span className="text-xs italic text-neuron-muted">{SYNTHESIZED_NOTE}</span>;
 }

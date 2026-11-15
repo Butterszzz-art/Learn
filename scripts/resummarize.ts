@@ -1,29 +1,25 @@
-// One-off backfill: re-summarize items still carrying the truncated fallback
-// summary (raw snippet cut at ~300 chars, ending in "…") using the current
-// summary provider and length target. Items with a stored abstract use it;
-// items with only a short RSS snippet get their article page fetched. Each
-// summary is written as soon as it's generated, so the run is safe to stop
-// and re-run (it only touches items that still end in "…").
+// Re-summarizes news items that still carry the truncated fallback summary
+// (saved when the summary provider ran out of time or was unavailable).
 //
-// Usage: npm run resummarize            (all eligible items)
-//        npm run resummarize -- --dry   (print what would change, write nothing)
-import { loadEnvConfig } from "@next/env";
-loadEnvConfig(process.cwd());
-import { ensureDb } from "../src/db/bootstrap";
-import { hasSummaryLlm } from "../src/lib/summaryLlm";
-import { listFallbackItems, upgradeSummary } from "../src/lib/summaryUpgrade";
+//   npm run resummarize            write upgraded summaries
+//   npm run resummarize -- --dry   report what would change, write nothing
+import { config } from "dotenv";
+config({ path: ".env.local" });
 
 async function main() {
   const dry = process.argv.includes("--dry");
-  if (!hasSummaryLlm()) {
-    console.error("SUMMARY_LLM_API_KEY is not set — refusing to run (the Anthropic path may be out of credit).");
+  const { ensureDb } = await import("../src/db/bootstrap");
+  const { hasSummaryLlm } = await import("../src/lib/summaryLlm");
+  const { hasClaudeKey } = await import("../src/lib/ai");
+  const { listFallbackItems, upgradeSummary } = await import("../src/lib/summaryUpgrade");
+  if (!hasSummaryLlm() && !hasClaudeKey()) {
+    console.error("Neither SUMMARY_LLM_API_KEY nor ANTHROPIC_API_KEY is set — nothing to summarize with.");
     process.exit(1);
   }
   await ensureDb();
 
   const rows = await listFallbackItems();
   console.log(`${rows.length} fallback-summary items to process.`);
-
   let updated = 0;
   let noSource = 0;
   let failed = 0;
@@ -42,14 +38,12 @@ async function main() {
       failed++;
     }
   }
-  console.log(
-    dry
-      ? "Dry run — nothing written."
-      : `Updated ${updated}/${rows.length}. Skipped (no usable source): ${noSource}. Failed: ${failed}.`
-  );
+  console.log(dry ? "Dry run — nothing written." : `Updated ${updated}/${rows.length}. Skipped (no usable source): ${noSource}. Failed: ${failed}.`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });

@@ -1,6 +1,6 @@
-import { getAnthropicClient } from "./claude";
+import { getAnthropicClient, modelFor } from "./ai";
 
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
+const MODEL = modelFor("main");
 // Very long chapters are split into page windows (PDF) or character windows
 // (EPUB/URL article text) and merged, rather than asking Claude to hold an
 // enormous span in one pass.

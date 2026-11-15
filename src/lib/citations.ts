@@ -8,11 +8,10 @@
 // only fields that are actually known, never fabricate a missing author,
 // year, journal, or DOI.
 // ---------------------------------------------------------------------------
-import { db } from "@/db";
+import { db, client } from "@/db";
 import { items, books, deepDives } from "@/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import type { CitationMetadata } from "./types";
-import { getDailyDigestIdsForCurrentWeek } from "./pipeline";
 
 export type CitationEntryType = "article" | "misc" | "book";
 
@@ -237,8 +236,8 @@ export async function getItemCitationEntry(id: number): Promise<CitationEntry | 
 }
 
 /** One Library book -> its CitationEntry, or null if it doesn't exist. */
-export async function getBookCitationEntry(id: number): Promise<CitationEntry | null> {
-  const rows = await db.select().from(books).where(eq(books.id, id)).limit(1);
+export async function getBookCitationEntry(id: number, userId: number): Promise<CitationEntry | null> {
+  const rows = await db.select().from(books).where(and(eq(books.id, id), eq(books.userId, userId))).limit(1);
   const row = rows[0];
   if (!row) return null;
   return bookToCitationEntry(row);
@@ -265,9 +264,16 @@ export async function getDeepDiveSourceCitations(id: number): Promise<{ topic: s
  * far this week, matching how the rest of this app already scopes "this
  * week" — see getDailyDigestIdsForCurrentWeek in pipeline.ts) — the bulk
  * "export this week's sources as BibTeX" action. */
-export async function getWeekCitationEntries(): Promise<CitationEntry[]> {
-  const dailyIds = await getDailyDigestIdsForCurrentWeek();
-  if (dailyIds.length === 0) return [];
-  const rows = await db.select().from(items).where(inArray(items.digestId, dailyIds));
+/** Every research item this person was shown in the last seven days. */
+export async function getWeekCitationEntries(userId: number): Promise<CitationEntry[]> {
+  const since = new Date(Date.now() - 7 * 86400000).toISOString();
+  const res = await client.execute({
+    sql: `SELECT DISTINCT c.item_id AS id FROM user_cards uc JOIN cards c ON c.id = uc.card_id
+          WHERE uc.user_id = ? AND uc.seen_at >= ? AND c.item_id IS NOT NULL`,
+    args: [userId, since],
+  });
+  const ids = (res.rows as any[]).map((r) => Number(r.id));
+  if (ids.length === 0) return [];
+  const rows = await db.select().from(items).where(inArray(items.id, ids));
   return rows.map((row) => itemToCitationEntry(row));
 }

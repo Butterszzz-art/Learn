@@ -13,7 +13,7 @@ const nextConfig = {
   // External keeps it a plain node_modules require, where those files are
   // still physically present on disk.
   experimental: {
-    serverComponentsExternalPackages: ["@libsql/client", "libsql", "pdfkit"],
+    serverComponentsExternalPackages: ["@libsql/client", "libsql", "pdfkit", "web-push"],
   },
 };
 

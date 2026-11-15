@@ -17,7 +17,7 @@
 // ---------------------------------------------------------------------------
 import { db } from "@/db";
 import { syllabi, syllabusTopics } from "@/db/schema";
-import { eq, asc } from "drizzle-orm";
+import { eq, and, asc } from "drizzle-orm";
 import { getAnthropicClient } from "./claude";
 import { getModel } from "./modelConfig";
 
@@ -141,7 +141,7 @@ export interface SyllabusWithTopics {
  * fails (no key configured, or the model call errors) — there's no
  * meaningful "syllabus with zero topics" to fall back to.
  */
-export async function createSyllabus(interestId: number, name: string, rawContent: string): Promise<SyllabusWithTopics> {
+export async function createSyllabus(userId: number, interestId: number, name: string, rawContent: string): Promise<SyllabusWithTopics> {
   const trimmedContent = rawContent.trim();
   if (!trimmedContent) throw new Error("Syllabus content can't be empty");
 
@@ -154,7 +154,7 @@ export async function createSyllabus(interestId: number, name: string, rawConten
 
   const inserted = await db
     .insert(syllabi)
-    .values({ interestId, name: finalName, rawContent: trimmedContent })
+    .values({ userId, interestId, name: finalName, rawContent: trimmedContent })
     .returning({ id: syllabi.id, uploadedAt: syllabi.uploadedAt });
   const syllabusId = inserted[0].id;
 
@@ -181,11 +181,11 @@ export async function createSyllabus(interestId: number, name: string, rawConten
 
 /** Every syllabus attached to an interest, with its parsed topics, oldest
  * first — for Settings' per-interest syllabus manager. */
-export async function getSyllabiForInterest(interestId: number): Promise<SyllabusWithTopics[]> {
+export async function getSyllabiForInterest(userId: number, interestId: number): Promise<SyllabusWithTopics[]> {
   const syllabusRows = await db
     .select()
     .from(syllabi)
-    .where(eq(syllabi.interestId, interestId))
+    .where(and(eq(syllabi.userId, userId), eq(syllabi.interestId, interestId)))
     .orderBy(asc(syllabi.uploadedAt));
   if (syllabusRows.length === 0) return [];
 
@@ -207,7 +207,9 @@ export async function getSyllabiForInterest(interestId: number): Promise<Syllabu
   return out;
 }
 
-export async function deleteSyllabus(id: number): Promise<void> {
+export async function deleteSyllabus(id: number, userId: number): Promise<void> {
+  const own = await db.select({ id: syllabi.id }).from(syllabi).where(and(eq(syllabi.id, id), eq(syllabi.userId, userId))).limit(1);
+  if (!own[0]) return;
   await db.delete(syllabusTopics).where(eq(syllabusTopics.syllabusId, id));
   await db.delete(syllabi).where(eq(syllabi.id, id));
 }
@@ -223,8 +225,8 @@ export interface SyllabusTopicContext {
  * the shape deepDive.ts's gather step and applySyllabusComparison both
  * consume. Empty array (not an error) when the interest has no attached
  * syllabus, which callers treat as "nothing to compare against". */
-export async function getSyllabusContext(interestId: number): Promise<SyllabusTopicContext[]> {
-  const withTopics = await getSyllabiForInterest(interestId);
+export async function getSyllabusContext(userId: number, interestId: number): Promise<SyllabusTopicContext[]> {
+  const withTopics = await getSyllabiForInterest(userId, interestId);
   return withTopics.flatMap((s) =>
     s.topics.map((t) => ({ topic: t.topic, reference: t.reference, referenceYear: t.referenceYear, courseName: s.name }))
   );
@@ -309,4 +311,9 @@ export function computeSyllabusComparison(diveTopic: string, context: SyllabusTo
   }
 
   return null; // on the syllabus, but no dated reference to claim "newer than"
+}
+
+export async function countSyllabi(userId: number): Promise<number> {
+  const rows = await db.select({ id: syllabi.id }).from(syllabi).where(eq(syllabi.userId, userId));
+  return rows.length;
 }

@@ -1,18 +1,13 @@
 type CiteKind = "item" | "book" | "deep-dive";
 
-/** Phase 15 (Citation Export) — plain anchor tags to the cite API route,
- * same "let the browser just download it" pattern as ExportButtons.tsx.
- * Only rendered on grounded items — see each call site. */
-export function CiteButton({ kind, id }: { kind: CiteKind; id: number }) {
+/** Download a citation (or, for a deep dive, its source list) as BibTeX or RIS. */
+export function CiteButton({ kind, id, label = "Cite" }: { kind: CiteKind; id: number; label?: string }) {
   const base = `/api/cite/${kind}/${id}`;
   return (
-    <span className="inline-flex items-center gap-2 text-xs">
-      <a href={`${base}?format=bib`} className="text-neuron-accent hover:underline">
-        Cite (BibTeX)
-      </a>
-      <a href={`${base}?format=ris`} className="text-neuron-accent hover:underline">
-        Cite (RIS)
-      </a>
+    <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+      <span className="text-neuron-muted">{label}:</span>
+      <a href={`${base}?format=bib`} className="font-bold text-neuron-accent">BibTeX</a>
+      <a href={`${base}?format=ris`} className="font-bold text-neuron-accent">RIS</a>
     </span>
   );
 }

@@ -1,9 +1,9 @@
-import { db } from "@/db";
-import { interests, userInterests, coveredTopics } from "@/db/schema";
+import { db, client } from "@/db";
+import { interests, userInterests, deepDives } from "@/db/schema";
 import type { Level } from "@/db/schema";
-import { eq, asc, desc, inArray, count } from "drizzle-orm";
+import { eq, and, asc, inArray } from "drizzle-orm";
 
-export interface InterestWithConfig {
+export interface InterestRow {
   id: number;
   slug: string;
   name: string;
@@ -11,70 +11,69 @@ export interface InterestWithConfig {
   hasCuratedSource: boolean;
   isCustom: boolean;
   generatesAppliedInsights: boolean;
-  isFavorite: boolean;
-  // Phase 7: a hidden pseudo-interest auto-created per uploaded Library
-  // book. Never gets a userInterests row (so getEnabledInterests already
-  // excludes it naturally), but getAllInterests still returns it — callers
-  // that build a user-facing interest list (onboarding, Settings) must
-  // filter this out explicitly. Kept visible here rather than filtered at
-  // the source since the Library pipeline needs to look these rows up too.
   isLibraryBook: boolean;
+}
+
+/** An interest plus one person's settings for it. */
+export interface InterestWithConfig extends InterestRow {
   level: Level;
   enabled: boolean;
+  isFavorite: boolean;
 }
 
-/** Every interest in the catalog, joined with the user's config (defaults applied if unset).
- * Includes hidden Library-book pseudo-interests (see isLibraryBook) — filter
- * those out at the call site for any user-facing interest list. */
-export async function getAllInterests(): Promise<InterestWithConfig[]> {
-  const allInterests = await db.select().from(interests).orderBy(asc(interests.id));
-  const configs = await db.select().from(userInterests);
-  const configById = new Map(configs.map((c) => [c.interestId, c]));
-
-  return allInterests.map((i) => {
-    const config = configById.get(i.id);
-    return {
-      id: i.id,
-      slug: i.slug,
-      name: i.name,
-      description: i.description,
-      hasCuratedSource: i.hasCuratedSource,
-      isCustom: i.isCustom,
-      generatesAppliedInsights: i.generatesAppliedInsights,
-      isFavorite: i.isFavorite,
-      isLibraryBook: i.isLibraryBook,
-      level: config?.level ?? "some_background",
-      enabled: config?.enabled ?? false,
-    };
-  });
+function toRow(i: typeof interests.$inferSelect): InterestRow {
+  return {
+    id: i.id,
+    slug: i.slug,
+    name: i.name,
+    description: i.description,
+    hasCuratedSource: i.hasCuratedSource,
+    isCustom: i.isCustom,
+    generatesAppliedInsights: i.generatesAppliedInsights,
+    isLibraryBook: i.isLibraryBook,
+  };
 }
 
-/** Only the interests the user has explicitly enabled. */
-export async function getEnabledInterests(): Promise<InterestWithConfig[]> {
-  const all = await getAllInterests();
-  return all.filter((i) => i.enabled);
+export async function getInterestRow(id: number): Promise<InterestRow | null> {
+  const rows = await db.select().from(interests).where(eq(interests.id, id)).limit(1);
+  return rows[0] ? toRow(rows[0]) : null;
 }
 
-/** Single interest by id, with config — used by the granular per-step refresh endpoints. */
-export async function getInterestById(id: number): Promise<InterestWithConfig | null> {
-  const all = await getAllInterests();
-  return all.find((i) => i.id === id) ?? null;
+export async function getInterestRowBySlug(slug: string): Promise<InterestRow | null> {
+  const rows = await db.select().from(interests).where(eq(interests.slug, slug)).limit(1);
+  return rows[0] ? toRow(rows[0]) : null;
 }
 
-/** Single interest by slug, with config — used by the cycle-level Drills
- * step to find Critical Thinking & Argumentation / Logic without an id. */
-export async function getInterestBySlug(slug: string): Promise<InterestWithConfig | null> {
-  const all = await getAllInterests();
-  return all.find((i) => i.slug === slug) ?? null;
+/**
+ * The interest list one person sees: every seeded interest, plus custom
+ * ones they follow. Library pseudo-interests are never listed.
+ */
+export async function getCatalog(userId: number): Promise<InterestWithConfig[]> {
+  const all = await db.select().from(interests).orderBy(asc(interests.id));
+  const configs = await db.select().from(userInterests).where(eq(userInterests.userId, userId));
+  const byId = new Map(configs.map((c) => [c.interestId, c]));
+  return all
+    .filter((i) => !i.isLibraryBook && (!i.isCustom || byId.has(i.id)))
+    .map((i) => {
+      const c = byId.get(i.id);
+      return {
+        ...toRow(i),
+        level: c?.level ?? "some_background",
+        enabled: c?.enabled ?? false,
+        isFavorite: c?.isFavorite ?? false,
+      };
+    });
 }
 
-/** True once the user has saved at least one interest config — gates onboarding. */
-export async function hasCompletedOnboarding(): Promise<boolean> {
-  const rows = await db.select({ interestId: userInterests.interestId }).from(userInterests).limit(1);
-  return rows.length > 0;
+export async function getEnabledInterests(userId: number): Promise<InterestWithConfig[]> {
+  return (await getCatalog(userId)).filter((i) => i.enabled);
 }
 
-function slugify(name: string): string {
+export async function getUserInterest(userId: number, interestId: number): Promise<InterestWithConfig | null> {
+  return (await getCatalog(userId)).find((i) => i.id === interestId) ?? null;
+}
+
+export function slugify(name: string): string {
   return (
     name
       .toLowerCase()
@@ -85,81 +84,38 @@ function slugify(name: string): string {
 }
 
 /**
- * Creates a user-typed custom interest (Phase 3 — the seed list is
- * suggestions, not a ceiling). Always hasCuratedSource=false: there's no
- * registered fetcher for an arbitrary field, so it gets a generated Field
- * News Roundup instead. Slug collisions get a numeric suffix.
+ * Follows a user-typed field. Custom interests are shared rows: if someone
+ * already added the same field, this person joins that pool instead of
+ * creating a duplicate — which is what lets its content be generated once.
  */
-export async function createCustomInterest(
-  name: string,
-  generatesAppliedInsights = true
-): Promise<InterestWithConfig> {
-  const trimmed = name.trim();
-  if (!trimmed) throw new Error("Interest name can't be empty");
+export async function createCustomInterest(userId: number, name: string): Promise<InterestRow> {
+  const trimmed = name.trim().replace(/\s+/g, " ").slice(0, 60);
+  if (trimmed.length < 2) throw new Error("Interest name is too short");
+  const slug = slugify(trimmed);
 
-  const base = slugify(trimmed);
-  let slug = base;
-  let suffix = 2;
-  while ((await db.select({ id: interests.id }).from(interests).where(eq(interests.slug, slug))).length > 0) {
-    slug = `${base}-${suffix}`;
-    suffix++;
-  }
+  const existing = await db.select().from(interests).where(eq(interests.slug, slug)).limit(1);
+  if (existing[0] && !existing[0].isLibraryBook) return toRow(existing[0]);
 
   const inserted = await db
     .insert(interests)
     .values({
-      slug,
+      slug: existing[0] ? `${slug}-topic` : slug,
       name: trimmed,
       description: null,
       hasCuratedSource: false,
       isCustom: true,
-      generatesAppliedInsights,
+      generatesAppliedInsights: true,
+      createdByUserId: userId,
     })
     .returning();
-
-  const row = inserted[0];
-  return {
-    id: row.id,
-    slug: row.slug,
-    name: row.name,
-    description: row.description,
-    hasCuratedSource: row.hasCuratedSource,
-    isCustom: row.isCustom,
-    generatesAppliedInsights: row.generatesAppliedInsights,
-    isFavorite: row.isFavorite,
-    isLibraryBook: row.isLibraryBook,
-    level: "some_background",
-    enabled: false,
-  };
+  return toRow(inserted[0]);
 }
 
-/**
- * Finds or creates the hidden pseudo-interest for a Library book ("Library:
- * <title>") — purely so coveredTopics.interestId has a valid row to attach
- * book-chapter concepts to, letting the existing spaced-resurfacing system
- * pick them up exactly like interest content. Never gets a userInterests
- * row and is filtered out of every user-facing interest list.
- */
-export async function getOrCreateLibraryInterest(bookId: number, bookTitle: string): Promise<InterestWithConfig> {
+/** Hidden pseudo-interest for a Library book, so its concepts have a home. */
+export async function getOrCreateLibraryInterest(bookId: number, bookTitle: string): Promise<InterestRow> {
   const slug = `library-book-${bookId}`;
   const existing = await db.select().from(interests).where(eq(interests.slug, slug)).limit(1);
-  if (existing[0]) {
-    const row = existing[0];
-    return {
-      id: row.id,
-      slug: row.slug,
-      name: row.name,
-      description: row.description,
-      hasCuratedSource: row.hasCuratedSource,
-      isCustom: row.isCustom,
-      generatesAppliedInsights: row.generatesAppliedInsights,
-      isFavorite: row.isFavorite,
-      isLibraryBook: row.isLibraryBook,
-      level: "some_background",
-      enabled: false,
-    };
-  }
-
+  if (existing[0]) return toRow(existing[0]);
   const inserted = await db
     .insert(interests)
     .values({
@@ -172,163 +128,53 @@ export async function getOrCreateLibraryInterest(bookId: number, bookTitle: stri
       isLibraryBook: true,
     })
     .returning();
-  const row = inserted[0];
-  return {
-    id: row.id,
-    slug: row.slug,
-    name: row.name,
-    description: row.description,
-    hasCuratedSource: row.hasCuratedSource,
-    isCustom: row.isCustom,
-    generatesAppliedInsights: row.generatesAppliedInsights,
-    isFavorite: row.isFavorite,
-    isLibraryBook: row.isLibraryBook,
-    level: "some_background",
-    enabled: false,
-  };
+  return toRow(inserted[0]);
 }
 
-/** Enable/disable an interest and set its level. Upserts — safe to call repeatedly. */
-export async function setUserInterest(interestId: number, level: Level, enabled: boolean) {
-  const existing = await db
-    .select()
-    .from(userInterests)
-    .where(eq(userInterests.interestId, interestId))
-    .limit(1);
-
-  if (existing.length > 0) {
-    await db
-      .update(userInterests)
-      .set({ level, enabled })
-      .where(eq(userInterests.interestId, interestId));
-  } else {
-    await db.insert(userInterests).values({ interestId, level, enabled });
-  }
+export async function setUserInterest(
+  userId: number,
+  interestId: number,
+  level: Level,
+  enabled: boolean
+): Promise<void> {
+  await client.execute({
+    sql: `INSERT INTO user_interest_prefs (user_id, interest_id, level, enabled) VALUES (?, ?, ?, ?)
+          ON CONFLICT(user_id, interest_id) DO UPDATE SET level = excluded.level, enabled = excluded.enabled`,
+    args: [userId, interestId, level, enabled ? 1 : 0],
+  });
 }
 
-/** Bulk save — used by both onboarding and the settings page. */
 export async function saveUserInterests(
+  userId: number,
   updates: { interestId: number; level: Level; enabled: boolean }[]
-) {
-  for (const u of updates) {
-    await setUserInterest(u.interestId, u.level, u.enabled);
-  }
+): Promise<void> {
+  for (const u of updates) await setUserInterest(userId, u.interestId, u.level, u.enabled);
 }
 
-/** Per-interest override for whether deep dives get an Applied Insight card. */
-export async function setGeneratesAppliedInsights(interestId: number, value: boolean) {
-  await db.update(interests).set({ generatesAppliedInsights: value }).where(eq(interests.id, interestId));
-}
-
-/** Passion Mode toggle — from Settings or a single star tap in the feed. */
-export async function setIsFavorite(interestId: number, value: boolean) {
-  await db.update(interests).set({ isFavorite: value }).where(eq(interests.id, interestId));
+export async function setIsFavorite(userId: number, interestId: number, value: boolean): Promise<void> {
+  await db
+    .update(userInterests)
+    .set({ isFavorite: value })
+    .where(and(eq(userInterests.userId, userId), eq(userInterests.interestId, interestId)));
 }
 
 export interface CoveredTopicsInfo {
-  recent: string[]; // chronological order, bounded — for prompt context
-  totalCount: number; // full history length — the escalation signal ("this is entry #N")
+  recent: string[]; // chronological, bounded — prompt context
+  totalCount: number; // length of the whole series — the "entry #N" signal
 }
 
 /**
- * Recent covered-topic strings for an interest (chronological, bounded for
- * prompt size) plus the full-history count, which is the signal deep-dive
- * generation uses to keep escalating sophistication over weeks/months
- * instead of plateauing at an intro level (see deepDive.ts).
+ * Topics already written for an (interest, level) series, oldest first.
+ * The series is shared: everyone at this level in this interest walks the
+ * same sequence, so each entry is written once.
  */
-export async function getCoveredTopics(interestId: number, limit = 20): Promise<CoveredTopicsInfo> {
+export async function getSeriesTopics(interestId: number, level: Level, limit = 25): Promise<CoveredTopicsInfo> {
   const rows = await db
-    .select({ topic: coveredTopics.topic })
-    .from(coveredTopics)
-    .where(eq(coveredTopics.interestId, interestId))
-    .orderBy(desc(coveredTopics.dateCovered))
-    .limit(limit);
-
-  const totalRows = await db
-    .select({ value: count() })
-    .from(coveredTopics)
-    .where(eq(coveredTopics.interestId, interestId));
-
-  return {
-    recent: rows.map((r) => r.topic).reverse(), // chronological order for the prompt
-    totalCount: totalRows[0]?.value ?? rows.length,
-  };
-}
-
-// Spaced resurfacing schedule (Phase 4): simple fixed days-out sequence, not
-// a full SM-2 implementation, per spec. Index 0 is the first review after a
-// topic is newly covered; each subsequent review pushes further out, capped
-// at the last entry rather than growing indefinitely.
-const REVIEW_SCHEDULE_DAYS = [3, 7, 21, 60];
-
-/** Formats a future Date to match SQLite's own `current_timestamp` shape
- * ("YYYY-MM-DD HH:MM:SS", UTC, no offset marker) so the two stay directly
- * comparable/sortable as plain text. */
-function daysFromNowSqlite(days: number): string {
-  return new Date(Date.now() + days * 86400000).toISOString().slice(0, 19).replace("T", " ");
-}
-
-/** Logs a newly-covered topic and schedules its first spaced-review date.
- * deepDiveId links back to the entry so a later "Remember this?" card can
- * pull a refresher from it — null for topics with no source entry (Phase 5:
- * a standalone formal-logic drill has no source deep dive). */
-export async function addCoveredTopic(interestId: number, topic: string, deepDiveId: number | null) {
-  await db.insert(coveredTopics).values({
-    interestId,
-    topic,
-    deepDiveId,
-    nextReviewDate: daysFromNowSqlite(REVIEW_SCHEDULE_DAYS[0]),
-    reviewCount: 0,
-  });
-}
-
-/** Same as addCoveredTopic, but for a Library book chapter's key concept
- * instead of a deep-dive topic — chapterId lets a later "Remember this?"
- * card pull its refresher from the chapter summary. */
-export async function addCoveredTopicFromChapter(interestId: number, topic: string, chapterId: number) {
-  await db.insert(coveredTopics).values({
-    interestId,
-    topic,
-    chapterId,
-    nextReviewDate: daysFromNowSqlite(REVIEW_SCHEDULE_DAYS[0]),
-    reviewCount: 0,
-  });
-}
-
-/** Called when a resurfaced "Remember this?" card is actually opened —
- * pushes that topic's next review further out on the fixed schedule above.
- * Not called just for being shown; only for being opened/read. */
-export async function markTopicReviewed(coveredTopicId: number): Promise<void> {
-  const rows = await db
-    .select({ reviewCount: coveredTopics.reviewCount })
-    .from(coveredTopics)
-    .where(eq(coveredTopics.id, coveredTopicId))
-    .limit(1);
-  const row = rows[0];
-  if (!row) return;
-  const newCount = row.reviewCount + 1;
-  const days = REVIEW_SCHEDULE_DAYS[Math.min(newCount, REVIEW_SCHEDULE_DAYS.length - 1)];
-  await db
-    .update(coveredTopics)
-    .set({ reviewCount: newCount, nextReviewDate: daysFromNowSqlite(days) })
-    .where(eq(coveredTopics.id, coveredTopicId));
-}
-
-/** Convenience lookup used to gate legacy Phase 1 features (Brain Fact of the Day). */
-export async function isInterestEnabled(slug: string): Promise<boolean> {
-  const rows = await db
-    .select({ id: interests.id })
-    .from(interests)
-    .where(eq(interests.slug, slug))
-    .limit(1);
-  const id = rows[0]?.id;
-  if (!id) return false;
-  const configs = await db
-    .select({ enabled: userInterests.enabled })
-    .from(userInterests)
-    .where(eq(userInterests.interestId, id))
-    .limit(1);
-  return configs[0]?.enabled ?? false;
+    .select({ topic: deepDives.topic })
+    .from(deepDives)
+    .where(and(eq(deepDives.interestId, interestId), eq(deepDives.level, level)))
+    .orderBy(asc(deepDives.seq), asc(deepDives.id));
+  return { recent: rows.slice(-limit).map((r) => r.topic), totalCount: rows.length };
 }
 
 export async function getInterestsBySlug(slugs: string[]) {

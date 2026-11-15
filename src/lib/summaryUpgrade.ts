@@ -7,7 +7,8 @@
 import { db } from "@/db";
 import { items } from "@/db/schema";
 import { eq, like, and, isNotNull, desc } from "drizzle-orm";
-import { buildSummaryTexts } from "./pipeline";
+import { client } from "@/db";
+import { buildSummaryTexts, firstSentence } from "./engine/news";
 import { summarizeBatch, type SummaryRunStatus } from "./claude";
 import { inventedNumbers } from "./summaryLlm";
 import type { RawItem } from "./types";
@@ -67,10 +68,35 @@ export async function upgradeSummary(
 
   if (opts.write !== false) {
     await db.update(items).set({ summary }).where(eq(items.id, row.id));
+    // The feed serves the card, not the item row: refresh its text too.
+    await client.execute({
+      sql: "UPDATE cards SET body = ?, payload = json_set(payload, '$.takeaway', ?) WHERE item_id = ? AND type = 'paper'",
+      args: [summary, firstSentence(summary), row.id],
+    });
+    await client.execute({ sql: "UPDATE search_index SET body = ? WHERE dedupe_key = ?", args: [summary, `news:${row.id}`] });
   }
   return {
     status: "upgraded",
     words: summary.trim().split(/\s+/).length,
     invented: inventedNumbers(summary, `${row.title} ${sourceText}`),
   };
+}
+
+/**
+ * Upgrades as many fallback summaries as fit in the time budget. Run as a
+ * background job; whatever it doesn't reach is picked up by the next run.
+ */
+export async function upgradeFallbackSummaries(budgetMs = 40_000, maxItems = 12): Promise<{ upgraded: number; remaining: number }> {
+  const deadline = Date.now() + budgetMs;
+  const rows = await listFallbackItems();
+  let upgraded = 0;
+  let tried = 0;
+  for (const row of rows.slice(0, maxItems)) {
+    if (Date.now() > deadline - 8000) break;
+    tried++;
+    const result = await upgradeSummary(row, { deadline });
+    if (result.status === "upgraded") upgraded++;
+    if (result.status === "out-of-time") break;
+  }
+  return { upgraded, remaining: Math.max(0, rows.length - tried) };
 }

@@ -198,7 +198,7 @@ export function ResearchAgent() {
       {loading && <ResultSkeleton />}
 
       {error && (
-        <div className="animate-reveal card flex items-start gap-3 border-red-500/40 bg-red-500/5">
+        <div className="animate-reveal card flex items-start gap-3 border-neuron-danger/40 bg-neuron-danger/5">
           <AlertIcon />
           <div className="flex-1 space-y-2">
             <p className="text-sm text-red-300">{error}</p>
@@ -375,7 +375,7 @@ function CheckIcon() {
 
 function AlertIcon() {
   return (
-    <svg className="h-4 w-4 shrink-0 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg className="h-4 w-4 shrink-0 text-neuron-danger" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <circle cx="12" cy="12" r="9" />
       <path d="M12 8v5" strokeLinecap="round" />
       <circle cx="12" cy="16" r="0.5" fill="currentColor" />
