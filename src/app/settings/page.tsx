@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { getCatalog } from "@/lib/interests";
 import { PLAN_LIMITS } from "@/lib/plan";
 import { pushEnabled } from "@/lib/push";
+import { isNativeAppRequest } from "@/lib/nativeApp";
 import { InterestPicker } from "@/components/InterestPicker";
 import { PrefsForm } from "@/components/PrefsForm";
 import { DeleteAccount } from "@/components/DeleteAccount";
@@ -28,7 +29,7 @@ export default async function SettingsPage() {
 
       <section className="mt-8" aria-labelledby="prefs-heading">
         <h2 id="prefs-heading" className="mb-4 font-display text-xl font-bold">Preferences</h2>
-        <div className="card"><PrefsForm initial={user.prefs} pushAvailable={pushEnabled()} /></div>
+        <div className="card"><PrefsForm initial={user.prefs} pushAvailable={pushEnabled() && !isNativeAppRequest()} /></div>
       </section>
 
       <section className="mt-10 scroll-mt-6" id="interests" aria-labelledby="interests-heading">

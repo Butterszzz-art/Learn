@@ -2,15 +2,28 @@
   "appId": "app.neuron.learn",
   "appName": "Neuron",
   "webDir": "capacitor-shell",
+  "appendUserAgent": "NeuronApp",
   "server": {
-    "url": "https://YOUR-DEPLOYED-DOMAIN",
-    "cleartext": false
+    "url": "https://learn-n6r5.vercel.app",
+    "cleartext": false,
+    "errorPath": "offline.html"
   },
   "ios": {
-    "contentInset": "always",
-    "backgroundColor": "#120f1e"
+    "contentInset": "never",
+    "backgroundColor": "#120f1e",
+    "scheme": "Neuron",
+    "limitsNavigationsToAppBoundDomains": false
   },
-  "android": {
-    "backgroundColor": "#120f1e"
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 3000,
+      "launchAutoHide": true,
+      "backgroundColor": "#120f1e",
+      "showSpinner": false
+    },
+    "StatusBar": {
+      "overlaysWebView": true,
+      "style": "DARK"
+    }
   }
 }

@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect } from "react";
+import { isNativeApp, startNative } from "@/lib/native";
 
 /** One-time browser setup: service worker registration and error reporting. */
 export function ClientBoot() {
   useEffect(() => {
-    if ("serviceWorker" in navigator && process.env.NODE_ENV === "production") {
+    startNative();
+    // The iOS app's web view has no service worker support; the shell handles offline itself.
+    if (!isNativeApp() && "serviceWorker" in navigator && process.env.NODE_ENV === "production") {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
     let sent = 0;

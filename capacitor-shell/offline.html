@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- Shown by the iOS app when the site can't be reached (errorPath in capacitor.config.json). -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Neuron</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #120f1e; color: #f4f0ff; font-family: -apple-system, system-ui, sans-serif; }
+      main { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; box-sizing: border-box; }
+      .icon { font-size: 56px; }
+      h1 { font-size: 24px; margin: 16px 0 8px; }
+      p { color: #b8b0d0; margin: 0 0 24px; max-width: 320px; line-height: 1.4; }
+      button { font: inherit; font-weight: 700; color: #120f1e; background: linear-gradient(135deg, #a78bfa, #f472b6); border: 0; border-radius: 999px; padding: 14px 28px; min-height: 44px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="icon" aria-hidden="true">🧠</div>
+      <h1>You're offline</h1>
+      <p>Neuron needs a connection to load new cards. Check your Wi-Fi or mobile data and try again.</p>
+      <button type="button" onclick="location.href = 'https://learn-n6r5.vercel.app/'">Try again</button>
+    </main>
+  </body>
+</html>

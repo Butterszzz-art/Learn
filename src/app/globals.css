@@ -74,6 +74,9 @@
     background-attachment: fixed;
     background-repeat: no-repeat;
     overscroll-behavior-y: none;
+    /* Keep content clear of the notch / status bar when the page draws under
+       it (iOS app, Home Screen web app). Zero in an ordinary browser tab. */
+    padding-top: env(safe-area-inset-top);
   }
   :focus-visible {
     outline: 2px solid rgb(var(--n-accent));
@@ -161,14 +164,14 @@
   padding-bottom: calc(4rem + env(safe-area-inset-bottom));
 }
 .h-screen-minus-tabbar {
-  height: calc(100dvh - 4rem - env(safe-area-inset-bottom));
+  height: calc(100dvh - 4rem - env(safe-area-inset-bottom) - env(safe-area-inset-top));
 }
 @media (min-width: 768px) {
   .pb-tabbar {
     padding-bottom: 0;
   }
   .h-screen-minus-tabbar {
-    height: 100dvh;
+    height: calc(100dvh - env(safe-area-inset-top));
   }
 }
 
