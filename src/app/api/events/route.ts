@@ -5,7 +5,7 @@ import type { CardEvent } from "@/lib/cardTypes";
 
 export const dynamic = "force-dynamic";
 
-const EVENTS = new Set(["impression", "dwell", "completed", "expanded", "saved", "unsaved", "shared", "skipped_fast", "quiz_correct", "quiz_incorrect", "go_deeper"]);
+const EVENTS = new Set(["impression", "dwell", "completed", "expanded", "saved", "unsaved", "shared", "skipped_fast", "quiz_correct", "quiz_incorrect", "go_deeper", "revisit"]);
 
 export async function POST(req: Request) {
   const user = await apiUser();

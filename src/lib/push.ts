@@ -6,6 +6,10 @@
 import webpush from "web-push";
 import { client } from "@/db";
 import { countDue } from "./learning";
+import { getActiveDays, streakAtRisk } from "./explore";
+
+/** Streaks shorter than this aren't worth a warning. */
+const STREAK_WARN_FROM = 3;
 
 let configured: boolean | null = null;
 
@@ -65,6 +69,19 @@ export async function sendDailyNudges(): Promise<number> {
   let sent = 0;
   for (const u of res.rows as any[]) {
     const userId = Number(u.id);
+    let prefs: Record<string, any> = {};
+    try {
+      prefs = JSON.parse(u.prefs ?? "{}");
+    } catch {}
+    // Streak saver (opt-in): if today is the day the streak would end, say so instead.
+    if (prefs.streakOptIn && prefs.streakReminder) {
+      const atRisk = streakAtRisk(await getActiveDays(userId), today);
+      if (atRisk >= STREAK_WARN_FROM) {
+        if ((await sendPush(userId, { title: `Your ${atRisk}-day streak ends today`, body: "One card keeps it going. Today's set takes a couple of minutes.", url: "/" })) > 0) sent++;
+        await client.execute({ sql: "UPDATE users SET prefs = json_set(prefs, '$.lastNudge', ?) WHERE id = ?", args: [today, userId] });
+        continue;
+      }
+    }
     const due = await countDue(userId);
     const fresh = await client.execute({
       sql: `SELECT COUNT(*) AS n FROM cards c

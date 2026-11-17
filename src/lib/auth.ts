@@ -274,6 +274,7 @@ export async function deleteAccount(userId: number): Promise<void> {
     "DELETE FROM concepts WHERE owner_user_id = ?",
     "DELETE FROM user_interest_prefs WHERE user_id = ?",
     "DELETE FROM user_cards WHERE user_id = ?",
+    "DELETE FROM card_responses WHERE user_id = ?",
     "DELETE FROM user_concepts WHERE user_id = ?",
     "DELETE FROM push_subscriptions WHERE user_id = ?",
     "DELETE FROM syllabus_topics WHERE syllabus_id IN (SELECT id FROM syllabi WHERE user_id = ?)",

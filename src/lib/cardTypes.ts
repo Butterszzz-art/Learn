@@ -12,7 +12,8 @@ export const SOURCE_BADGE_LABELS: Record<SourceBadge, string> = {
 };
 
 export interface BitePayload {
-  kind: "hook" | "idea" | "number" | "why";
+  // puzzle = the headline is a question; the text (the answer) stays hidden until the reader taps.
+  kind: "hook" | "idea" | "number" | "why" | "puzzle";
   highlight?: string; // the key term or number to call out
   takeaway?: string; // one line, shown bold under the body
 }
@@ -44,6 +45,20 @@ export interface MythPayload {
   myth: string;
   fact: string;
 }
+export interface EstimatePayload {
+  answer: number; // taken from the deep dive's own text
+  unit: string; // e.g. "%", "years", "neurons" — may be empty
+  min: number; // slider range; answer lies strictly inside it
+  max: number;
+  explanation: string;
+}
+/** What other readers said on an interactive card. */
+export interface CrowdStats {
+  responses: number;
+  medianGuess?: number | null; // estimate cards
+  withinQuarter?: number | null; // share of guesses within 25% of the answer
+  agreeShare?: number | null; // debate cards
+}
 export interface ModelPayload {
   category: string;
 }
@@ -53,7 +68,7 @@ export interface GamePayload {
 }
 
 /** Kinds that exist only in a person's feed, built on the fly. */
-export type SyntheticKind = "review" | "recap" | "chapter" | "brewing" | "caughtup";
+export type SyntheticKind = "review" | "recap" | "chapter" | "brewing" | "caughtup" | "dailydone";
 
 export interface FeedCard {
   key: string; // unique within a feed session
@@ -85,11 +100,13 @@ export const CARD_KIND_LABELS: Record<FeedCard["kind"], string> = {
   model: "Mental model",
   fact: "Fact",
   game: "Brain game",
+  estimate: "Guess the number",
   review: "Remember this?",
   recap: "Recap",
   chapter: "From your library",
   brewing: "On its way",
   caughtup: "All caught up",
+  dailydone: "Today's set done",
 };
 
 /** Events the client reports about a card. */
@@ -104,7 +121,8 @@ export type CardEventName =
   | "skipped_fast"
   | "quiz_correct"
   | "quiz_incorrect"
-  | "go_deeper";
+  | "go_deeper"
+  | "revisit"; // scrolled back up to a card already passed
 
 export interface CardEvent {
   cardId: number;

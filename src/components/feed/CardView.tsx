@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { FeedCard, CardEventName } from "@/lib/cardTypes";
 import { CARD_KIND_LABELS, SOURCE_BADGE_LABELS } from "@/lib/cardTypes";
-import type { SourceBadge } from "@/lib/cardTypes";
+import type { SourceBadge, CrowdStats } from "@/lib/cardTypes";
 import { LEVEL_LABELS } from "@/db/schema";
 import { interestStyle, formatDate, postJson } from "@/lib/ui";
 import { Icon } from "../Icon";
 import { Mermaid } from "../Mermaid";
 import { QuizBlock } from "./QuizBlock";
+import { formatNumber, guessVerdict, sliderScale } from "@/lib/interactive";
+import { spokenSegments } from "@/lib/spoken";
+import { speakSegments, speechSupported } from "@/lib/speech";
 import { shareLink, tap } from "@/lib/native";
 
 export interface CardHandlers {
@@ -82,49 +85,53 @@ function ActionButton({
   );
 }
 
-/** Reads the card aloud with the browser's built-in speech synthesis. */
-function useSpeech(text: string, active: boolean) {
+/** Reads the card aloud (segment by segment, with thinking pauses). */
+function useSpeech(card: FeedCard, active: boolean) {
   const [speaking, setSpeaking] = useState(false);
-  const supported = typeof window !== "undefined" && "speechSynthesis" in window;
+  const cancel = useRef<(() => void) | null>(null);
+  // Checked after mount: the server can't know, and guessing breaks hydration.
+  const [supported, setSupported] = useState(false);
+  useEffect(() => setSupported(speechSupported()), []);
   useEffect(() => {
     // Stop when the card scrolls away or unmounts.
-    if (!active && speaking) {
-      window.speechSynthesis.cancel();
+    if (!active && cancel.current) {
+      cancel.current();
+      cancel.current = null;
       setSpeaking(false);
     }
-    return () => {
-      if (speaking) window.speechSynthesis.cancel();
-    };
-  }, [active, speaking]);
+  }, [active]);
+  useEffect(() => () => cancel.current?.(), []);
   function toggle() {
     if (!supported) return;
     if (speaking) {
-      window.speechSynthesis.cancel();
+      cancel.current?.();
+      cancel.current = null;
       setSpeaking(false);
       return;
     }
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = 1;
-    u.onend = () => setSpeaking(false);
-    u.onerror = () => setSpeaking(false);
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(u);
+    cancel.current = speakSegments(spokenSegments(card), () => {
+      cancel.current = null;
+      setSpeaking(false);
+    });
     setSpeaking(true);
   }
   return { supported, speaking, toggle };
 }
 
-function Actions({ card, active, handlers, speechText }: { card: FeedCard; active: boolean; handlers: CardHandlers; speechText: string }) {
+function Actions({ card, active, handlers, listening }: { card: FeedCard; active: boolean; handlers: CardHandlers; listening: boolean }) {
   const [saved, setSaved] = useState(card.saved);
   const [copied, setCopied] = useState(false);
-  const speech = useSpeech(speechText, active);
+  const speech = useSpeech(card, active);
   if (card.cardId === null) return null;
   const cardId = card.cardId;
 
+  // Quiz and guess-the-number cards are shared as a challenge to a friend.
+  const challenge = card.kind === "quiz" || card.kind === "estimate";
   async function share() {
     const url = `${location.origin}/s/${cardId}`;
     handlers.onEvent(cardId, "shared");
-    if (await shareLink({ title: card.title, text: card.payload.takeaway ?? card.title, url })) return;
+    const text = challenge ? "Can you get this one? 🧠" : card.payload.takeaway ?? card.title;
+    if (await shareLink({ title: challenge ? "A challenge from Neuron" : card.title, text, url })) return;
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
@@ -145,9 +152,9 @@ function Actions({ card, active, handlers, speechText }: { card: FeedCard; activ
             if (!saved) tap();
           }}
         />
-        <ActionButton icon="share" label={copied ? "Copied" : "Share"} onClick={share} />
+        <ActionButton icon="share" label={copied ? "Copied" : challenge ? "Challenge" : "Share"} onClick={share} />
         <ActionButton icon="ask" label="Ask" onClick={() => handlers.onAsk(card)} />
-        {speech.supported && <ActionButton icon={speech.speaking ? "stop" : "listen"} label={speech.speaking ? "Stop" : "Listen"} onClick={speech.toggle} active={speech.speaking} />}
+        {speech.supported && !listening && <ActionButton icon={speech.speaking ? "stop" : "listen"} label={speech.speaking ? "Stop" : "Listen"} onClick={speech.toggle} active={speech.speaking} />}
         <ActionButton icon="more" label="Report" onClick={() => handlers.onReport(card)} />
       </div>
       {card.deepDiveId !== null && (
@@ -260,6 +267,7 @@ function Body({ card, handlers }: { card: FeedCard; handlers: CardHandlers }) {
 
   switch (card.kind) {
     case "bite":
+      if (p.kind === "puzzle") return <PuzzleBite card={card} onReveal={() => emit("completed")} />;
       return (
         <div className="w-full">
           <h2 className="font-display text-3xl font-bold leading-tight sm:text-4xl">{card.title}</h2>
@@ -299,24 +307,9 @@ function Body({ card, handlers }: { card: FeedCard; handlers: CardHandlers }) {
         <RecallReview card={card} />
       );
     case "debate":
-      return (
-        <div className="w-full">
-          <h2 className="font-display text-2xl font-bold leading-tight">{card.title}</h2>
-          <div className="mt-4 rounded-2xl border border-neuron-border bg-neuron-surface2 p-4">
-            <p className="eyebrow mb-1">The claim</p>
-            <p className="text-base leading-relaxed">{p.claim}</p>
-          </div>
-          <div className="mt-3 rounded-2xl border-2 border-[var(--ic)] bg-[var(--ic-soft)] p-4">
-            <p className="eyebrow mb-1">The strongest case against it</p>
-            <p className="text-base leading-relaxed">{card.body}</p>
-          </div>
-          {p.url && (
-            <a href={p.url} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-sm font-extrabold text-neuron-accent">
-              {p.sourceName ?? "Source"} <Icon name="external" className="h-4 w-4" />
-            </a>
-          )}
-        </div>
-      );
+      return <DebateBody card={card} onAnswer={() => emit("completed")} />;
+    case "estimate":
+      return <EstimateBody card={card} onAnswer={() => emit("completed")} />;
     case "insight":
       return (
         <div className="w-full">
@@ -414,6 +407,198 @@ function Body({ card, handlers }: { card: FeedCard; handlers: CardHandlers }) {
   }
 }
 
+/** A bite whose headline is a question: think first, then tap for the answer. */
+function PuzzleBite({ card, onReveal }: { card: FeedCard; onReveal: () => void }) {
+  const [shown, setShown] = useState(false);
+  const p = card.payload;
+  return (
+    <div className="w-full">
+      <p className="eyebrow">Think about it first</p>
+      <h2 className="mt-2 font-display text-3xl font-bold leading-tight sm:text-4xl">{card.title}</h2>
+      {shown ? (
+        <div aria-live="polite">
+          <p className="mt-4 text-lg leading-relaxed text-neuron-text/95 sm:text-xl">
+            <Highlighted text={card.body} term={p.highlight} />
+          </p>
+          {p.takeaway && <p className="mt-5 border-l-4 border-[var(--ic)] pl-4 text-base font-bold leading-snug text-neuron-text">{p.takeaway}</p>}
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="btn-secondary mt-6"
+          onClick={() => {
+            setShown(true);
+            onReveal();
+          }}
+        >
+          I&apos;ve had a guess — show me
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Sends an answer to an interactive card; resolves to the crowd numbers (null until enough people answered). */
+async function respond(cardId: number | null, value: number): Promise<CrowdStats | null> {
+  if (cardId === null) return null;
+  const res = await postJson<{ crowd: CrowdStats | null }>(`/api/cards/${cardId}/respond`, { value });
+  return res.data?.crowd ?? null;
+}
+
+export function EstimateBody({ card, onAnswer }: { card: FeedCard; onAnswer: () => void }) {
+  const p = card.payload as { answer: number; unit: string; min: number; max: number; explanation: string };
+  const scale = sliderScale(p.min, p.max);
+  const [pos, setPos] = useState(500);
+  const [locked, setLocked] = useState(false);
+  const [crowd, setCrowd] = useState<CrowdStats | null>(null);
+  const guess = scale.toValue(pos);
+  const verdict = guessVerdict(guess, p.answer);
+  async function lockIn() {
+    setLocked(true);
+    onAnswer();
+    if (verdict.close) tap();
+    setCrowd(await respond(card.cardId, guess));
+  }
+  return (
+    <div className="w-full">
+      <h2 className="font-display text-2xl font-bold leading-tight sm:text-3xl">{card.title}</h2>
+      <p className="mt-5 text-center font-display text-4xl font-bold tabular-nums" aria-live="polite">
+        {formatNumber(guess, p.unit)}
+      </p>
+      <input
+        type="range"
+        min={0}
+        max={1000}
+        value={pos}
+        disabled={locked}
+        onChange={(e) => setPos(Number(e.target.value))}
+        aria-label="Your guess"
+        aria-valuetext={formatNumber(guess, p.unit)}
+        className="mt-3 w-full accent-[rgb(var(--n-accent))]"
+      />
+      <div className="flex justify-between text-xs text-neuron-muted">
+        <span>{formatNumber(p.min, p.unit)}</span>
+        <span>{formatNumber(p.max, p.unit)}</span>
+      </div>
+      {!locked ? (
+        <button type="button" className="btn-primary mt-5 w-full" onClick={lockIn}>
+          Lock in my guess
+        </button>
+      ) : (
+        <div className="mt-5 rounded-2xl bg-neuron-surface2 p-4" aria-live="polite">
+          <p className={`text-sm font-extrabold ${verdict.close ? "text-neuron-accent3" : "text-neuron-warn"}`}>{verdict.label}</p>
+          <p className="mt-1 text-lg">
+            The answer: <strong className="font-display text-2xl">{formatNumber(p.answer, p.unit)}</strong>
+          </p>
+          {p.explanation && <p className="mt-2 text-base leading-relaxed text-neuron-text/90">{p.explanation}</p>}
+          {crowd && crowd.medianGuess != null && (
+            <p className="mt-3 text-sm text-neuron-muted">
+              Readers&apos; typical guess: {formatNumber(crowd.medianGuess, p.unit)}
+              {crowd.withinQuarter != null ? ` · ${Math.round(crowd.withinQuarter * 100)}% got within 25%` : ""}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A claim to take a side on before the strongest counterargument is shown. */
+function DebateBody({ card, onAnswer }: { card: FeedCard; onAnswer: () => void }) {
+  const p = card.payload;
+  const [revealed, setRevealed] = useState(false);
+  const [crowd, setCrowd] = useState<CrowdStats | null>(null);
+  async function pick(v: 1 | 0) {
+    setRevealed(true);
+    onAnswer();
+    setCrowd(await respond(card.cardId, v));
+  }
+  return (
+    <div className="w-full">
+      <h2 className="font-display text-2xl font-bold leading-tight">{card.title}</h2>
+      <div className="mt-4 rounded-2xl border border-neuron-border bg-neuron-surface2 p-4">
+        <p className="eyebrow mb-1">The claim</p>
+        <p className="text-base leading-relaxed">{p.claim}</p>
+      </div>
+      {!revealed ? (
+        <div className="mt-4">
+          <p className="text-sm font-bold text-neuron-muted">Do you buy it? Pick a side, then see the best case against it.</p>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <button type="button" className="btn-secondary" onClick={() => pick(1)}>
+              Convinced
+            </button>
+            <button type="button" className="btn-secondary" onClick={() => pick(0)}>
+              Not convinced
+            </button>
+          </div>
+          <button type="button" className="mt-2 min-h-[44px] text-sm font-bold text-neuron-muted underline" onClick={() => setRevealed(true)}>
+            Just show me
+          </button>
+        </div>
+      ) : (
+        <div aria-live="polite">
+          <div className="mt-3 rounded-2xl border-2 border-[var(--ic)] bg-[var(--ic-soft)] p-4">
+            <p className="eyebrow mb-1">The strongest case against it</p>
+            <p className="text-base leading-relaxed">{card.body}</p>
+          </div>
+          {crowd && crowd.agreeShare != null && (
+            <p className="mt-3 text-sm text-neuron-muted">
+              {Math.round(crowd.agreeShare * 100)}% of readers were convinced by the claim · {crowd.responses} answers
+            </p>
+          )}
+        </div>
+      )}
+      {p.url && (
+        <a href={p.url} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-sm font-extrabold text-neuron-accent">
+          {p.sourceName ?? "Source"} <Icon name="external" className="h-4 w-4" />
+        </a>
+      )}
+    </div>
+  );
+}
+
+/** The finish line of the daily set: a real stopping point, with the open feed still there. */
+function DailyDone({ card, onNext }: { card: FeedCard; onNext?: () => void }) {
+  const p = card.payload;
+  useEffect(() => {
+    try {
+      tap();
+    } catch {}
+  }, []);
+  return (
+    <div className="w-full text-center">
+      <p aria-hidden className="text-6xl">🌱</p>
+      <h2 className="mt-3 font-display text-3xl font-bold">{card.title}</h2>
+      {typeof p.streak === "number" && p.streak > 0 && (
+        <p className="mt-2 text-base font-extrabold text-neuron-accent3">
+          {p.streak} day{p.streak === 1 ? "" : "s"} in a row
+        </p>
+      )}
+      <p className="mt-3 text-base text-neuron-muted">{card.body}</p>
+      {Array.isArray(p.concepts) && p.concepts.length > 0 && (
+        <ul className="mt-3 flex flex-wrap justify-center gap-2">
+          {p.concepts.map((c: string) => (
+            <li key={c} className="pill !text-neuron-text">
+              {c}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-6 text-sm text-neuron-muted">You can stop here with a clear conscience. Tomorrow&apos;s set will build on today&apos;s.</p>
+      <div className="mt-4 flex flex-wrap justify-center gap-2">
+        <Link href="/map" className="btn-secondary">
+          See your knowledge map
+        </Link>
+        {onNext && (
+          <button type="button" className="btn-secondary" onClick={onNext}>
+            Keep going
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function GameBody({ card }: { card: FeedCard }) {
   const [shown, setShown] = useState(false);
   return (
@@ -457,9 +642,20 @@ function Brewing({ card, onRefresh }: { card: FeedCard; onRefresh: () => void })
 }
 
 /** One full-screen feed card. */
-export function CardView({ card, active, handlers }: { card: FeedCard; active: boolean; handlers: CardHandlers }) {
-  const speechText = [card.title, card.payload.takeaway, card.body].filter(Boolean).join(". ");
-  const centered = ["recap", "brewing", "caughtup"].includes(card.kind);
+export function CardView({
+  card,
+  active,
+  handlers,
+  listening = false,
+  onNext,
+}: {
+  card: FeedCard;
+  active: boolean;
+  handlers: CardHandlers;
+  listening?: boolean;
+  onNext?: () => void;
+}) {
+  const centered = ["recap", "brewing", "caughtup", "dailydone"].includes(card.kind);
   return (
     <article
       aria-label={`${CARD_KIND_LABELS[card.kind]}: ${card.title}`}
@@ -469,7 +665,7 @@ export function CardView({ card, active, handlers }: { card: FeedCard; active: b
       <div className="flex min-h-0 flex-1 flex-col rounded-3xl border border-neuron-border bg-neuron-surface p-5 shadow-sm sm:p-7">
         {!centered && <Header card={card} />}
         <div className={`flex min-h-0 flex-1 flex-col overflow-y-auto py-4 ${centered ? "justify-center" : "justify-center"}`}>
-          <Body card={card} handlers={handlers} />
+          {card.kind === "dailydone" ? <DailyDone card={card} onNext={onNext} /> : <Body card={card} handlers={handlers} />}
         </div>
         {card.level && card.kind === "bite" && (
           <p className="mb-2 text-xs text-neuron-muted">
@@ -478,7 +674,7 @@ export function CardView({ card, active, handlers }: { card: FeedCard; active: b
             {card.aiGenerated ? " · AI-written from cited sources" : ""}
           </p>
         )}
-        <Actions card={card} active={active} handlers={handlers} speechText={speechText} />
+        <Actions card={card} active={active} handlers={handlers} listening={listening} />
       </div>
     </article>
   );

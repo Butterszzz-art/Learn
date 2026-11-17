@@ -21,6 +21,7 @@ export async function POST(req: Request) {
   const patch: Partial<UserPrefs> = {};
   if (typeof body.includeBrainGames === "boolean") patch.includeBrainGames = body.includeBrainGames;
   if (typeof body.streakOptIn === "boolean") patch.streakOptIn = body.streakOptIn;
+  if (typeof body.streakReminder === "boolean") patch.streakReminder = body.streakReminder;
   if (["system", "light", "dark"].includes(body.theme)) patch.theme = body.theme;
   if (Number.isInteger(body.dailyGoal) && body.dailyGoal >= 0 && body.dailyGoal <= 200) patch.dailyGoal = body.dailyGoal;
   if (body.notifyHour === null || (Number.isInteger(body.notifyHour) && body.notifyHour >= 0 && body.notifyHour <= 23)) patch.notifyHour = body.notifyHour;

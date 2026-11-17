@@ -1,5 +1,7 @@
 // Numbers and queues for the admin page.
 import { client } from "@/db";
+import { computeCardTypeStats, computeRetention, computeSessions, median, toDayIndex } from "./metrics";
+import type { CardTypeStat, RetentionWindow } from "./metrics";
 
 async function scalar(sql: string, args: (string | number)[] = []): Promise<number> {
   const res = await client.execute({ sql, args });
@@ -182,4 +184,65 @@ export async function runAdminAction(a: AdminAction): Promise<string> {
       return `${res.rowsAffected} job(s) re-queued.`;
     }
   }
+}
+
+export interface EngagementStats {
+  retention: RetentionWindow[];
+  sessions7d: number;
+  medianCardsPerSession: number | null;
+  medianReadingMinPerSession: number | null;
+  cardTypes: CardTypeStat[];
+}
+
+/**
+ * Whether people come back and how they use the feed. Activity means being
+ * shown at least one new card that day (Review-tab-only days don't count).
+ */
+export async function getEngagementStats(): Promise<EngagementStats> {
+  const since180 = new Date(Date.now() - 180 * 86400000).toISOString();
+  const iso7 = new Date(Date.now() - 7 * 86400000).toISOString();
+  const [usersRes, daysRes, seenRes] = await Promise.all([
+    client.execute({ sql: "SELECT id, created_at FROM users WHERE created_at >= ?", args: [sqlAgo(180)] }),
+    client.execute({
+      sql: "SELECT DISTINCT user_id, substr(seen_at, 1, 10) AS day FROM user_cards WHERE seen_at >= ?",
+      args: [since180],
+    }),
+    client.execute({
+      sql: `SELECT uc.user_id, uc.seen_at, uc.dwell_ms, uc.card_type, uc.completed, uc.skipped_fast, uc.revisits, uc.saved,
+                   COALESCE(length(c.body), 0) AS body_chars
+            FROM user_cards uc LEFT JOIN cards c ON c.id = uc.card_id WHERE uc.seen_at >= ?`,
+      args: [iso7],
+    }),
+  ]);
+  const activeDays = new Map<number, Set<number>>();
+  for (const r of daysRes.rows as any[]) {
+    const id = Number(r.user_id);
+    if (!activeDays.has(id)) activeDays.set(id, new Set());
+    activeDays.get(id)!.add(toDayIndex(r.day));
+  }
+  const retention = computeRetention(
+    (usersRes.rows as any[]).map((r) => ({ id: Number(r.id), createdAt: String(r.created_at) })),
+    activeDays,
+    toDayIndex(new Date().toISOString())
+  );
+  const seen = seenRes.rows as any[];
+  const sessions = computeSessions(seen.map((r) => ({ userId: Number(r.user_id), seenAt: String(r.seen_at), dwellMs: Number(r.dwell_ms) })));
+  const readingMin = median(sessions.map((s) => s.readingMs / 60000));
+  return {
+    retention,
+    sessions7d: sessions.length,
+    medianCardsPerSession: median(sessions.map((s) => s.cards)),
+    medianReadingMinPerSession: readingMin,
+    cardTypes: computeCardTypeStats(
+      seen.map((r) => ({
+        cardType: String(r.card_type),
+        dwellMs: Number(r.dwell_ms),
+        bodyChars: Number(r.body_chars),
+        completed: !!r.completed,
+        skippedFast: !!r.skipped_fast,
+        revisits: Number(r.revisits ?? 0),
+        saved: !!r.saved,
+      }))
+    ),
+  };
 }

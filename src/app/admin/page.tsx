@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
-import { getAdminStats, getFlaggedDives, getOpenReports, getRecentErrors } from "@/lib/admin";
+import { getAdminStats, getEngagementStats, getFlaggedDives, getOpenReports, getRecentErrors } from "@/lib/admin";
+import { CARD_KIND_LABELS } from "@/lib/cardTypes";
 import { formatDate } from "@/lib/ui";
 import { AdminButton, SetPlanForm } from "@/components/AdminActions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Admin" };
 
+const pct = (n: number | null) => (n === null ? "–" : `${Math.round(n * 100)}%`);
 const usd = (n: number) => (n < 1 ? `$${n.toFixed(3)}` : `$${n.toFixed(2)}`);
 
 function Stat({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
@@ -21,7 +23,13 @@ function Stat({ label, value, hint }: { label: string; value: string | number; h
 
 export default async function AdminPage() {
   await requireAdmin();
-  const [stats, flagged, reports, errors] = await Promise.all([getAdminStats(), getFlaggedDives(), getOpenReports(), getRecentErrors()]);
+  const [stats, engagement, flagged, reports, errors] = await Promise.all([
+    getAdminStats(),
+    getEngagementStats(),
+    getFlaggedDives(),
+    getOpenReports(),
+    getRecentErrors(),
+  ]);
   const target = 0.03;
   return (
     <div>
@@ -43,6 +51,63 @@ export default async function AdminPage() {
           <AdminButton action={{ type: "run_tick" }} label="Run a generation tick now" />
           <AdminButton action={{ type: "retry_failed_jobs" }} label="Retry failed jobs" />
         </div>
+      </section>
+
+      <section className="mt-8" aria-labelledby="engagement-heading">
+        <h2 id="engagement-heading" className="eyebrow mb-3">Retention and sessions</h2>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {engagement.retention.map((w) => (
+            <Stat
+              key={w.label}
+              label={w.label}
+              value={pct(w.rate)}
+              hint={w.eligible === 0 ? "No one signed up long enough ago" : `${w.hint} · of ${w.eligible} ${w.eligible === 1 ? "person" : "people"}`}
+            />
+          ))}
+          <Stat
+            label="Typical session, 7 days"
+            value={engagement.medianCardsPerSession === null ? "–" : `${Math.round(engagement.medianCardsPerSession)} cards`}
+            hint={
+              engagement.medianReadingMinPerSession === null
+                ? "No sessions yet"
+                : `${engagement.medianReadingMinPerSession.toFixed(1)} min reading · ${engagement.sessions7d} sessions`
+            }
+          />
+        </div>
+        <p className="mt-2 text-xs text-neuron-muted">
+          Sign-ups from the last 180 days. A day counts as active when the person was shown a new card. Sessions end after 30 minutes without a new card; medians, not averages.
+        </p>
+        {engagement.cardTypes.length > 0 && (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-sm">
+              <caption className="sr-only">How each kind of card is landing, last 7 days</caption>
+              <thead>
+                <tr className="text-left text-xs text-neuron-muted">
+                  <th scope="col" className="p-2">Card kind</th>
+                  <th scope="col" className="p-2 text-right">Shown</th>
+                  <th scope="col" className="p-2 text-right">Finished</th>
+                  <th scope="col" className="p-2 text-right">Skipped fast</th>
+                  <th scope="col" className="p-2 text-right">Scrolled back to</th>
+                  <th scope="col" className="p-2 text-right">Saved</th>
+                  <th scope="col" className="p-2 text-right" title="Time on the card divided by the time it takes to read it">Read time ÷ length</th>
+                </tr>
+              </thead>
+              <tbody>
+                {engagement.cardTypes.map((t) => (
+                  <tr key={t.cardType} className="border-t border-neuron-border">
+                    <td className="p-2 font-semibold">{(CARD_KIND_LABELS as Record<string, string>)[t.cardType] ?? t.cardType}</td>
+                    <td className="p-2 text-right tabular-nums">{t.shown}</td>
+                    <td className="p-2 text-right tabular-nums">{pct(t.completedRate)}</td>
+                    <td className="p-2 text-right tabular-nums">{pct(t.fastSkipRate)}</td>
+                    <td className="p-2 text-right tabular-nums">{pct(t.revisitRate)}</td>
+                    <td className="p-2 text-right tabular-nums">{pct(t.saveRate)}</td>
+                    <td className="p-2 text-right tabular-nums">{t.medianReadRatio === null ? "–" : `${t.medianReadRatio.toFixed(2)}×`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="mt-8" aria-labelledby="cost-heading">
