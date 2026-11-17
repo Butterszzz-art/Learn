@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { ensureDb } from "@/db/bootstrap";
 import { getPublicCard } from "@/lib/publicCard";
 import { interestStyle } from "@/lib/ui";
+import { PublicChallenge } from "@/components/PublicChallenge";
 
 export const dynamic = "force-dynamic";
 
@@ -34,8 +35,19 @@ export default async function SharedCardPage({ params }: { params: { id: string 
             {card.interestName}
           </span>
         )}
-        <h1 className="mt-4 font-display text-3xl font-bold leading-tight">{card.title}</h1>
-        <p className="mt-4 text-lg leading-relaxed">{card.body}</p>
+        {card.challenge ? (
+          <>
+            <p className="eyebrow mt-4">A friend challenged you</p>
+            <div className="mt-2">
+              <PublicChallenge title={card.title} challenge={card.challenge} />
+            </div>
+          </>
+        ) : (
+          <>
+            <h1 className="mt-4 font-display text-3xl font-bold leading-tight">{card.title}</h1>
+            <p className="mt-4 text-lg leading-relaxed">{card.body}</p>
+          </>
+        )}
         {card.takeaway && card.type !== "paper" && <p className="mt-4 border-l-4 border-[var(--ic)] pl-4 font-bold">{card.takeaway}</p>}
         {card.sourceUrl && (
           <a href={card.sourceUrl} target="_blank" rel="noopener noreferrer" className="mt-4 inline-block text-sm font-extrabold text-neuron-accent">
@@ -46,7 +58,7 @@ export default async function SharedCardPage({ params }: { params: { id: string 
       <div className="mt-6 text-center">
         <p className="font-display text-xl font-bold">🧠 Neuron</p>
         <p className="mt-1 text-neuron-muted">A swipe feed where every card teaches you something real.</p>
-        <Link href="/signup" className="btn-primary mt-4">Start learning — free</Link>
+        <Link href="/signup" className="btn-primary mt-4">{card.challenge ? "Get a new one every day — free" : "Start learning — free"}</Link>
       </div>
     </div>
   );

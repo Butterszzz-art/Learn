@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { DEFAULT_DAILY_GOAL } from "@/lib/dailyGoal";
 import type { UserPrefs } from "@/db/schema";
 import { postJson } from "@/lib/ui";
 
@@ -83,9 +84,10 @@ export function PrefsForm({ initial, pushAvailable }: { initial: UserPrefs; push
         </select>
       </div>
       <div>
-        <label htmlFor="pref-goal" className="label">Daily goal</label>
-        <select id="pref-goal" className="field" value={String(prefs.dailyGoal ?? 0)} onChange={(e) => save({ dailyGoal: Number(e.target.value) })}>
-          <option value="0">No goal</option>
+        <label htmlFor="pref-goal" className="label">Daily set</label>
+        <select id="pref-goal" className="field" value={String(prefs.dailyGoal ?? DEFAULT_DAILY_GOAL)} onChange={(e) => save({ dailyGoal: Number(e.target.value) })}>
+          <option value="0">No daily set</option>
+          <option value="5">5 cards a day (a couple of minutes)</option>
           <option value="10">10 cards a day (about 5 minutes)</option>
           <option value="20">20 cards a day</option>
           <option value="40">40 cards a day</option>
@@ -98,6 +100,17 @@ export function PrefsForm({ initial, pushAvailable }: { initial: UserPrefs; push
           <span className="text-sm text-neuron-muted">Off by default. One missed day a week is forgiven, and you'll never be nagged about it.</span>
         </span>
       </label>
+      {prefs.streakOptIn && pushAvailable && (
+        <label className="flex items-start gap-3 pl-8">
+          <input type="checkbox" className="mt-1 h-5 w-5 accent-[rgb(var(--n-accent))]" checked={!!prefs.streakReminder} onChange={(e) => save({ streakReminder: e.target.checked })} />
+          <span>
+            <span className="block font-bold">Warn me before a streak ends</span>
+            <span className="text-sm text-neuron-muted">
+              Uses your daily reminder time below. Only on a day the streak would actually end, and only for streaks of 3 days or more.
+            </span>
+          </span>
+        </label>
+      )}
       <label className="flex items-start gap-3">
         <input type="checkbox" className="mt-1 h-5 w-5 accent-[rgb(var(--n-accent))]" checked={!!prefs.includeBrainGames} onChange={(e) => save({ includeBrainGames: e.target.checked })} />
         <span>

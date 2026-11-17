@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/db", () => ({ client: { execute: vi.fn() }, db: {} }));
 
 import { EMPTY_STATE, masteryOf, scheduleNext } from "@/lib/learning";
-import { computeStreak } from "@/lib/explore";
+import { computeStreak, streakAtRisk } from "@/lib/explore";
 import { looksLikeValidMermaid } from "@/lib/engine/expand";
 import { estimateCostUsd } from "@/lib/ai";
 import { badgeFor, firstSentence } from "@/lib/engine/news";
@@ -93,6 +93,21 @@ describe("computeStreak", () => {
   });
   it("is zero with no activity", () => {
     expect(computeStreak([], "2026-11-10")).toBe(0);
+  });
+});
+
+describe("streakAtRisk", () => {
+  it("is safe once today is active", () => {
+    expect(streakAtRisk(["2026-11-08", "2026-11-09", "2026-11-10"], "2026-11-10")).toBe(0);
+  });
+  it("is safe when missing today would be forgiven", () => {
+    expect(streakAtRisk(["2026-11-07", "2026-11-08", "2026-11-09"], "2026-11-10")).toBe(0);
+  });
+  it("warns when this week's forgiven day is already used", () => {
+    expect(streakAtRisk(["2026-11-06", "2026-11-08", "2026-11-09"], "2026-11-10")).toBe(3);
+  });
+  it("is zero with no streak", () => {
+    expect(streakAtRisk([], "2026-11-10")).toBe(0);
   });
 });
 

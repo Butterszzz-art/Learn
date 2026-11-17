@@ -82,6 +82,7 @@ const TABLES = [
     saved INTEGER NOT NULL DEFAULT 0,
     shared INTEGER NOT NULL DEFAULT 0,
     skipped_fast INTEGER NOT NULL DEFAULT 0,
+    revisits INTEGER NOT NULL DEFAULT 0,
     answered_correct INTEGER,
     PRIMARY KEY (user_id, card_id)
   );`,
@@ -158,6 +159,13 @@ const TABLES = [
     resumed_at TEXT NOT NULL,
     PRIMARY KEY (user_id, interest_id, card_type)
   );`,
+  `CREATE TABLE IF NOT EXISTS card_responses (
+    user_id INTEGER NOT NULL,
+    card_id INTEGER NOT NULL,
+    value REAL NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (current_timestamp),
+    PRIMARY KEY (user_id, card_id)
+  );`,
   `CREATE TABLE IF NOT EXISTS error_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
@@ -181,6 +189,7 @@ const COLUMNS: { table: string; column: string; ddl: string }[] = [
   { table: "books", column: "user_id", ddl: "ALTER TABLE books ADD COLUMN user_id INTEGER;" },
   { table: "syllabi", column: "user_id", ddl: "ALTER TABLE syllabi ADD COLUMN user_id INTEGER;" },
   { table: "book_chapters", column: "surfaced_at", ddl: "ALTER TABLE book_chapters ADD COLUMN surfaced_at TEXT;" },
+  { table: "user_cards", column: "revisits", ddl: "ALTER TABLE user_cards ADD COLUMN revisits INTEGER NOT NULL DEFAULT 0;" },
 ];
 
 // Every per-user lookup and every pool query the feed runs is covered here.
@@ -196,6 +205,7 @@ const INDEXES = [
   `CREATE INDEX IF NOT EXISTS cards_type_idx ON cards(type, created_at);`,
   `CREATE INDEX IF NOT EXISTS cards_concept_idx ON cards(concept_id);`,
   `CREATE INDEX IF NOT EXISTS user_cards_seen_idx ON user_cards(user_id, seen_at);`,
+  `CREATE INDEX IF NOT EXISTS card_responses_card_idx ON card_responses(card_id);`,
   `CREATE INDEX IF NOT EXISTS user_cards_saved_idx ON user_cards(user_id, saved);`,
   `CREATE INDEX IF NOT EXISTS user_concepts_due_idx ON user_concepts(user_id, due);`,
   `CREATE INDEX IF NOT EXISTS ai_usage_user_idx ON ai_usage(user_id, created_at);`,

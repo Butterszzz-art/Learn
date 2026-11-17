@@ -138,6 +138,29 @@ export function computeStreak(activeDays: string[], today: string): number {
   return streak;
 }
 
+/**
+ * The streak that would end if today passes without activity, or 0 when it
+ * is safe (already active today, or today's miss would be forgiven).
+ */
+export function streakAtRisk(activeDays: string[], today: string): number {
+  if (activeDays.includes(today)) return 0;
+  const current = computeStreak(activeDays, today);
+  if (current === 0) return 0;
+  const d = new Date(today + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 1);
+  const tomorrow = d.toISOString().slice(0, 10);
+  // Missing today either gets forgiven (same count tomorrow) or cuts the streak short.
+  return computeStreak(activeDays, tomorrow) < current ? current : 0;
+}
+
+export async function getActiveDays(userId: number): Promise<string[]> {
+  const res = await client.execute({
+    sql: "SELECT DISTINCT substr(seen_at, 1, 10) AS day FROM user_cards WHERE user_id = ? AND seen_at >= ?",
+    args: [userId, new Date(Date.now() - 400 * 86400000).toISOString()],
+  });
+  return (res.rows as any[]).map((r) => r.day as string);
+}
+
 export async function getStreak(userId: number): Promise<number> {
   const res = await client.execute({
     sql: "SELECT DISTINCT substr(seen_at, 1, 10) AS day FROM user_cards WHERE user_id = ? AND seen_at >= ?",

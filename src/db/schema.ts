@@ -697,8 +697,9 @@ export type Plan = "free" | "pro";
 
 export interface UserPrefs {
   includeBrainGames?: boolean;
-  dailyGoal?: number; // cards per day, 0 = no goal
+  dailyGoal?: number; // cards in the daily set; unset = 5, 0 = no daily set
   streakOptIn?: boolean;
+  streakReminder?: boolean; // opt-in: the daily reminder warns when a streak would end today
   theme?: "system" | "light" | "dark";
   notifyHour?: number | null; // UTC hour for the one optional daily nudge
   textScale?: number;
@@ -770,6 +771,7 @@ export const CARD_TYPES = [
   "model", // mental model
   "fact", // short curated fact
   "game", // opt-in brain game
+  "estimate", // guess a number from a deep dive, then see the answer and the crowd
 ] as const;
 export type CardType = (typeof CARD_TYPES)[number];
 
@@ -809,7 +811,22 @@ export const userCards = sqliteTable(
     saved: integer("saved", { mode: "boolean" }).notNull().default(false),
     shared: integer("shared", { mode: "boolean" }).notNull().default(false),
     skippedFast: integer("skipped_fast", { mode: "boolean" }).notNull().default(false),
+    revisits: integer("revisits").notNull().default(0), // times scrolled back to
     answeredCorrect: integer("answered_correct", { mode: "boolean" }), // quiz cards only
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.userId, t.cardId] }) })
+);
+
+// card_responses — a person's answer to an interactive card: a guess on an
+// estimate card, or a side picked on a debate card (1 = agree, 0 = disagree).
+// Aggregated into the "what other readers said" line.
+export const cardResponses = sqliteTable(
+  "card_responses",
+  {
+    userId: integer("user_id").notNull(),
+    cardId: integer("card_id").notNull(),
+    value: real("value").notNull(),
+    createdAt: text("created_at").notNull().default(sql`(current_timestamp)`),
   },
   (t) => ({ pk: primaryKey({ columns: [t.userId, t.cardId] }) })
 );

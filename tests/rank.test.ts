@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assemblePage, computeAffinities, scoreCandidate, jitter, DEFAULT_ASSEMBLE } from "@/lib/rank";
+import { assemblePage, computeAffinities, scoreCandidate, jitter, DEFAULT_ASSEMBLE, dwellSignal, expectedReadMs, engagementValue, exploreEveryFor } from "@/lib/rank";
 import type { Candidate, RankContext } from "@/lib/rank";
 
 const NOW = Date.parse("2026-11-10T12:00:00Z");
@@ -169,5 +169,63 @@ describe("computeAffinities", () => {
     expect(Math.abs(one.interestAffinity.get(1)!)).toBeLessThan(0.3);
     const many = computeAffinities(Array.from({ length: 500 }, () => row({ saved: true, expanded: true, completed: true })));
     expect(many.interestAffinity.get(1)!).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("reading-time signals", () => {
+  const base = { interestId: 1, cardType: "bite", completed: false, expanded: false, saved: false, skippedFast: false, answeredCorrect: null };
+
+  it("scales expected reading time with length", () => {
+    expect(expectedReadMs(0)).toBe(1500);
+    expect(expectedReadMs(1100)).toBeGreaterThan(expectedReadMs(300));
+  });
+
+  it("rewards reading a card fully and penalises leaving early", () => {
+    const chars = 600; // ~109 words, ~29s to read
+    const full = dwellSignal(expectedReadMs(chars), chars);
+    const glance = dwellSignal(expectedReadMs(chars) * 0.2, chars);
+    expect(full).toBeGreaterThan(0);
+    expect(glance).toBeLessThan(0);
+    expect(dwellSignal(expectedReadMs(chars) * 3, chars)).toBeLessThanOrEqual(0.6);
+  });
+
+  it("treats a very long stay as no signal (phone put down)", () => {
+    expect(dwellSignal(expectedReadMs(200) * 20, 200)).toBe(0);
+    expect(dwellSignal(0, 200)).toBe(0);
+  });
+
+  it("ignores reading time on quizzes and counts scroll-backs", () => {
+    const quiz = engagementValue({ ...base, cardType: "quiz", dwellMs: 200, bodyChars: 2000 });
+    expect(quiz).toBe(0);
+    const reread = engagementValue({ ...base, revisits: 1 });
+    expect(reread).toBeGreaterThan(0);
+  });
+
+  it("learns per deep dive and per concept", () => {
+    const rows = [
+      { ...base, deepDiveId: 7, conceptId: 70, dwellMs: expectedReadMs(500) * 1.2, bodyChars: 500, completed: true },
+      { ...base, deepDiveId: 8, conceptId: 80, skippedFast: true, dwellMs: 300, bodyChars: 500 },
+    ];
+    const { diveAffinity, conceptAffinity } = computeAffinities(rows);
+    expect(diveAffinity.get(7)!).toBeGreaterThan(0);
+    expect(diveAffinity.get(8)!).toBeLessThan(0);
+    expect(conceptAffinity.get(70)!).toBeGreaterThan(0);
+  });
+
+  it("ranks the rest of a lingered-on entry, and linked ideas, higher", () => {
+    const liked = card({ id: 500, deepDiveId: 7 });
+    const skipped = card({ id: 500, deepDiveId: 8 });
+    const c = ctx({ diveAffinity: new Map([[7, 0.5], [8, -0.5]]) });
+    expect(scoreCandidate(liked, c)).toBeGreaterThan(scoreCandidate(skipped, c));
+
+    const neighbour = card({ id: 501, conceptId: 90 });
+    const stranger = card({ id: 501, conceptId: 91 });
+    const c2 = ctx({ conceptAffinity: new Map([[70, 0.8]]), relatedConcepts: new Map([[90, [70]]]) });
+    expect(scoreCandidate(neighbour, c2)).toBeGreaterThan(scoreCandidate(stranger, c2));
+  });
+
+  it("explores more for new readers", () => {
+    expect(exploreEveryFor(5)).toBeLessThan(exploreEveryFor(200));
+    expect(exploreEveryFor(200)).toBe(DEFAULT_ASSEMBLE.exploreEvery);
   });
 });

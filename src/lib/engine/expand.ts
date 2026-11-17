@@ -9,14 +9,14 @@ import { client } from "@/db";
 import type { Level } from "@/db/schema";
 import { generateJson } from "../ai";
 import { upsertCard, upsertConcept, addConceptEdge, baseDifficulty } from "./cards";
-import type { BitePayload, QuizPayload, MythPayload, VisualPayload } from "../cardTypes";
+import type { BitePayload, QuizPayload, MythPayload, VisualPayload, EstimatePayload } from "../cardTypes";
 
 interface Expansion {
   concepts: { name: string; definition: string; difficulty: number; prerequisites: string[] }[];
   bites: {
     headline: string;
     text: string;
-    kind: "hook" | "idea" | "number" | "why";
+    kind: "hook" | "idea" | "number" | "why" | "puzzle";
     highlight: string;
     takeaway: string;
     conceptIndex: number;
@@ -26,6 +26,7 @@ interface Expansion {
   insight: { applicable: boolean; content: string };
   myth: { applicable: boolean; myth: string; fact: string };
   diagram: { applicable: boolean; mermaid: string; caption: string };
+  estimate: { applicable: boolean; question: string; answer: number; unit: string; min: number; max: number; explanation: string };
 }
 
 const SCHEMA = {
@@ -68,8 +69,12 @@ const SCHEMA = {
           text: { type: "string", description: "40-90 words. Concrete and exact; keep real numbers and names." },
           kind: {
             type: "string",
-            enum: ["hook", "idea", "number", "why"],
-            description: "hook = a surprising opener; idea = one mechanism or concept; number = one striking figure; why = why it matters.",
+            enum: ["hook", "idea", "number", "why", "puzzle"],
+            description:
+              "hook = a surprising opener; idea = one mechanism or concept; number = one striking figure; why = why it matters; " +
+              "puzzle = the headline is a genuine question a curious reader would want to guess at, and the text answers it " +
+              "(the app hides the text until the reader taps). Make at most one bite a puzzle, and only when the entry has a " +
+              "real 'why/how does…' question at its heart.",
           },
           highlight: { type: "string", description: "The single key term or number in the text to visually call out. Must appear verbatim in text." },
           takeaway: { type: "string", description: "One sentence the reader should remember, max 20 words." },
@@ -148,8 +153,25 @@ const SCHEMA = {
       required: ["applicable", "mermaid", "caption"],
       additionalProperties: false,
     },
+    estimate: {
+      type: "object",
+      description:
+        "A 'guess the number' card: the reader estimates a striking quantity from the entry before seeing it. " +
+        "applicable=false unless the entry states a specific, surprising number that is interesting to guess.",
+      properties: {
+        applicable: { type: "boolean" },
+        question: { type: "string", description: "The question, e.g. 'Roughly how many neurons are in the human brain?' Max 20 words." },
+        answer: { type: "number", description: "The number exactly as the entry states it (e.g. 86000000000 for '86 billion'). Never computed or rounded by you." },
+        unit: { type: "string", description: "Unit shown after the number: '%', 'years', 'neurons', or empty." },
+        min: { type: "number", description: "Low end of a slider range that makes guessing fun: clearly below the answer, not a giveaway." },
+        max: { type: "number", description: "High end of the slider range: clearly above the answer. Answer must not sit at the middle." },
+        explanation: { type: "string", description: "1-2 sentences of context on why the number is what it is." },
+      },
+      required: ["applicable", "question", "answer", "unit", "min", "max", "explanation"],
+      additionalProperties: false,
+    },
   },
-  required: ["concepts", "bites", "quiz", "followUps", "insight", "myth", "diagram"],
+  required: ["concepts", "bites", "quiz", "followUps", "insight", "myth", "diagram", "estimate"],
   additionalProperties: false,
 } as const;
 
@@ -166,6 +188,34 @@ export interface ExpandInput {
   topic: string;
   content: string;
   generatesAppliedInsights: boolean;
+}
+
+const SCALE: Record<string, number> = { thousand: 1e3, million: 1e6, billion: 1e9, trillion: 1e12 };
+
+/** Every number written in a text, including "86 billion" and "1,200" forms. */
+export function numbersInText(text: string): number[] {
+  const out: number[] = [];
+  const re = /(-?\d[\d,]*(?:\.\d+)?)(\s*(thousand|million|billion|trillion))?/gi;
+  for (const m of text.matchAll(re)) {
+    const n = Number(m[1].replace(/,/g, ""));
+    if (!Number.isFinite(n)) continue;
+    out.push(n);
+    if (m[3]) out.push(n * SCALE[m[3].toLowerCase()]);
+  }
+  return out;
+}
+
+/**
+ * An estimate card is only kept when its answer is a number the entry itself
+ * states, and the slider range actually contains it with room either side.
+ */
+export function validEstimate(e: Expansion["estimate"] | undefined, content: string): EstimatePayload | null {
+  if (!e?.applicable || !e.question?.trim()) return null;
+  const { answer, min, max } = e;
+  if (![answer, min, max].every(Number.isFinite) || !(min < answer && answer < max)) return null;
+  const close = (a: number, b: number) => Math.abs(a - b) <= Math.abs(b) * 1e-9 + 1e-9;
+  if (!numbersInText(content).some((n) => close(n, answer))) return null;
+  return { answer, unit: (e.unit ?? "").trim().slice(0, 24), min, max, explanation: (e.explanation ?? "").trim() };
 }
 
 /** Basic structural check so a malformed diagram never reaches a reader. */
@@ -265,6 +315,21 @@ export async function expandDeepDive(input: ExpandInput): Promise<number | null>
       body: payload.caption,
       payload: payload as unknown as Record<string, unknown>,
       dedupeKey: `dd${input.deepDiveId}:visual`,
+    });
+    written++;
+  }
+
+  const estimate = validEstimate(exp.estimate, input.content);
+  if (estimate) {
+    await upsertCard({
+      ...base,
+      type: "estimate",
+      conceptId: conceptAt(0),
+      seq: seq++,
+      title: exp.estimate.question.trim(),
+      body: estimate.explanation,
+      payload: estimate as unknown as Record<string, unknown>,
+      dedupeKey: `dd${input.deepDiveId}:estimate`,
     });
     written++;
   }

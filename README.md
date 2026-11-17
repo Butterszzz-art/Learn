@@ -3,6 +3,9 @@
 A swipe feed for science and ideas. Same thumb motion as any other feed, except every card teaches one real thing — and the app keeps track of what you actually remember.
 
 - **Feed** — one card per screen: short "bites" drawn from long-form explainers, research summaries with their source and evidence type, diagrams, myth-vs-fact, quick-check questions, and the strongest counterargument to contested claims. It adapts to what you finish, save and skip.
+- **Play along** — guess-the-number cards with a slider, question-first bites you answer in your head before tapping, and counterargument cards where you pick a side first. Once enough people have answered, you see how other readers guessed and voted. Quiz and guess-the-number cards share as a challenge a friend can answer without an account.
+- **Listen mode** — reads each card aloud with pauses to think, then moves on by itself. Uses the device's built-in speech, so it costs nothing to run.
+- **A daily set** — five cards a day by default, with a finish card, then the open feed for anyone who wants more. A weekly recap ("Your week") shows ideas met, the deepest rabbit hole and quiz results.
 - **Depth on demand** — every bite opens the full, sourced explainer behind it. From there: self-check questions, explain-it-back with feedback, follow-up topics, and "ask about this".
 - **Levels** — each field is followed at one of four levels, from first principles to research frontier, and is a sequence that builds on itself.
 - **Memory** — quiz answers and recall checks feed a spaced-repetition schedule (FSRS). Reviews are woven into the feed and collected on the Review tab.
@@ -11,6 +14,8 @@ A swipe feed for science and ideas. Same thumb motion as any other feed, except 
 - **Research Agent** — ask a question and it searches OpenAlex and Semantic Scholar for real papers before answering (optional, via OpenRouter).
 - **Citations** — export any research item, a deep dive's sources, a Library book, or everything you were shown this week as BibTeX or RIS.
 - **Course syllabi** — attach a syllabus to a field and entries tell you when a topic isn't on it, or covers newer work than your assigned reading.
+- **Learns your taste from reading** — ranking uses how long you spent on a card relative to its length, whether you scrolled back to it, and which entries and ideas you responded to. New readers see more from other fields until it has enough to go on.
+- **Retention numbers** — the admin page shows next-day, week-2 and month-2 retention, typical session length, and how each card kind is landing.
 - **Stays out of your way** — if you keep skipping one kind of card in a field, the feed stops showing it there, tells you, and lets you bring it back.
 - **Installable** — works as a home-screen app with offline reading of loaded cards and an optional once-a-day reminder.
 

@@ -6,7 +6,11 @@ import { CardView } from "./CardView";
 import type { CardHandlers } from "./CardView";
 import { AskSheet, DeepDiveSheet, ReportSheet } from "./Sheets";
 import { MuteNotices } from "../MuteNotices";
+import { Icon } from "../Icon";
+import { spokenSegments } from "@/lib/spoken";
+import { speakSegments, speechSupported } from "@/lib/speech";
 import type { MuteNoticeItem } from "../MuteNotices";
+import type { DailyState } from "@/lib/daily";
 
 const PAGE_SIZE = 10;
 const PREFETCH_WHEN_LEFT = 4; // ask for the next page this many cards before the end
@@ -38,22 +42,35 @@ export function FeedClient({
   initialHasMore,
   interests,
   muteNotices = [],
+  daily = null,
 }: {
   initialCards: FeedCard[];
   initialHasMore: boolean;
   interests: FeedInterest[];
   muteNotices?: MuteNoticeItem[];
+  daily?: DailyState | null;
 }) {
   const [cards, setCards] = useState<FeedCard[]>(initialCards);
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [index, setIndex] = useState(0);
   const [filter, setFilter] = useState<number | null>(null);
+  // Listen mode: read each card aloud and move on by itself, hands-free.
+  const [listening, setListening] = useState(false);
+  // The daily set: a small finite goal with a clear finish, then the open feed.
+  const [doneToday, setDoneToday] = useState(daily?.seenToday ?? 0);
+  const dailyConcepts = useRef<string[]>([]);
+  const [canListen, setCanListen] = useState(false);
+  useEffect(() => setCanListen(speechSupported()), []);
   const [sheet, setSheet] = useState<{ type: "dive"; id: number } | { type: "ask"; card: FeedCard } | { type: "report"; card: FeedCard } | null>(null);
 
   const scroller = useRef<HTMLDivElement>(null);
   const loading = useRef(false);
   const queue = useRef<CardEvent[]>([]);
   const shownAt = useRef<number>(Date.now());
+  // Scrolling back up to a card is a strong "that was good" signal; report it
+  // once per card per session.
+  const furthest = useRef(0);
+  const revisited = useRef<Set<number>>(new Set());
   const impressed = useRef<Set<number>>(new Set());
   const sinceRecap = useRef<{ count: number; concepts: string[] }>({ count: 0, concepts: [] });
   const cardsRef = useRef(cards);
@@ -129,6 +146,9 @@ export function FeedClient({
       if (Date.now() - saved.at > 10 * 60000 || !saved.cards?.length) return;
       setCards(saved.cards);
       setIndex(saved.index);
+      // Cards up to here were already shown (and counted toward today's set).
+      for (const c of saved.cards.slice(0, saved.index + 1)) if (c.cardId) impressed.current.add(c.cardId);
+      furthest.current = saved.index;
       requestAnimationFrame(() => {
         const el = scroller.current;
         if (el) el.scrollTo({ top: saved.index * el.clientHeight });
@@ -178,6 +198,36 @@ export function FeedClient({
     if (card.cardId && !impressed.current.has(card.cardId)) {
       impressed.current.add(card.cardId);
       onEvent(card.cardId, "impression");
+      if (card.conceptName && !dailyConcepts.current.includes(card.conceptName)) dailyConcepts.current.push(card.conceptName);
+      if (daily && daily.goal > 0) {
+        const next = doneToday + 1;
+        setDoneToday(next);
+        if (next === daily.goal) {
+          // Reached the daily set on this card: the finish card comes next.
+          const done: FeedCard = {
+            key: `daily-${Date.now()}`,
+            kind: "dailydone",
+            cardId: null,
+            interestId: null,
+            interestName: null,
+            level: null,
+            title: `That's today's ${daily.goal}`,
+            body: dailyConcepts.current.length > 0 ? "Ideas you met today:" : "Nicely done.",
+            payload: {
+              concepts: dailyConcepts.current.slice(0, 8),
+              streak: daily.streak === null ? null : daily.activeToday ? daily.streak : daily.streak + 1,
+            },
+            conceptId: null,
+            conceptName: null,
+            deepDiveId: null,
+            deepDiveTopic: null,
+            explore: false,
+            saved: false,
+            aiGenerated: false,
+          };
+          setCards((prev) => [...prev.slice(0, index + 1), done, ...prev.slice(index + 1)]);
+        }
+      }
       // Session recap: every RECAP_EVERY real cards, slot a recap in next.
       const s = sinceRecap.current;
       s.count++;
@@ -226,6 +276,14 @@ export function FeedClient({
       const i = Math.round(el.scrollTop / el.clientHeight);
       if (i !== indexRef.current) {
         closeOut(indexRef.current);
+        if (i < furthest.current) {
+          const id = cardsRef.current[i]?.cardId;
+          if (id && !revisited.current.has(id)) {
+            revisited.current.add(id);
+            onEvent(id, "revisit");
+          }
+        }
+        furthest.current = Math.max(furthest.current, i);
         setIndex(i);
       }
     });
@@ -248,10 +306,45 @@ export function FeedClient({
     return () => window.removeEventListener("keydown", onKey);
   }, [goTo, sheet]);
 
+  // Listen mode: speak the current card, then scroll to the next one. Moving
+  // by hand restarts it on the new card; a card with nothing to say ends it.
+  useEffect(() => {
+    if (!listening) return;
+    const card = cards[index];
+    if (!card) return;
+    const segments = spokenSegments(card);
+    if (segments.length === 0) {
+      setListening(false);
+      return;
+    }
+    let advance: ReturnType<typeof setTimeout> | null = null;
+    const cancel = speakSegments(segments, () => {
+      advance = setTimeout(() => {
+        if (indexRef.current < cardsRef.current.length - 1) goTo(indexRef.current + 1);
+        else setListening(false);
+      }, 400);
+    });
+    return () => {
+      cancel();
+      if (advance) clearTimeout(advance);
+    };
+    // Restart only when the card changes, not when more cards load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listening, index, cards[index]?.key, goTo]);
+
+  // Leaving the page (or the app going to the background) ends Listen mode.
+  useEffect(() => {
+    if (!listening) return;
+    const stop = () => document.visibilityState === "hidden" && setListening(false);
+    document.addEventListener("visibilitychange", stop);
+    return () => document.removeEventListener("visibilitychange", stop);
+  }, [listening]);
+
   function changeFilter(id: number | null) {
     closeOut(indexRef.current);
     setFilter(id);
     setIndex(0);
+    furthest.current = 0;
     scroller.current?.scrollTo({ top: 0 });
     loadMore(true, id);
   }
@@ -270,8 +363,29 @@ export function FeedClient({
   return (
     <div className="relative flex h-full flex-col">
       <MuteNotices initial={muteNotices} compact />
+      <div className="flex shrink-0 items-center gap-2 px-4 pb-1 pt-3 sm:px-6">
+      {canListen && (
+        <button
+          type="button"
+          onClick={() => setListening((v) => !v)}
+          aria-pressed={listening}
+          className={`pill shrink-0 !py-1.5 ${listening ? "!border-neuron-accent !bg-neuron-accent/15 !text-neuron-text" : ""}`}
+          title="Read cards aloud and move on by themselves"
+        >
+          <Icon name={listening ? "stop" : "listen"} className="mr-1 inline h-4 w-4" />
+          {listening ? "Stop listening" : "Listen"}
+        </button>
+      )}
+      {daily && daily.goal > 0 && (
+        <span
+          className={`pill shrink-0 !py-1.5 tabular-nums ${doneToday >= daily.goal ? "!border-neuron-accent3/60 !text-neuron-accent3" : ""}`}
+          aria-label={`Today's set: ${Math.min(doneToday, daily.goal)} of ${daily.goal} cards`}
+        >
+          {doneToday >= daily.goal ? "Today ✓" : `Today ${doneToday}/${daily.goal}`}
+        </span>
+      )}
       {interests.length > 1 && (
-        <div className="flex shrink-0 gap-2 overflow-x-auto px-4 pb-1 pt-3 sm:px-6 [scrollbar-width:none]" role="toolbar" aria-label="Filter the feed by interest">
+        <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto [scrollbar-width:none]" role="toolbar" aria-label="Filter the feed by interest">
           <button type="button" onClick={() => changeFilter(null)} aria-pressed={filter === null} className={`pill shrink-0 !py-1.5 ${filter === null ? "!border-neuron-accent !bg-neuron-accent/15 !text-neuron-text" : ""}`}>
             For you
           </button>
@@ -288,11 +402,12 @@ export function FeedClient({
           ))}
         </div>
       )}
+      </div>
 
       <div ref={scroller} onScroll={onScroll} className="feed-scroller min-h-0 flex-1" aria-label="Your feed" role="feed" aria-busy={loading.current}>
         {cards.map((card, i) => (
           <div key={card.key} className="feed-slot" aria-setsize={hasMore ? -1 : cards.length} aria-posinset={i + 1}>
-            {Math.abs(i - index) <= RENDER_WINDOW ? <CardView card={card} active={i === index} handlers={handlers} /> : null}
+            {Math.abs(i - index) <= RENDER_WINDOW ? <CardView card={card} active={i === index} handlers={handlers} listening={listening} onNext={() => goTo(i + 1)} /> : null}
           </div>
         ))}
       </div>

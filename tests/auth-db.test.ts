@@ -176,6 +176,10 @@ describe("feed", () => {
     const first = await m.feed.getFeedPage(user, { count: 10 });
     const bite = first.cards.find((c) => c.kind === "bite" && c.deepDiveId === diveId)!;
     await m.feed.recordEvents(alice, [{ cardId: bite.cardId!, event: "impression" }, { cardId: bite.cardId!, event: "dwell", value: 6000 }]);
+    await m.feed.recordEvents(alice, [{ cardId: bite.cardId!, event: "revisit" }]);
+    const row = await m.db.client.execute({ sql: "SELECT revisits, dwell_ms FROM user_cards WHERE user_id = ? AND card_id = ?", args: [alice, bite.cardId!] });
+    expect(Number((row.rows[0] as any).revisits)).toBe(1);
+    expect(Number((row.rows[0] as any).dwell_ms)).toBe(6000);
     const second = await m.feed.getFeedPage(user, { count: 10 });
     expect(second.cards.some((c) => c.cardId === bite.cardId)).toBe(false);
     // Bob never saw it, so it's still in his pool once he follows the interest.
@@ -273,10 +277,60 @@ describe("limits and jobs", () => {
   });
 });
 
+describe("interactive cards, daily set and weekly recap", () => {
+  it("records the first answer only and summarises the crowd", async () => {
+    const responses = await import("@/lib/responses");
+    const debateId = await m.cards.upsertCard({
+      type: "debate", interestId: neuroId, level: null, title: "Is X true?", body: "The case against.",
+      payload: { claim: "X is true." }, dedupeKey: "t:debate:1",
+    });
+    const first = await responses.respondToCard(alice, debateId, 1);
+    expect(first?.crowd.responses).toBe(1);
+    const again = await responses.respondToCard(alice, debateId, 0);
+    expect(again?.crowd.agreeShare).toBe(1); // second answer ignored
+    await responses.respondToCard(bob, debateId, 0);
+    const res = await responses.respondToCard(bob, debateId, 1);
+    expect(res?.crowd).toMatchObject({ responses: 2, agreeShare: 0.5 });
+    // Cards that don't take answers refuse them.
+    const bite = await m.db.client.execute("SELECT id FROM cards WHERE type = 'bite' LIMIT 1");
+    expect(await responses.respondToCard(alice, Number((bite.rows[0] as any).id), 1)).toBeNull();
+  });
+
+  it("shares an estimate as a challenge without giving the answer away", async () => {
+    const pub = await import("@/lib/publicCard");
+    const id = await m.cards.upsertCard({
+      type: "estimate", interestId: neuroId, level: null, title: "How many neurons?", body: "About 86 billion of them.",
+      payload: { answer: 86e9, unit: "neurons", min: 1e9, max: 1e12, explanation: "About 86 billion of them." }, dedupeKey: "t:estimate:1",
+    });
+    const card = await pub.getPublicCard(id);
+    expect(card?.title).toBe("How many neurons?");
+    expect(card?.body).not.toContain("86");
+    expect(card?.challenge).toMatchObject({ kind: "estimate", answer: 86e9 });
+  });
+
+  it("counts today's cards toward a daily set of five by default", async () => {
+    const daily = await import("@/lib/daily");
+    const state = await daily.getDailyState(await userObj(alice));
+    expect(state.goal).toBe(5);
+    expect(state.seenToday).toBeGreaterThan(0);
+    expect(state.streak).toBeNull(); // not opted in
+    expect(daily.dailyGoalFor({ dailyGoal: 0 })).toBe(0);
+  });
+
+  it("builds a weekly recap from what was read and answered", async () => {
+    const weekly = await import("@/lib/weekly");
+    const r = await weekly.getWeeklyRecap(alice);
+    expect(r.cards).toBeGreaterThan(0);
+    expect(r.activeDays).toBe(1);
+    expect(r.guesses).toBe(1);
+    expect(weekly.recapShareText(r)).toContain(`${r.cards} cards`);
+  });
+});
+
 describe("account deletion", () => {
   it("removes everything private and leaves shared content", async () => {
     await m.auth.deleteAccount(bob);
-    for (const table of ["user_interest_prefs", "user_cards", "user_concepts", "sessions"]) {
+    for (const table of ["user_interest_prefs", "user_cards", "user_concepts", "card_responses", "sessions"]) {
       const res = await m.db.client.execute({ sql: `SELECT COUNT(*) AS n FROM ${table} WHERE user_id = ?`, args: [bob] });
       expect(Number((res.rows[0] as any).n)).toBe(0);
     }

@@ -7,7 +7,7 @@ import { LEVELS } from "@/db/schema";
 import type { CurrentUser } from "./auth";
 import { getEnabledInterests } from "./interests";
 import type { InterestWithConfig } from "./interests";
-import { assemblePage, computeAffinities, scoreCandidate, levelDistance, DEFAULT_ASSEMBLE } from "./rank";
+import { assemblePage, computeAffinities, scoreCandidate, levelDistance, exploreEveryFor, DEFAULT_ASSEMBLE } from "./rank";
 import type { Candidate, RankContext } from "./rank";
 import type { CardEvent, FeedCard } from "./cardTypes";
 import { getDueConcepts, gradeConcept, markConceptSeen } from "./learning";
@@ -149,11 +149,13 @@ async function loadExploreCards(userId: number, followedIds: number[], exclude: 
 
 async function loadRankContext(userId: number, interests: InterestWithConfig[], conceptIds: number[]): Promise<RankContext> {
   const behaviour = await client.execute({
-    sql: `SELECT interest_id, card_type, completed, expanded, saved, skipped_fast, answered_correct
-          FROM user_cards WHERE user_id = ? ORDER BY seen_at DESC LIMIT 300`,
+    sql: `SELECT uc.interest_id, uc.card_type, uc.completed, uc.expanded, uc.saved, uc.skipped_fast, uc.answered_correct,
+                 uc.dwell_ms, uc.revisits, length(c.body) AS body_chars, c.concept_id, c.deep_dive_id
+          FROM user_cards uc LEFT JOIN cards c ON c.id = uc.card_id
+          WHERE uc.user_id = ? ORDER BY uc.seen_at DESC LIMIT 300`,
     args: [userId],
   });
-  const { interestAffinity, typeAffinity } = computeAffinities(
+  const { interestAffinity, typeAffinity, diveAffinity, conceptAffinity } = computeAffinities(
     (behaviour.rows as any[]).map((r) => ({
       interestId: r.interest_id === null ? null : Number(r.interest_id),
       cardType: r.card_type,
@@ -162,18 +164,32 @@ async function loadRankContext(userId: number, interests: InterestWithConfig[], 
       saved: !!r.saved,
       skippedFast: !!r.skipped_fast,
       answeredCorrect: r.answered_correct === null ? null : !!r.answered_correct,
+      dwellMs: Number(r.dwell_ms ?? 0),
+      bodyChars: r.body_chars === null ? undefined : Number(r.body_chars),
+      revisits: Number(r.revisits ?? 0),
+      conceptId: r.concept_id === null ? null : Number(r.concept_id),
+      deepDiveId: r.deep_dive_id === null ? null : Number(r.deep_dive_id),
     }))
   );
   const knownRes = await client.execute({ sql: "SELECT concept_id FROM user_concepts WHERE user_id = ?", args: [userId] });
   const prereqs = new Map<number, number[]>();
+  const relatedConcepts = new Map<number, number[]>();
   if (conceptIds.length > 0) {
+    const candidates = new Set(conceptIds);
     const edgeRes = await client.execute({
-      sql: `SELECT from_concept_id, to_concept_id FROM concept_edges WHERE kind = 'prereq' AND to_concept_id IN (${marks(conceptIds.length)})`,
-      args: conceptIds,
+      sql: `SELECT from_concept_id, to_concept_id, kind FROM concept_edges
+            WHERE to_concept_id IN (${marks(conceptIds.length)}) OR from_concept_id IN (${marks(conceptIds.length)})`,
+      args: [...conceptIds, ...conceptIds],
     });
+    const link = (a: number, b: number) => {
+      if (candidates.has(a)) relatedConcepts.set(a, [...(relatedConcepts.get(a) ?? []), b]);
+    };
     for (const e of edgeRes.rows as any[]) {
+      const from = Number(e.from_concept_id);
       const to = Number(e.to_concept_id);
-      prereqs.set(to, [...(prereqs.get(to) ?? []), Number(e.from_concept_id)]);
+      if (e.kind === "prereq" && candidates.has(to)) prereqs.set(to, [...(prereqs.get(to) ?? []), from]);
+      link(to, from);
+      link(from, to);
     }
   }
   const now = Date.now();
@@ -183,6 +199,10 @@ async function loadRankContext(userId: number, interests: InterestWithConfig[], 
     interests: new Map(interests.map((i) => [i.id, { level: i.level, isFavorite: i.isFavorite }])),
     interestAffinity,
     typeAffinity,
+    diveAffinity,
+    conceptAffinity,
+    relatedConcepts,
+    historySize: behaviour.rows.length,
     knownConcepts: new Set((knownRes.rows as any[]).map((r) => Number(r.concept_id))),
     prereqs,
   };
@@ -196,7 +216,7 @@ function parsePayload(raw: string): Record<string, any> {
   }
 }
 
-const AI_WRITTEN: CardType[] = ["bite", "quiz", "debate", "insight", "visual", "myth", "paper"];
+const AI_WRITTEN: CardType[] = ["bite", "quiz", "debate", "insight", "visual", "myth", "paper", "estimate"];
 
 /** Adds the display fields a card needs (interest, concept and deep-dive names). */
 async function hydrate(rows: { card: CardRow; explore: boolean }[], userId: number): Promise<FeedCard[]> {
@@ -383,7 +403,7 @@ export async function getFeedPage(user: CurrentUser, req: FeedRequest = {}): Pro
   const page = assemblePage(
     main.map((card) => ({ card, score: scoreCandidate(card, ctx) })),
     exploreRows.map((card) => ({ card, score: scoreCandidate(card, ctx, true) })),
-    { ...DEFAULT_ASSEMBLE, count, introducedDives: introduced }
+    { ...DEFAULT_ASSEMBLE, count, exploreEvery: exploreEveryFor(ctx.historySize ?? 0), introducedDives: introduced }
   );
   const cards = await hydrate(page, user.id);
 
@@ -513,6 +533,9 @@ export async function recordEvents(userId: number, events: CardEvent[]): Promise
         break;
       case "shared":
         await set("shared = 1");
+        break;
+      case "revisit":
+        await set("revisits = revisits + 1");
         break;
       case "quiz_correct":
       case "quiz_incorrect": {

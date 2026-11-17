@@ -8,7 +8,7 @@
 import { client } from "@/db";
 import type { CardType } from "@/db/schema";
 
-export const MUTABLE_TYPES = ["paper", "bite", "insight", "quiz", "debate"] as const;
+export const MUTABLE_TYPES = ["paper", "bite", "insight", "quiz", "debate", "estimate"] as const;
 export type MutableType = (typeof MUTABLE_TYPES)[number];
 
 export const MUTABLE_TYPE_LABELS: Record<MutableType, string> = {
@@ -17,10 +17,11 @@ export const MUTABLE_TYPE_LABELS: Record<MutableType, string> = {
   insight: "try-this takeaways",
   quiz: "quick checks",
   debate: "counterarguments",
+  estimate: "guess-the-number cards",
 };
 
 // News goes stale quickly, so it is judged over a shorter window.
-const LOOKBACK_DAYS: Record<MutableType, number> = { paper: 14, bite: 42, insight: 42, quiz: 42, debate: 42 };
+const LOOKBACK_DAYS: Record<MutableType, number> = { paper: 14, bite: 42, insight: 42, quiz: 42, debate: 42, estimate: 42 };
 export const MIN_SHOWN_FOR_SIGNAL = 8;
 export const ENGAGEMENT_THRESHOLD = 0.2;
 

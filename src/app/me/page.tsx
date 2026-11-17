@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { dailyGoalFor } from "@/lib/daily";
 import { requireUser } from "@/lib/auth";
 import { getEnabledInterests } from "@/lib/interests";
 import { getKnowledgeMap, getKnowledgeSummary, countDue } from "@/lib/learning";
@@ -28,7 +29,7 @@ export default async function MePage() {
     countDue(user.id),
     user.prefs.streakOptIn ? getStreak(user.id) : Promise.resolve(0),
   ]);
-  const goal = user.prefs.dailyGoal ?? 0;
+  const goal = dailyGoalFor(user.prefs);
 
   return (
     <div>
@@ -52,6 +53,10 @@ export default async function MePage() {
         <Stat value={summary.quizAccuracy === null ? "–" : `${Math.round(summary.quizAccuracy * 100)}%`} label="quiz accuracy (30 days)" />
         <Stat value={due} label="due for review" />
       </div>
+      <Link href="/week" className="card mt-3 flex min-h-[44px] items-center justify-between !p-4 font-bold hover:border-neuron-accent">
+        <span>Your week: ideas met, rabbit holes, how you did</span>
+        <span aria-hidden>→</span>
+      </Link>
 
       {(goal > 0 || user.prefs.streakOptIn) && (
         <div className="card mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
