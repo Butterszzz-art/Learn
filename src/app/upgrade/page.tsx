@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { PLAN_LIMITS } from "@/lib/plan";
+import { isNativeAppRequest } from "@/lib/nativeApp";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Neuron Pro" };
@@ -22,7 +23,9 @@ const ROWS: { label: string; free: string; pro: string }[] = [
 
 export default async function UpgradePage() {
   const user = await requireUser();
-  const billingReady = !!process.env.NEXT_PUBLIC_BILLING_URL;
+  // App Store rules: no link to an outside checkout inside the iOS app.
+  const inApp = isNativeAppRequest();
+  const billingReady = !!process.env.NEXT_PUBLIC_BILLING_URL && !inApp;
   return (
     <div>
       <Link href="/me" className="text-sm font-bold text-neuron-accent">← Me</Link>
@@ -57,8 +60,8 @@ export default async function UpgradePage() {
           <a href={process.env.NEXT_PUBLIC_BILLING_URL} className="btn-primary">Upgrade to Pro</a>
         ) : (
           <>
-            <p className="font-bold">Pro isn't on sale yet.</p>
-            <p className="mt-1 text-sm text-neuron-muted">Everything on the Free column works today. Paid plans open soon.</p>
+            <p className="font-bold">{inApp ? "Pro isn't available in the app yet." : "Pro isn't on sale yet."}</p>
+            <p className="mt-1 text-sm text-neuron-muted">Everything on the Free column works today.{inApp ? "" : " Paid plans open soon."}</p>
           </>
         )}
       </div>

@@ -10,6 +10,7 @@ import { interestStyle, formatDate, postJson } from "@/lib/ui";
 import { Icon } from "../Icon";
 import { Mermaid } from "../Mermaid";
 import { QuizBlock } from "./QuizBlock";
+import { shareLink, tap } from "@/lib/native";
 
 export interface CardHandlers {
   onEvent: (cardId: number, event: CardEventName, value?: number) => void;
@@ -123,14 +124,7 @@ function Actions({ card, active, handlers, speechText }: { card: FeedCard; activ
   async function share() {
     const url = `${location.origin}/s/${cardId}`;
     handlers.onEvent(cardId, "shared");
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: card.title, text: card.payload.takeaway ?? card.title, url });
-        return;
-      }
-    } catch {
-      return; // share sheet dismissed
-    }
+    if (await shareLink({ title: card.title, text: card.payload.takeaway ?? card.title, url })) return;
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
@@ -148,6 +142,7 @@ function Actions({ card, active, handlers, speechText }: { card: FeedCard; activ
           onClick={() => {
             handlers.onEvent(cardId, saved ? "unsaved" : "saved");
             setSaved(!saved);
+            if (!saved) tap();
           }}
         />
         <ActionButton icon="share" label={copied ? "Copied" : "Share"} onClick={share} />
@@ -177,7 +172,7 @@ function RecallReview({ card }: { card: FeedCard }) {
   async function grade(g: "again" | "good" | "easy") {
     setGraded(g);
     try {
-      navigator.vibrate?.(10);
+      tap();
     } catch {}
     await postJson("/api/review", { conceptId: card.conceptId, grade: g });
   }

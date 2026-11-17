@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { feedback } from "@/lib/native";
 
 /**
  * One multiple-choice question with instant feedback. The answer is
@@ -30,7 +31,7 @@ export function QuizBlock({
     setPicked(i);
     const correct = i === correctIndex;
     try {
-      navigator.vibrate?.(correct ? 12 : [20, 40, 20]);
+      feedback(correct);
     } catch {}
     onAnswer?.(correct);
   }

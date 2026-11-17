@@ -15,10 +15,20 @@
     "push:keys": "web-push generate-vapid-keys",
     "dev:test": "cross-env NEURON_LOCAL_DB=1 NEURON_DB_FILE=data/dev.db next dev -p 3100",
     "seed:demo": "tsx scripts/seed-demo.ts",
-    "resummarize": "tsx scripts/resummarize.ts"
+    "resummarize": "tsx scripts/resummarize.ts",
+    "ios:sync": "cap sync ios",
+    "ios:assets": "node assets/render.cjs && capacitor-assets generate --ios --iconBackgroundColor \"#120f1e\" --splashBackgroundColor \"#120f1e\" --splashBackgroundColorDark \"#120f1e\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/browser": "^8.0.5",
+    "@capacitor/core": "^8.6.2",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/ios": "^8.6.2",
+    "@capacitor/share": "^8.0.3",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.4",
     "@libsql/client": "^0.17.4",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.36.4",
@@ -35,6 +45,8 @@
     "web-push": "^4.0.0"
   },
   "devDependencies": {
+    "@capacitor/assets": "^4.0.0",
+    "@capacitor/cli": "^8.6.2",
     "@tailwindcss/typography": "^0.5.20",
     "@types/node": "^22.9.0",
     "@types/pdfkit": "^0.17.6",

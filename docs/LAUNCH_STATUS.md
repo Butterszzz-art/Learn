@@ -45,7 +45,7 @@ The plan named several hosted services. None of the accounts existed, so each pi
 | Batch API, prompt caching | Both now in, from main: batch for unattended write-ups, caching on the long system prompts. Plus one merged fast-model call for expansion | Batch results arrive on a later tick, so a daily schedule means a day's delay for top-ups |
 | Sentry, PostHog | Error log and usage numbers on the admin page | No alerting, no funnels |
 | Stripe, RevenueCat | Plan limits and an upgrade page; plans are switched from the admin page | **No payment is taken anywhere yet** |
-| Capacitor store builds | Config and instructions only | See [MOBILE.md](MOBILE.md) |
+| Capacitor store builds | iOS project committed; GitHub Actions uploads to TestFlight | See [TESTFLIGHT.md](TESTFLIGHT.md). Android not set up |
 | Placement quiz | Self-placement per field, in plain language | A real per-field quiz needs generated questions for every field and level |
 | Figures from papers | Not built | Diagrams are generated; reusing published figures needs per-paper licence checks |
 | Playwright browser tests | Not built | Covered by integration tests and a manual walkthrough instead |
