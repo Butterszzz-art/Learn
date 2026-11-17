@@ -243,3 +243,24 @@ describe("job failures", () => {
     expect(await jobs.runOne()).toBe(false); // nothing left that is allowed to run
   });
 });
+
+describe("relaxSchema", () => {
+  it("moves item-count bounds the API rejects into descriptions", async () => {
+    const { relaxSchema } = await import("@/lib/ai");
+    const out: any = relaxSchema({
+      type: "object",
+      properties: {
+        bites: { type: "array", minItems: 2, maxItems: 4, items: { type: "string" } },
+        quiz: {
+          type: "array",
+          items: { type: "object", properties: { options: { type: "array", items: { type: "string" }, minItems: 4, maxItems: 4, description: "Choices." } } },
+        },
+        tags: { type: "array", minItems: 1, items: { type: "string" } },
+      },
+    });
+    expect(out.properties.bites).toEqual({ type: "array", minItems: 1, items: { type: "string" }, description: "Must contain 2 to 4 items." });
+    expect(out.properties.quiz.items.properties.options.description).toBe("Choices. Must contain exactly 4 items.");
+    expect(out.properties.quiz.items.properties.options.maxItems).toBeUndefined();
+    expect(out.properties.tags).toEqual({ type: "array", minItems: 1, items: { type: "string" } });
+  });
+});

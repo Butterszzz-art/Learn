@@ -8,7 +8,7 @@
 // generation.
 import { client } from "@/db";
 import type { Level } from "@/db/schema";
-import { withAiContext } from "../ai";
+import { hasClaudeKey, withAiContext } from "../ai";
 import { generateNextInSeries, findOrGenerateTopicDive, expandExistingDeepDive, generateLogicDrill } from "./series";
 import { refreshNews } from "./news";
 
@@ -153,7 +153,11 @@ export async function runOne(preferUserId?: number): Promise<boolean> {
   try {
     const result = await withAiContext({ userId: job.user_id, purpose: job.type }, () => runJob(job));
     // A generator returning null means "couldn't produce it" — retry later.
-    if (result === null) throw new Error("generation returned nothing");
+    if (result === null) {
+      throw new Error(
+        hasClaudeKey() ? "generation returned nothing" : "no AI key is set (ANTHROPIC_API_KEY or OPENROUTER_API_KEY), so AI generation is disabled"
+      );
+    }
     await client.execute({
       sql: "UPDATE jobs SET status = 'done', result = ?, error = NULL, finished_at = current_timestamp WHERE id = ?",
       args: [JSON.stringify(result ?? null).slice(0, 2000), job.id],
