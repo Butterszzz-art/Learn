@@ -50,6 +50,10 @@ The key design decision is that **content is shared and state is personal**. A d
 
 **Models.** Three tiers, set in `src/lib/ai.ts` and overridable by environment variable: a fast model for summaries, bite splitting, quizzes, feedback and Q&A; a main model for deep dives and web-searched roundups; a deep model for research-level entries. Every call's token usage and estimated cost is written to `ai_usage` and shown on the admin page, including cost per active user per day.
 
+**Paid and free models.** With both `ANTHROPIC_API_KEY` and `OPENROUTER_API_KEY` set, each call is routed in `routeForCurrentCall` (`src/lib/ai.ts`). Everything that lands in the shared pool (series, on-demand deep dives, expansions, news) runs on paid Claude with web search, because every reader sees it. A person's own requests (asking about a card, explain-it-back feedback, Library processing, syllabus parsing, topic suggestions) run on Claude for Pro and admin accounts, and on free OpenRouter models for free accounts. With only the OpenRouter key, everything runs on free models, without web search or batching.
+
+**Plans.** Limits live in `src/lib/plan.ts`. Free accounts get 1 on-demand deep dive, 3 questions and 2 explain-backs a day, no custom fields (each would make the paid model write a series for one reader), 1 Library book and 1 syllabus. Pro raises all of these. Each account's paid spend is also capped per day and per month (Pro: $2 a day, $6 a month), so set Pro's price above $6 a month to stay profitable even for the heaviest user.
+
 **Generation runs in the background.** A scheduler decides what the pool is short of (it keeps a few entries ahead of the furthest reader in each series, and refreshes news on a timer) and queues jobs; `/api/cron/tick` works through the queue. A person waiting on an on-demand topic nudges the queue themselves, so they aren't stuck until the next tick.
 
 **Half-price writing.** A deep dive is produced in two steps: a fast model researches the topic with web search, then a stronger model writes it up. When nobody is waiting on the entry (the scheduler is just keeping a series ahead), the write-up goes through the Message Batches API at half price and is published on a later tick; set `BATCH_WRITES=0` to write everything live. Requests a person is waiting on are always live.
@@ -80,7 +84,7 @@ Open http://localhost:3000, create an account, and pick some interests. The firs
 
 - `dev:local` always uses the local SQLite file at `./data/neuro-digest.db`, even if hosted database credentials are in `.env.local`. The schema and the built-in fact / mental-model banks are created automatically on first request.
 - `seed:demo` adds two short hand-written entries so there is something to swipe through without an API key.
-- To generate real content, copy `.env.example` to `.env.local`, add your `ANTHROPIC_API_KEY` yourself, and run `npm run tick` (or use "Run a generation tick now" on the admin page).
+- To generate real content, copy `.env.example` to `.env.local`, add your `ANTHROPIC_API_KEY` (or just an `OPENROUTER_API_KEY` for free models) yourself, and run `npm run tick` (or use "Run a generation tick now" on the admin page).
 
 | Command | What it does |
 |---|---|
@@ -109,12 +113,12 @@ The app is a standard Next.js app with a libSQL (Turso) database.
    | Variable | Needed | Purpose |
    |---|---|---|
    | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | Yes | Database |
-   | `ANTHROPIC_API_KEY` | Yes | Content generation |
+   | `ANTHROPIC_API_KEY` | Yes, for paid quality | Claude for the shared pool and Pro accounts, with web search |
    | `ADMIN_EMAIL` | Yes | Which account is the admin. Set it **before** the first deploy, or whoever signs up first becomes admin |
    | `CRON_SECRET` | Yes | Protects the scheduled generation endpoint |
    | `TICK_BUDGET_MS` | Optional | How long a tick may run. Default 45000 fits a 60-second function limit; raise it on a plan with longer functions |
    | `SUMMARY_LLM_API_KEY`, `SUMMARY_LLM_BASE_URL`, `SUMMARY_LLM_MODEL` | Optional | Cheaper provider for news summaries |
-   | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` | Optional | Research Agent. The tab is hidden without it |
+   | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` | Optional | Research Agent (tab hidden without it). Also runs free accounts' personal requests on free models, and all generation when `ANTHROPIC_API_KEY` is empty (no web search or batching then) |
    | `BATCH_WRITES` | Optional | `0` turns off half-price batch writing |
    | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | Optional | Push notifications |
    | `NEXT_PUBLIC_BILLING_URL` | Optional | Checkout link for the upgrade page |

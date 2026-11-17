@@ -224,15 +224,52 @@ describe("feed", () => {
 describe("limits and jobs", () => {
   it("caps free on-demand deep dives per day and deduplicates identical requests", async () => {
     const payload = { interestId: neuroId, level: "some_background" as const, topic: "Dendritic spines" };
+    expect((await m.plan.checkQuota(bob, "free", "onDemandDive")).ok).toBe(true);
     const first = await m.jobs.enqueue("topic_dive", payload, { userId: bob });
     const again = await m.jobs.enqueue("topic_dive", { ...payload, topic: "dendritic SPINES" }, { userId: alice });
     expect(again).toBe(first);
-    expect((await m.plan.checkQuota(bob, "free", "onDemandDive")).ok).toBe(true);
-    await m.jobs.enqueue("topic_dive", { ...payload, topic: "Glial cells" }, { userId: bob });
     const quota = await m.plan.checkQuota(bob, "free", "onDemandDive");
     expect(quota.ok).toBe(false);
     expect(quota.message).toMatch(/Pro/);
     expect((await m.plan.checkQuota(bob, "pro", "onDemandDive")).ok).toBe(true);
+  });
+
+  it("keeps custom fields to Pro", async () => {
+    const quota = await m.plan.checkQuota(bob, "free", "customInterest");
+    expect(quota.ok).toBe(false);
+    expect(quota.message).toBe("Custom interests are part of Neuron Pro.");
+  });
+
+  it("routes paid and free models by plan and by shared-pool purpose", async () => {
+    const ai = await import("@/lib/ai");
+    const saved = { a: process.env.ANTHROPIC_API_KEY, o: process.env.OPENROUTER_API_KEY };
+    try {
+      delete process.env.ANTHROPIC_API_KEY;
+      process.env.OPENROUTER_API_KEY = "test-openrouter";
+      expect(await ai.routeForCurrentCall()).toBe("openrouter"); // no paid key: everything free
+
+      process.env.ANTHROPIC_API_KEY = "test-anthropic";
+      expect(await ai.routeForCurrentCall()).toBe("anthropic"); // no user: shared work
+      const route = (userId: number | null, purpose: string) => ai.withAiContext({ userId, purpose }, () => ai.routeForCurrentCall());
+      expect(await route(bob, "ask")).toBe("openrouter"); // free plan, personal request
+      expect(await route(alice, "ask")).toBe("anthropic"); // first account is the admin
+      expect(await route(bob, "topic_dive")).toBe("anthropic"); // lands in the shared pool
+      expect(await route(null, "series_next")).toBe("anthropic");
+
+      const signed = await m.auth.signUp("pro@example.test", "a third long password", "3.3.3.3");
+      if (!signed.ok) throw new Error("signup failed");
+      const pro = signed.userId;
+      await m.db.client.execute({ sql: "UPDATE users SET plan = 'pro' WHERE id = ?", args: [pro] });
+      expect(await route(pro, "ask")).toBe("anthropic");
+
+      expect(ai.openRouterModelFor(ai.modelFor("main"))).toBe("nvidia/nemotron-3-ultra-550b-a55b:free");
+      expect(ai.openRouterModelFor("claude-unknown")).toBe("nvidia/nemotron-3.5-super-vl:free");
+    } finally {
+      if (saved.a === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = saved.a;
+      if (saved.o === undefined) delete process.env.OPENROUTER_API_KEY;
+      else process.env.OPENROUTER_API_KEY = saved.o;
+    }
   });
 });
 

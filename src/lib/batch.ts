@@ -13,7 +13,7 @@ import { db } from "@/db";
 import { batchJobs, batchRequests } from "@/db/schema";
 import type { BatchJobPurpose } from "@/db/schema";
 import { eq, inArray } from "drizzle-orm";
-import { getBatchClient, recordBatchUsage } from "./ai";
+import { getBatchClient, recordBatchUsage, withRelaxedSchema } from "./ai";
 
 export interface QueuedBatchRequest {
   contentType: string;
@@ -52,7 +52,7 @@ export async function submitBatch(opts: {
     rowIds.push(inserted[0].id);
   }
 
-  const anthropicRequests = opts.requests.map((r, i) => ({ custom_id: `req-${rowIds[i]}`, params: r.params }));
+  const anthropicRequests = opts.requests.map((r, i) => ({ custom_id: `req-${rowIds[i]}`, params: withRelaxedSchema(r.params) }));
 
   let created: Anthropic.Messages.MessageBatch;
   try {

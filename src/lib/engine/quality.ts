@@ -4,7 +4,7 @@
 // support. A low score flags the entry, which keeps it out of the feed
 // until an admin looks at it.
 import { client } from "@/db";
-import { generateJson } from "../ai";
+import { generateJson, routeForCurrentCall } from "../ai";
 import { fetchArticleText } from "../articleFetch";
 
 export interface QualityResult {
@@ -50,8 +50,9 @@ const SCHEMA = {
       description:
         "5 = every checkable claim is supported by the sources or is standard textbook knowledge; " +
         "4 = minor imprecision; 3 = some claims can't be verified from these sources but nothing looks wrong; " +
-        "2 = at least one claim contradicts the sources or looks fabricated (a specific number, study or quote " +
-        "with no basis); 1 = largely unsupported.",
+        "2 = at least one claim contradicts the sources, or is a specific number, study or quote you believe is " +
+        "wrong or invented; 1 = largely unsupported. The excerpts are partial: a claim that is merely absent " +
+        "from them, and that you have no reason to think is false (e.g. a real, well-known study), is a 3 at worst, never a 2.",
     },
     unsupportedClaims: {
       type: "array",
@@ -70,6 +71,10 @@ export async function checkDeepDiveQuality(
   sources: { title: string; url: string }[]
 ): Promise<QualityResult> {
   if (sources.length === 0) {
+    // Without web search (OpenRouter free models) entries are written from
+    // the model's own knowledge, so review them for invented specifics
+    // instead of flagging every one for having no sources.
+    if ((await routeForCurrentCall()) === "openrouter") return reviewUnsourced(topic, content);
     return { score: 2, notes: "No sources were cited.", flagged: true };
   }
 
@@ -116,6 +121,30 @@ export async function checkDeepDiveQuality(
     review.summary +
     (claims.length ? ` Unsupported: ${claims.join(" | ")}` : "") +
     (deadCount ? ` (${deadCount} of ${sources.length} links dead)` : "");
+  return { score, notes, flagged: score < FLAG_BELOW };
+}
+
+async function reviewUnsourced(topic: string, content: string): Promise<QualityResult> {
+  const review = await generateJson<Review>({
+    tier: "fast",
+    schema: SCHEMA as unknown as Record<string, unknown>,
+    maxTokens: 2000,
+    system:
+      "You are a careful fact-checker for an educational app. The explainer below was written without " +
+      "web search and cites no sources. Standard, uncontroversial textbook knowledge is fine; flag specific " +
+      "numbers, named studies, dates and quotes that look invented or wrong.",
+    prompt: `Explainer topic: "${topic}"
+
+--- EXPLAINER ---
+${content}
+--- END ---
+
+Rate how trustworthy the explainer is.`,
+  }).catch(() => null);
+  if (!review) return { score: 3, notes: "Written without web search; automated review unavailable.", flagged: false };
+  const score = Math.max(1, Math.min(5, Math.round(review.score)));
+  const claims = (review.unsupportedClaims ?? []).slice(0, 5);
+  const notes = "Written without web search. " + review.summary + (claims.length ? ` Doubtful: ${claims.join(" | ")}` : "");
   return { score, notes, flagged: score < FLAG_BELOW };
 }
 

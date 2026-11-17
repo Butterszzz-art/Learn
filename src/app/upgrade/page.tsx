@@ -7,11 +7,14 @@ export const metadata = { title: "Neuron Pro" };
 
 const ROWS: { label: string; free: string; pro: string }[] = [
   { label: "The feed, quick checks and reviews", free: "Unlimited", pro: "Unlimited" },
+  { label: "AI for your own questions and feedback", free: "Basic model", pro: "Claude, our best model" },
   { label: "Knowledge map and score", free: "Included", pro: "Included" },
   { label: "Deep dives on a topic you pick", free: `${PLAN_LIMITS.free.onDemandDivesPerDay} a day`, pro: `${PLAN_LIMITS.pro.onDemandDivesPerDay} a day` },
   { label: "Ask about a card", free: `${PLAN_LIMITS.free.asksPerDay} questions a day`, pro: `${PLAN_LIMITS.pro.asksPerDay} a day` },
   { label: "Explain-it-back feedback", free: `${PLAN_LIMITS.free.explainBacksPerDay} a day`, pro: `${PLAN_LIMITS.pro.explainBacksPerDay} a day` },
-  { label: "Your own custom fields", free: String(PLAN_LIMITS.free.customInterests), pro: String(PLAN_LIMITS.pro.customInterests) },
+  { label: "Your own custom fields", free: PLAN_LIMITS.free.customInterests ? String(PLAN_LIMITS.free.customInterests) : "—", pro: String(PLAN_LIMITS.pro.customInterests) },
+  { label: "Attached syllabi", free: String(PLAN_LIMITS.free.syllabi), pro: String(PLAN_LIMITS.pro.syllabi) },
+  { label: "Research tab questions", free: `${PLAN_LIMITS.free.researchQuestionsPerDay} a day`, pro: `${PLAN_LIMITS.pro.researchQuestionsPerDay} a day` },
   { label: "Library books and articles", free: String(PLAN_LIMITS.free.libraryBooks), pro: String(PLAN_LIMITS.pro.libraryBooks) },
   { label: "Research-level paths", free: "—", pro: "Included" },
   { label: "Export everything at once", free: "—", pro: "Included" },
@@ -24,7 +27,7 @@ export default async function UpgradePage() {
     <div>
       <Link href="/me" className="text-sm font-bold text-neuron-accent">← Me</Link>
       <h1 className="page-title mt-4">Neuron Pro</h1>
-      <p className="mt-1 text-neuron-muted">The feed is free and stays free. Pro is for going further: more on-demand depth, your own fields, and a bigger Library.</p>
+      <p className="mt-1 text-neuron-muted">The feed is free and stays free. Pro is for going further: Claude for your own questions and feedback, far more on-demand depth, your own fields, and a bigger Library.</p>
 
       <div className="mt-6 overflow-x-auto">
         <table className="w-full min-w-[420px] border-separate border-spacing-0 text-sm">
