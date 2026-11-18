@@ -29,3 +29,16 @@ describe("summary lengths", () => {
     expect(isSummaryLength("huge")).toBe(false);
   });
 });
+
+describe("summary upgrade batches", () => {
+  it("takes the newest half and a random draw from the rest", async () => {
+    const { pickUpgradeBatch } = await import("@/lib/summaryUpgrade");
+    const rows = Array.from({ length: 30 }, (_, i) => i);
+    const batch = pickUpgradeBatch(rows, 12, () => 0.999);
+    expect(batch.slice(0, 6)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(batch).toHaveLength(12);
+    expect(new Set(batch).size).toBe(12);
+    expect(batch.slice(6).every((n) => n >= 6)).toBe(true);
+    expect(pickUpgradeBatch([1, 2], 12)).toEqual([1, 2]);
+  });
+});
