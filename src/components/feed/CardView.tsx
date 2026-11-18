@@ -314,7 +314,10 @@ function PaperBody({ card, onExpand }: { card: FeedCard; onExpand: () => void })
   const p = card.payload;
   const { length, setLength } = useCardLength(["brief", "standard"]);
   const open = length !== "brief";
-  const shown = open ? card.body : briefOf(card.body);
+  // The takeaway is usually the summary's first sentence; don't print it twice.
+  const takeaway = typeof p.takeaway === "string" ? p.takeaway.trim() : "";
+  const rest = takeaway && card.body.trim().startsWith(takeaway) ? card.body.trim().slice(takeaway.length).trim() : card.body;
+  const shown = open ? rest : briefOf(rest);
   const badge = (p.badge ?? "journalism") as SourceBadge;
   return (
     <div className="w-full">
@@ -338,7 +341,7 @@ function PaperBody({ card, onExpand }: { card: FeedCard; onExpand: () => void })
           if (l !== "brief") onExpand();
           setLength(l);
         }}
-        shownText={shown}
+        shownText={`${takeaway} ${shown}`}
       />
       {p.authors && open && <p className="mt-2 text-xs text-neuron-muted">{p.authors}</p>}
       {open && p.itemId && (
