@@ -703,6 +703,7 @@ export interface UserPrefs {
   theme?: "system" | "light" | "dark";
   notifyHour?: number | null; // UTC hour for the one optional daily nudge
   textScale?: number;
+  summaryLength?: "brief" | "standard" | "indepth"; // default length of card summaries; unset = standard
   lastMuteSweep?: string; // YYYY-MM-DD of the last engagement sweep
   lastNudge?: string;
 }

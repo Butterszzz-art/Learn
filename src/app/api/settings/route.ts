@@ -5,6 +5,7 @@ import type { UserPrefs } from "@/db/schema";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
+import { isSummaryLength } from "@/lib/summaryLength";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,7 @@ export async function POST(req: Request) {
   if (Number.isInteger(body.dailyGoal) && body.dailyGoal >= 0 && body.dailyGoal <= 200) patch.dailyGoal = body.dailyGoal;
   if (body.notifyHour === null || (Number.isInteger(body.notifyHour) && body.notifyHour >= 0 && body.notifyHour <= 23)) patch.notifyHour = body.notifyHour;
   if (typeof body.textScale === "number" && body.textScale >= 0.85 && body.textScale <= 1.4) patch.textScale = body.textScale;
+  if (isSummaryLength(body.summaryLength)) patch.summaryLength = body.summaryLength;
   if (typeof body.displayName === "string") {
     await db.update(users).set({ displayName: body.displayName.trim().slice(0, 40) || null }).where(eq(users.id, user.id));
   }

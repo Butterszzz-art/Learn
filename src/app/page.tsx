@@ -21,6 +21,7 @@ export default async function HomePage() {
       interests={interests.map((i) => ({ id: i.id, name: i.name }))}
       muteNotices={muteNotices}
       daily={daily}
+      summaryLength={user.prefs.summaryLength}
     />
   );
 }
