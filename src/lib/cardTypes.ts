@@ -16,6 +16,7 @@ export interface BitePayload {
   kind: "hook" | "idea" | "number" | "why" | "puzzle";
   highlight?: string; // the key term or number to call out
   takeaway?: string; // one line, shown bold under the body
+  detail?: string; // the in-depth length (220-350 words); older cards get it on first request
 }
 export interface PaperPayload {
   url: string;

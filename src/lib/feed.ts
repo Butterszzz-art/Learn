@@ -1,6 +1,7 @@
 // Builds one page of a person's feed (Phase 14) and records what they do
 // with it. Everything served here already exists in the shared pool — a
 // feed request never waits on an AI call.
+import { clipAt } from "./summaryLength";
 import { client } from "@/db";
 import type { CardType, Level } from "@/db/schema";
 import { LEVELS } from "@/db/schema";
@@ -318,7 +319,8 @@ async function buildChapterCard(userId: number): Promise<FeedCard | null> {
     interestName: r.book_title,
     level: null,
     title: `Chapter ${r.chapter_number}: ${r.title}`,
-    body: summary.length > 320 ? summary.slice(0, 320).replace(/\s+\S*$/, "") + "…" : summary,
+    // The whole summary; the card shows it at the reader's chosen length.
+    body: clipAt(summary, 4000),
     payload: { chapterId: Number(r.id), bookId: Number(r.book_id) },
     conceptId: null,
     conceptName: null,
