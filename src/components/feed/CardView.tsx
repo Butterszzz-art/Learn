@@ -366,6 +366,7 @@ function Body({ card, handlers }: { card: FeedCard; handlers: CardHandlers }) {
 
   switch (card.kind) {
     case "bite":
+      if (p.kind === "puzzle") return <PuzzleBite card={card} onReveal={() => emit("completed")} />;
       if (p.kind === "puzzle") return <PuzzleBite card={card} onReveal={() => emit("completed")} onLonger={() => emit("expanded")} />;
       return (
         <div className="w-full">
@@ -502,6 +503,9 @@ function Body({ card, handlers }: { card: FeedCard; handlers: CardHandlers }) {
 }
 
 /** A bite whose headline is a question: think first, then tap for the answer. */
+function PuzzleBite({ card, onReveal }: { card: FeedCard; onReveal: () => void }) {
+  const [shown, setShown] = useState(false);
+  const p = card.payload;
 function PuzzleBite({ card, onReveal, onLonger }: { card: FeedCard; onReveal: () => void; onLonger: () => void }) {
   const [shown, setShown] = useState(false);
   return (
@@ -510,6 +514,10 @@ function PuzzleBite({ card, onReveal, onLonger }: { card: FeedCard; onReveal: ()
       <h2 className="mt-2 font-display text-3xl font-bold leading-tight sm:text-4xl">{card.title}</h2>
       {shown ? (
         <div aria-live="polite">
+          <p className="mt-4 text-lg leading-relaxed text-neuron-text/95 sm:text-xl">
+            <Highlighted text={card.body} term={p.highlight} />
+          </p>
+          {p.takeaway && <p className="mt-5 border-l-4 border-[var(--ic)] pl-4 text-base font-bold leading-snug text-neuron-text">{p.takeaway}</p>}
           <BiteText card={card} onLonger={onLonger} />
         </div>
       ) : (
@@ -754,6 +762,8 @@ export function CardView({
     >
       <div className="flex min-h-0 flex-1 flex-col rounded-3xl border border-neuron-border bg-neuron-surface p-5 shadow-sm sm:p-7">
         {!centered && <Header card={card} />}
+        <div className={`flex min-h-0 flex-1 flex-col overflow-y-auto py-4 ${centered ? "justify-center" : "justify-center"}`}>
+          {card.kind === "dailydone" ? <DailyDone card={card} onNext={onNext} /> : <Body card={card} handlers={handlers} />}
         {/* my-auto centres short cards; long ones start at the top and scroll (justify-center would clip their top). */}
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain py-4">
           <div className="my-auto w-full">
