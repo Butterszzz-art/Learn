@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { FeedCard, CardEventName } from "@/lib/cardTypes";
 import { CardView } from "./feed/CardView";
 import type { CardHandlers } from "./feed/CardView";
+import { GlyphBadge } from "./brand/Glyph";
 import { AskSheet, DeepDiveSheet, ReportSheet } from "./feed/Sheets";
 
 /** One-at-a-time run through due reviews (or extra practice questions). */
@@ -29,7 +30,7 @@ export function ReviewSession({ cards, emptyTitle, emptyText }: { cards: FeedCar
   if (cards.length === 0 || i >= cards.length) {
     return (
       <div className="card text-center">
-        <p className="text-4xl" aria-hidden>{cards.length === 0 ? "🌿" : "✅"}</p>
+        <GlyphBadge name={cards.length === 0 ? "leaf" : "done"} tone="accent3" />
         <h2 className="mt-2 font-display text-xl font-bold">{cards.length === 0 ? emptyTitle : "Done for now"}</h2>
         <p className="mt-1 text-sm text-neuron-muted">{cards.length === 0 ? emptyText : `${cards.length} reviewed. Each one is scheduled to come back just before you'd forget it.`}</p>
         <Link href="/" className="btn-secondary mt-4">Back to the feed</Link>

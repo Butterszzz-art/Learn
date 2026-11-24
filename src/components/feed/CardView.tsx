@@ -16,6 +16,7 @@ import { speakSegments, speechSupported } from "@/lib/speech";
 import { shareLink, tap } from "@/lib/native";
 import { briefOf, clipAt } from "@/lib/summaryLength";
 import type { SummaryLength } from "@/lib/summaryLength";
+import { GlyphBadge } from "../brand/Glyph";
 import { LengthSwitcher, useCardLength } from "./SummaryLength";
 
 export interface CardHandlers {
@@ -462,7 +463,7 @@ function Body({ card, handlers }: { card: FeedCard; handlers: CardHandlers }) {
     case "recap":
       return (
         <div className="w-full text-center">
-          <p aria-hidden className="text-5xl">✨</p>
+          <GlyphBadge name="sparkle" tone="accent2" size="lg" />
           <h2 className="mt-3 font-display text-3xl font-bold">{card.title}</h2>
           <p className="mt-2 text-base text-neuron-muted">{card.body}</p>
           {Array.isArray(p.concepts) && p.concepts.length > 0 && (
@@ -485,7 +486,7 @@ function Body({ card, handlers }: { card: FeedCard; handlers: CardHandlers }) {
     case "caughtup":
       return (
         <div className="w-full text-center">
-          <p aria-hidden className="text-5xl">🎉</p>
+          <GlyphBadge name="celebrate" size="lg" />
           <h2 className="mt-3 font-display text-3xl font-bold">{card.title}</h2>
           <p className="mt-2 text-base text-neuron-muted">{card.body}</p>
           <div className="mt-6 flex flex-wrap justify-center gap-2">
@@ -657,7 +658,7 @@ function DailyDone({ card, onNext }: { card: FeedCard; onNext?: () => void }) {
   }, []);
   return (
     <div className="w-full text-center">
-      <p aria-hidden className="text-6xl">🌱</p>
+      <GlyphBadge name="sprout" tone="accent3" size="lg" />
       <h2 className="mt-3 font-display text-3xl font-bold">{card.title}</h2>
       {typeof p.streak === "number" && p.streak > 0 && (
         <p className="mt-2 text-base font-extrabold text-neuron-accent3">

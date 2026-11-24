@@ -6,6 +6,7 @@ import type { InterestKnowledge, MapConcept } from "@/lib/learning";
 import type { Mastery } from "@/lib/cardTypes";
 import { MASTERY_LABELS } from "@/lib/cardTypes";
 import { interestStyle, formatDate } from "@/lib/ui";
+import { Glyph } from "./brand/Glyph";
 import { Sheet } from "./feed/Sheets";
 
 const TIERS = ["Foundations", "Core ideas", "Going deeper", "Advanced", "Research frontier"];
@@ -33,7 +34,14 @@ export function KnowledgeMap({ fields }: { fields: InterestKnowledge[] }) {
         <div className="mb-5 flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Field">
           {fields.map((f) => (
             <button key={f.interestId} type="button" role="tab" aria-selected={f.interestId === field.interestId} onClick={() => setActive(f.interestId)} className={`pill shrink-0 !py-1.5 ${f.interestId === field.interestId ? "!border-neuron-accent !bg-neuron-accent/15 !text-neuron-text" : ""}`}>
-              {f.interestName.replace(/^Library: /, "📚 ")}
+              {f.interestName.startsWith("Library: ") ? (
+                <>
+                  <Glyph name="library" className="h-4 w-4 text-current" />
+                  {f.interestName.slice("Library: ".length)}
+                </>
+              ) : (
+                f.interestName
+              )}
             </button>
           ))}
         </div>

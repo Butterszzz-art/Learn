@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Icon } from "../Icon";
 import { feedback } from "@/lib/native";
 
 /**
@@ -56,7 +57,7 @@ export function QuizBlock({
               className={`flex min-h-[48px] w-full items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left text-[15px] font-semibold leading-snug text-neuron-text transition ${tone}`}
             >
               <span aria-hidden className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-current text-xs font-extrabold opacity-70">
-                {answered && isCorrect ? "✓" : answered && isPicked ? "✕" : String.fromCharCode(65 + i)}
+                {answered && isCorrect ? <Icon name="check" className="h-3.5 w-3.5" /> : answered && isPicked ? <Icon name="close" className="h-3.5 w-3.5" /> : String.fromCharCode(65 + i)}
               </span>
               <span>{opt}</span>
               {answered && isCorrect && <span className="sr-only"> (correct answer)</span>}

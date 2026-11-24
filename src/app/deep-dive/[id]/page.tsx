@@ -12,6 +12,7 @@ import { ExportButtons } from "@/components/ExportButtons";
 import { DeepDiveQuiz, DeepDiveTools } from "@/components/DeepDiveExtras";
 import { TrustBadge } from "@/components/TrustBadge";
 import { CiteButton } from "@/components/CiteButton";
+import { Glyph } from "@/components/brand/Glyph";
 import { classifyDeepDive } from "@/lib/trustSignals";
 
 export const dynamic = "force-dynamic";
@@ -46,7 +47,8 @@ export default async function DeepDivePage({ params }: { params: { id: string } 
           <TrustBadge classification={classifyDeepDive(dive.sources.length)} />
           {dive.syllabusNote && (
             <span className="pill !border-neuron-accent/50 !text-neuron-text" title={dive.syllabusNote.reference ?? undefined}>
-              🎓 {dive.syllabusNote.status === "not_in_syllabus" ? "Not in your syllabus" : "Newer than your assigned reading"}
+              <Glyph name="graduate" className="h-4 w-4 text-current" />
+              {dive.syllabusNote.status === "not_in_syllabus" ? "Not in your syllabus" : "Newer than your assigned reading"}
             </span>
           )}
           <span className="text-xs text-neuron-muted">{readingMinutes(dive.content)} min read · {formatDate(dive.createdAt)}</span>

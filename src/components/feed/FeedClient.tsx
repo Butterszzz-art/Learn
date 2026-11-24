@@ -386,7 +386,13 @@ export function FeedClient({
           className={`pill shrink-0 !py-1.5 tabular-nums ${doneToday >= daily.goal ? "!border-neuron-accent3/60 !text-neuron-accent3" : ""}`}
           aria-label={`Today's set: ${Math.min(doneToday, daily.goal)} of ${daily.goal} cards`}
         >
-          {doneToday >= daily.goal ? "Today ✓" : `Today ${doneToday}/${daily.goal}`}
+          {doneToday >= daily.goal ? (
+            <>
+              Today <Icon name="check" className="h-3.5 w-3.5" />
+            </>
+          ) : (
+            `Today ${doneToday}/${daily.goal}`
+          )}
         </span>
       )}
       {interests.length > 1 && (

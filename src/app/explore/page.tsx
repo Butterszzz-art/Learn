@@ -5,6 +5,8 @@ import { getLearningPaths, getTrendingConcepts } from "@/lib/explore";
 import { LEVEL_LABELS } from "@/db/schema";
 import { interestStyle } from "@/lib/ui";
 import { SearchBox } from "@/components/SearchBox";
+import { Glyph } from "@/components/brand/Glyph";
+import { Icon } from "@/components/Icon";
 import { hasOpenRouterKey } from "@/lib/researchAgent";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +27,9 @@ export default async function ExplorePage() {
       <div className="mt-4"><SearchBox /></div>
       {hasOpenRouterKey() && (
         <Link href="/research" className="card mt-4 flex items-center gap-3 !p-4 transition hover:border-neuron-accent">
-          <span aria-hidden className="text-2xl">🔬</span>
+          <span aria-hidden className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-neuron-accent/10">
+            <Glyph name="microscope" />
+          </span>
           <span>
             <span className="block font-bold">Research Agent</span>
             <span className="block text-sm text-neuron-muted">Ask a question; it finds and cites real papers.</span>
@@ -53,7 +57,7 @@ export default async function ExplorePage() {
                   {p.entries.slice(0, 8).map((e, i) => (
                     <li key={e.deepDiveId}>
                       <Link href={`/deep-dive/${e.deepDiveId}`} className="flex items-center gap-3 rounded-xl px-2 py-1.5 text-sm font-semibold hover:bg-neuron-surface2">
-                        <span aria-hidden className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-extrabold ${e.seen ? "bg-[var(--ic)] text-white" : "border border-neuron-border text-neuron-muted"}`}>{e.seen ? "✓" : i + 1}</span>
+                        <span aria-hidden className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-extrabold ${e.seen ? "bg-[var(--ic)] text-white" : "border border-neuron-border text-neuron-muted"}`}>{e.seen ? <Icon name="check" className="h-3.5 w-3.5" /> : i + 1}</span>
                         <span className={e.seen ? "text-neuron-muted" : ""}>{e.topic}</span>
                         {e.seen && <span className="sr-only">(started)</span>}
                       </Link>
