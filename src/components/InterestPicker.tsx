@@ -6,6 +6,7 @@ import { LEVELS } from "@/db/schema";
 import type { Level } from "@/db/schema";
 import { interestStyle, postJson } from "@/lib/ui";
 import { Icon } from "./Icon";
+import { TopicGlyph } from "./brand/TopicGlyph";
 
 export interface InterestConfig {
   id: number;
@@ -25,26 +26,6 @@ const LEVEL_CHOICES: Record<Level, { label: string; hint: string }> = {
   some_background: { label: "Know the basics", hint: "Skip the introductions" },
   advanced: { label: "Studying or working in it", hint: "Mechanisms and open questions" },
   research_level: { label: "Research level", hint: "Current debates and recent papers" },
-};
-
-const EMOJI: Record<string, string> = {
-  neuroscience: "🧠",
-  psychology: "💭",
-  philosophy: "🏛️",
-  history: "📜",
-  economics: "📈",
-  business: "💼",
-  "political-science": "🗳️",
-  "cs-ai": "🤖",
-  physics: "⚛️",
-  "critical-thinking": "🧐",
-  "exercise-science": "🏃",
-  "philosophy-of-science": "🔬",
-  mathematics: "➗",
-  logic: "🧩",
-  "animal-world": "🦉",
-  biology: "🧬",
-  evolution: "🌱",
 };
 
 const MIN_ONBOARDING = 3;
@@ -117,8 +98,8 @@ export function InterestPicker({
             <div className={`rounded-3xl border-2 p-4 transition ${i.enabled ? "border-[var(--ic)] bg-[var(--ic-soft)]" : "border-neuron-border bg-neuron-surface"}`}>
               <div className="flex items-start gap-2">
                 <button type="button" onClick={() => update(i.id, { enabled: !i.enabled })} aria-pressed={i.enabled} className="flex min-h-[44px] flex-1 items-center gap-3 text-left">
-                  <span aria-hidden className="text-2xl">
-                    {EMOJI[i.slug] ?? "✨"}
+                  <span aria-hidden className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[var(--ic-soft)] text-[var(--ic)]">
+                    <TopicGlyph slug={i.slug} />
                   </span>
                   <span>
                     <span className="block font-bold leading-tight">{i.name}</span>
