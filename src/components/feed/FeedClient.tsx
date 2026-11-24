@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FeedCard, CardEvent, CardEventName } from "@/lib/cardTypes";
 import { CardView } from "./CardView";
+import { SummaryLengthProvider } from "./SummaryLength";
+import type { SummaryLength } from "@/lib/summaryLength";
 import type { CardHandlers } from "./CardView";
 import { AskSheet, DeepDiveSheet, ReportSheet } from "./Sheets";
 import { MuteNotices } from "../MuteNotices";
@@ -43,12 +45,14 @@ export function FeedClient({
   interests,
   muteNotices = [],
   daily = null,
+  summaryLength,
 }: {
   initialCards: FeedCard[];
   initialHasMore: boolean;
   interests: FeedInterest[];
   muteNotices?: MuteNoticeItem[];
   daily?: DailyState | null;
+  summaryLength?: SummaryLength;
 }) {
   const [cards, setCards] = useState<FeedCard[]>(initialCards);
   const [hasMore, setHasMore] = useState(initialHasMore);
@@ -361,6 +365,7 @@ export function FeedClient({
   );
 
   return (
+    <SummaryLengthProvider initial={summaryLength}>
     <div className="relative flex h-full flex-col">
       <MuteNotices initial={muteNotices} compact />
       <div className="flex shrink-0 items-center gap-2 px-4 pb-1 pt-3 sm:px-6">
@@ -425,5 +430,6 @@ export function FeedClient({
       {sheet?.type === "ask" && <AskSheet card={sheet.card} onClose={() => setSheet(null)} />}
       {sheet?.type === "report" && <ReportSheet card={sheet.card} onClose={() => setSheet(null)} />}
     </div>
+    </SummaryLengthProvider>
   );
 }

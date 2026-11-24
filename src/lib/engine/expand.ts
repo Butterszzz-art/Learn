@@ -1,5 +1,5 @@
 // Turns one long deep dive into everything the feed and the knowledge map
-// need — short "bite" cards, the concepts it teaches (with prerequisites),
+// need — "bite" cards (each with a standard and an in-depth length), the concepts it teaches (with prerequisites),
 // quiz questions tied to those concepts, an optional apply-it takeaway, an
 // optional myth-vs-fact, an optional diagram, and follow-up topics.
 //
@@ -16,6 +16,7 @@ interface Expansion {
   bites: {
     headline: string;
     text: string;
+    detail: string;
     kind: "hook" | "idea" | "number" | "why" | "puzzle";
     highlight: string;
     takeaway: string;
@@ -66,7 +67,19 @@ const SCHEMA = {
         type: "object",
         properties: {
           headline: { type: "string", description: "A specific, curiosity-raising headline, max 9 words. No clickbait." },
-          text: { type: "string", description: "40-90 words. Concrete and exact; keep real numbers and names." },
+          text: {
+            type: "string",
+            description:
+              "90-150 words: a real paragraph a reader can learn from, not a teaser. Say what the idea is, how it " +
+              "works and one concrete example or finding from the entry. Concrete and exact; keep real numbers and names.",
+          },
+          detail: {
+            type: "string",
+            description:
+              "The in-depth version of this same card, 220-350 words in 2-4 short paragraphs (separated by a blank " +
+              "line). Goes further than text: the mechanism step by step, the evidence the entry gives for it, a " +
+              "worked example, and any caveat or open question the entry raises. Only material from the entry.",
+          },
           kind: {
             type: "string",
             enum: ["hook", "idea", "number", "why", "puzzle"],
@@ -80,7 +93,7 @@ const SCHEMA = {
           takeaway: { type: "string", description: "One sentence the reader should remember, max 20 words." },
           conceptIndex: { type: "integer", description: "0-based index into concepts this bite teaches, or -1." },
         },
-        required: ["headline", "text", "kind", "highlight", "takeaway", "conceptIndex"],
+        required: ["headline", "text", "detail", "kind", "highlight", "takeaway", "conceptIndex"],
         additionalProperties: false,
       },
     },
@@ -242,7 +255,7 @@ export async function expandDeepDive(input: ExpandInput): Promise<number | null>
     tier: "fast",
     schema: SCHEMA as unknown as Record<string, unknown>,
     system: SYSTEM,
-    maxTokens: 6000,
+    maxTokens: 12000,
     prompt:
       `Field: ${input.interestName}\nReader level: ${input.level}\nEntry topic: "${input.topic}"\n\n` +
       `Concepts already in this field's knowledge map (reuse a name exactly if this entry teaches the same idea; ` +
@@ -291,6 +304,7 @@ export async function expandDeepDive(input: ExpandInput): Promise<number | null>
       kind: b.kind,
       highlight: b.highlight && b.text.includes(b.highlight) ? b.highlight : undefined,
       takeaway: b.takeaway?.trim() || undefined,
+      detail: b.detail?.trim() || undefined,
     };
     await upsertCard({
       ...base,

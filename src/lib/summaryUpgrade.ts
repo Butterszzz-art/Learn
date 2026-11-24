@@ -83,6 +83,22 @@ export async function upgradeSummary(
 }
 
 /**
+ * Half the batch is the newest fallback items, the rest a random draw from
+ * older ones. Always taking the newest only meant a few items the provider
+ * kept failing on were retried every run while older ones were never reached.
+ */
+export function pickUpgradeBatch<T>(rows: T[], maxItems: number, random: () => number = Math.random): T[] {
+  if (rows.length <= maxItems) return rows.slice();
+  const newest = Math.ceil(maxItems / 2);
+  const rest = rows.slice(newest);
+  for (let i = rest.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [rest[i], rest[j]] = [rest[j], rest[i]];
+  }
+  return [...rows.slice(0, newest), ...rest.slice(0, maxItems - newest)];
+}
+
+/**
  * Upgrades as many fallback summaries as fit in the time budget. Run as a
  * background job; whatever it doesn't reach is picked up by the next run.
  */
@@ -91,7 +107,7 @@ export async function upgradeFallbackSummaries(budgetMs = 40_000, maxItems = 12)
   const rows = await listFallbackItems();
   let upgraded = 0;
   let tried = 0;
-  for (const row of rows.slice(0, maxItems)) {
+  for (const row of pickUpgradeBatch(rows, maxItems)) {
     if (Date.now() > deadline - 8000) break;
     tried++;
     const result = await upgradeSummary(row, { deadline });

@@ -14,7 +14,7 @@ interface DemoDive {
   content: string;
   sources: { title: string; url: string }[];
   concepts: { name: string; definition: string; difficulty: number; prereq?: string }[];
-  bites: { headline: string; text: string; highlight?: string; takeaway: string; concept: number; kind: "hook" | "idea" | "number" | "why" }[];
+  bites: { headline: string; text: string; highlight?: string; takeaway: string; detail?: string; concept: number; kind: "hook" | "idea" | "number" | "why" }[];
   quiz: { question: string; options: string[]; correctIndex: number; explanation: string; concept: number }[];
   myth?: { myth: string; fact: string };
   diagram?: { mermaid: string; caption: string };
@@ -37,7 +37,7 @@ const DEMO: DemoDive[] = [
       { name: "Myelination", definition: "Insulation of an axon by glial cells, which speeds up signal conduction.", difficulty: 2, prereq: "Action potential" },
     ],
     bites: [
-      { kind: "hook", headline: "Neurons don't have a volume knob", text: "A neuron either fires completely or not at all. Push it harder and the spike doesn't get bigger — it just fires more often. Your brain encodes intensity in rhythm, not loudness.", highlight: "fires more often", takeaway: "Spike rate, not spike size, carries the message.", concept: 0 },
+      { kind: "hook", headline: "Neurons don't have a volume knob", text: "A neuron either fires completely or not at all. Push it harder and the spike doesn't get bigger — it just fires more often. Your brain encodes intensity in rhythm, not loudness.", highlight: "fires more often", takeaway: "Spike rate, not spike size, carries the message.", detail: "A neuron at rest holds a voltage of about -70 millivolts across its membrane. Incoming signals nudge that voltage up or down, and nothing dramatic happens until it crosses a threshold near -55 millivolts. At that point voltage-gated sodium channels open, sodium rushes in, and the cell fires an action potential: a brief, self-propagating reversal of voltage that travels down the axon.\n\nThe key property is that the spike is all-or-nothing. Once the threshold is crossed, the spike runs to completion at the same size every time. A stronger stimulus cannot make it bigger, because the spike is set by the channels, not by the push that started it.\n\nSo how does the brain tell a gentle touch from a hard one? Through rate and timing. A stronger stimulus makes the neuron cross threshold again sooner, so it fires more often. Information is carried in how many spikes arrive and when, not in their size — closer to Morse code than to a volume dial.", concept: 0 },
       { kind: "number", headline: "The threshold is about -55 millivolts", text: "A resting neuron sits near -70 millivolts. Nudge it past roughly -55 millivolts and sodium channels snap open, setting off a spike that runs the length of the axon.", highlight: "-55 millivolts", takeaway: "Cross the threshold and the spike is automatic.", concept: 0 },
       { kind: "idea", headline: "Neurons never actually touch", text: "Between two neurons is a gap about 20 nanometres wide. The signal crosses it chemically: calcium floods in, neurotransmitter is released, and receptors on the far side respond.", highlight: "20 nanometres", takeaway: "Electrical inside the cell, chemical between cells.", concept: 1 },
       { kind: "why", headline: "Insulation makes thought fast", text: "Wrapped in myelin, an axon can carry signals at up to 120 metres per second instead of about 1. Diseases that strip myelin, like multiple sclerosis, slow or block those signals.", highlight: "120 metres per second", takeaway: "Myelin is why a reflex beats a thought.", concept: 2 },
@@ -114,7 +114,7 @@ async function main() {
       const base = { interestId, level, deepDiveId: diveId };
       let seq = 0;
       for (const [i, b] of d.bites.entries()) {
-        await upsertCard({ ...base, type: "bite", conceptId: conceptIds[b.concept], seq: seq++, title: b.headline, body: b.text, payload: { kind: b.kind, highlight: b.highlight, takeaway: b.takeaway }, dedupeKey: `demo:${diveId}:bite:${i}` });
+        await upsertCard({ ...base, type: "bite", conceptId: conceptIds[b.concept], seq: seq++, title: b.headline, body: b.text, payload: { kind: b.kind, highlight: b.highlight, takeaway: b.takeaway, detail: b.detail }, dedupeKey: `demo:${diveId}:bite:${i}` });
       }
       if (d.diagram) await upsertCard({ ...base, type: "visual", seq: seq++, title: d.topic, body: d.diagram.caption, payload: d.diagram, dedupeKey: `demo:${diveId}:visual` });
       if (d.myth) await upsertCard({ ...base, type: "myth", seq: seq++, title: d.myth.myth, body: d.myth.fact, payload: d.myth, dedupeKey: `demo:${diveId}:myth` });

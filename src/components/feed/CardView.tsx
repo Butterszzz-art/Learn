@@ -14,6 +14,9 @@ import { formatNumber, guessVerdict, sliderScale } from "@/lib/interactive";
 import { spokenSegments } from "@/lib/spoken";
 import { speakSegments, speechSupported } from "@/lib/speech";
 import { shareLink, tap } from "@/lib/native";
+import { briefOf, clipAt } from "@/lib/summaryLength";
+import type { SummaryLength } from "@/lib/summaryLength";
+import { LengthSwitcher, useCardLength } from "./SummaryLength";
 
 export interface CardHandlers {
   onEvent: (cardId: number, event: CardEventName, value?: number) => void;
@@ -215,9 +218,106 @@ function RecallReview({ card }: { card: FeedCard }) {
   );
 }
 
-function PaperBody({ card, onExpand }: { card: FeedCard; onExpand: () => void }) {
-  const [open, setOpen] = useState(false);
+/** Paragraphs of a longer text, split on blank lines. */
+function Paragraphs({ text, className }: { text: string; className: string }) {
+  return (
+    <>
+      {text
+        .split(/\n\s*\n/)
+        .map((para) => para.trim())
+        .filter(Boolean)
+        .map((para, i) => (
+          <p key={i} className={className}>
+            {para}
+          </p>
+        ))}
+    </>
+  );
+}
+
+/**
+ * A bite's text at the reader's chosen length: Brief (first sentences),
+ * Standard (the card text) or In-depth (a longer write-up, fetched and
+ * stored on first request for cards written before it existed).
+ */
+function BiteText({ card, onLonger }: { card: FeedCard; onLonger: () => void }) {
   const p = card.payload;
+  const [detail, setDetail] = useState<string | null>(typeof p.detail === "string" && p.detail.trim() ? p.detail : null);
+  const [detailState, setDetailState] = useState<"idle" | "loading" | "failed">("idle");
+  const canDeepen = !!detail || (card.cardId !== null && detailState !== "failed");
+  const options: SummaryLength[] = canDeepen ? ["brief", "standard", "indepth"] : ["brief", "standard"];
+  const { length, setLength } = useCardLength(options);
+
+  useEffect(() => {
+    if (length !== "indepth" || detail || detailState !== "idle" || card.cardId === null) return;
+    let cancelled = false;
+    setDetailState("loading");
+    fetch(`/api/cards/${card.cardId}/detail`)
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d) => {
+        if (cancelled) return;
+        setDetail(d.detail);
+        setDetailState("idle");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDetailState("failed");
+        setLength("standard");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [length, detail, detailState, card.cardId, setLength]);
+
+  const choose = (l: SummaryLength) => {
+    if (l !== "brief") onLonger();
+    setLength(l);
+  };
+  const loading = length === "indepth" && !detail;
+  const shown = length === "brief" ? briefOf(card.body) : length === "indepth" && detail ? detail : card.body;
+
+  return (
+    <div>
+      {length === "indepth" && detail ? (
+        <div className="mt-4 space-y-3">
+          <Paragraphs text={detail} className="text-base leading-relaxed text-neuron-text/95 sm:text-lg" />
+        </div>
+      ) : (
+        <p className={`mt-4 leading-relaxed text-neuron-text/95 ${length === "brief" ? "text-lg sm:text-xl" : "text-base sm:text-lg"} ${loading ? "opacity-60" : ""}`}>
+          <Highlighted text={length === "brief" ? shown : card.body} term={p.highlight} />
+        </p>
+      )}
+      {p.takeaway && <p className="mt-5 border-l-4 border-[var(--ic)] pl-4 text-base font-bold leading-snug text-neuron-text">{p.takeaway}</p>}
+      <LengthSwitcher options={options} value={length} onChange={choose} shownText={shown} loading={loading} />
+      {detailState === "failed" && <p className="mt-1 text-xs text-neuron-muted">The in-depth version isn&apos;t available for this card right now.</p>}
+    </div>
+  );
+}
+
+/** A Library chapter's summary at the reader's chosen length. */
+function ChapterText({ text }: { text: string }) {
+  const long = text.length > 700;
+  const options: SummaryLength[] = long ? ["brief", "standard", "indepth"] : ["brief", "standard"];
+  const { length, setLength } = useCardLength(options);
+  const shown = length === "brief" ? briefOf(text) : length === "standard" ? clipAt(text, 700) : text;
+  return (
+    <div>
+      <div className="mt-3 space-y-3">
+        <Paragraphs text={shown} className="text-base leading-relaxed text-neuron-text/90" />
+      </div>
+      <LengthSwitcher options={options} value={length} onChange={setLength} shownText={shown} />
+    </div>
+  );
+}
+
+function PaperBody({ card, onExpand }: { card: FeedCard; onExpand: () => void }) {
+  const p = card.payload;
+  const { length, setLength } = useCardLength(["brief", "standard"]);
+  const open = length !== "brief";
+  // The takeaway is usually the summary's first sentence; don't print it twice.
+  const takeaway = typeof p.takeaway === "string" ? p.takeaway.trim() : "";
+  const rest = takeaway && card.body.trim().startsWith(takeaway) ? card.body.trim().slice(takeaway.length).trim() : card.body;
+  const shown = open ? rest : briefOf(rest);
   const badge = (p.badge ?? "journalism") as SourceBadge;
   return (
     <div className="w-full">
@@ -230,20 +330,19 @@ function PaperBody({ card, onExpand }: { card: FeedCard; onExpand: () => void })
       </div>
       <h2 className="font-display text-2xl font-bold leading-tight sm:text-3xl">{card.title}</h2>
       {p.takeaway && <p className="mt-3 text-lg font-bold leading-snug text-neuron-text">{p.takeaway}</p>}
-      {open ? (
-        <p className="mt-3 whitespace-pre-line text-base leading-relaxed text-neuron-text/90">{card.body}</p>
-      ) : (
-        <button
-          type="button"
-          className="mt-3 block min-h-[44px] text-left text-sm font-extrabold text-neuron-accent"
-          onClick={() => {
-            setOpen(true);
-            onExpand();
-          }}
-        >
-          Read the summary
-        </button>
-      )}
+      <div className="mt-3 space-y-3">
+        <Paragraphs text={shown} className="text-base leading-relaxed text-neuron-text/90" />
+      </div>
+      <LengthSwitcher
+        options={["brief", "standard"]}
+        value={length}
+        labels={{ standard: "Full summary" }}
+        onChange={(l) => {
+          if (l !== "brief") onExpand();
+          setLength(l);
+        }}
+        shownText={`${takeaway} ${shown}`}
+      />
       {p.authors && open && <p className="mt-2 text-xs text-neuron-muted">{p.authors}</p>}
       {open && p.itemId && (
         <p className="mt-2 text-sm text-neuron-muted">
@@ -267,16 +366,11 @@ function Body({ card, handlers }: { card: FeedCard; handlers: CardHandlers }) {
 
   switch (card.kind) {
     case "bite":
-      if (p.kind === "puzzle") return <PuzzleBite card={card} onReveal={() => emit("completed")} />;
+      if (p.kind === "puzzle") return <PuzzleBite card={card} onReveal={() => emit("completed")} onLonger={() => emit("expanded")} />;
       return (
         <div className="w-full">
           <h2 className="font-display text-3xl font-bold leading-tight sm:text-4xl">{card.title}</h2>
-          <p className="mt-4 text-lg leading-relaxed text-neuron-text/95 sm:text-xl">
-            <Highlighted text={card.body} term={p.highlight} />
-          </p>
-          {p.takeaway && (
-            <p className="mt-5 border-l-4 border-[var(--ic)] pl-4 text-base font-bold leading-snug text-neuron-text">{p.takeaway}</p>
-          )}
+          <BiteText card={card} onLonger={() => emit("expanded")} />
         </div>
       );
     case "paper":
@@ -359,7 +453,7 @@ function Body({ card, handlers }: { card: FeedCard; handlers: CardHandlers }) {
         <div className="w-full">
           <p className="eyebrow">Next chapter is ready</p>
           <h2 className="mt-2 font-display text-2xl font-bold leading-tight sm:text-3xl">{card.title}</h2>
-          <p className="mt-3 text-base leading-relaxed text-neuron-text/90">{card.body}</p>
+          <ChapterText text={card.body} />
           <Link href={`/library/chapter/${p.chapterId}`} className="btn-primary mt-5">
             Read the chapter notes
           </Link>
@@ -408,19 +502,15 @@ function Body({ card, handlers }: { card: FeedCard; handlers: CardHandlers }) {
 }
 
 /** A bite whose headline is a question: think first, then tap for the answer. */
-function PuzzleBite({ card, onReveal }: { card: FeedCard; onReveal: () => void }) {
+function PuzzleBite({ card, onReveal, onLonger }: { card: FeedCard; onReveal: () => void; onLonger: () => void }) {
   const [shown, setShown] = useState(false);
-  const p = card.payload;
   return (
     <div className="w-full">
       <p className="eyebrow">Think about it first</p>
       <h2 className="mt-2 font-display text-3xl font-bold leading-tight sm:text-4xl">{card.title}</h2>
       {shown ? (
         <div aria-live="polite">
-          <p className="mt-4 text-lg leading-relaxed text-neuron-text/95 sm:text-xl">
-            <Highlighted text={card.body} term={p.highlight} />
-          </p>
-          {p.takeaway && <p className="mt-5 border-l-4 border-[var(--ic)] pl-4 text-base font-bold leading-snug text-neuron-text">{p.takeaway}</p>}
+          <BiteText card={card} onLonger={onLonger} />
         </div>
       ) : (
         <button
@@ -664,8 +754,11 @@ export function CardView({
     >
       <div className="flex min-h-0 flex-1 flex-col rounded-3xl border border-neuron-border bg-neuron-surface p-5 shadow-sm sm:p-7">
         {!centered && <Header card={card} />}
-        <div className={`flex min-h-0 flex-1 flex-col overflow-y-auto py-4 ${centered ? "justify-center" : "justify-center"}`}>
-          {card.kind === "dailydone" ? <DailyDone card={card} onNext={onNext} /> : <Body card={card} handlers={handlers} />}
+        {/* my-auto centres short cards; long ones start at the top and scroll (justify-center would clip their top). */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain py-4">
+          <div className="my-auto w-full">
+            {card.kind === "dailydone" ? <DailyDone card={card} onNext={onNext} /> : <Body card={card} handlers={handlers} />}
+          </div>
         </div>
         {card.level && card.kind === "bite" && (
           <p className="mb-2 text-xs text-neuron-muted">

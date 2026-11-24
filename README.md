@@ -6,6 +6,7 @@ A swipe feed for science and ideas. Same thumb motion as any other feed, except 
 - **Play along** — guess-the-number cards with a slider, question-first bites you answer in your head before tapping, and counterargument cards where you pick a side first. Once enough people have answered, you see how other readers guessed and voted. Quiz and guess-the-number cards share as a challenge a friend can answer without an account.
 - **Listen mode** — reads each card aloud with pauses to think, then moves on by itself. Uses the device's built-in speech, so it costs nothing to run.
 - **A daily set** — five cards a day by default, with a finish card, then the open feed for anyone who wants more. A weekly recap ("Your week") shows ideas met, the deepest rabbit hole and quiz results.
+- **Summary length** — every card can be read Brief (two sentences), Standard (a full paragraph) or In-depth (a few paragraphs), switchable on the card itself; the default is set in Settings. Older cards get their in-depth version written the first time anyone asks for it, then it is stored for everyone.
 - **Depth on demand** — every bite opens the full, sourced explainer behind it. From there: self-check questions, explain-it-back with feedback, follow-up topics, and "ask about this".
 - **Levels** — each field is followed at one of four levels, from first principles to research frontier, and is a sequence that builds on itself.
 - **Memory** — quiz answers and recall checks feed a spaced-repetition schedule (FSRS). Reviews are woven into the feed and collected on the Review tab.
