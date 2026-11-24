@@ -1,5 +1,6 @@
 import { ImageResponse } from "next/og";
 import type { PublicCard } from "@/lib/publicCard";
+import { LogoMark, MARK_DARK } from "@/components/brand/LogoMark";
 import { interestHue, hslToHex } from "@/lib/ui";
 
 // Edge runtime: image generation runs there; the card itself comes from the
@@ -46,7 +47,10 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
           <div style={{ marginTop: story ? 48 : 24, fontSize: story ? 44 : 28, lineHeight: 1.4, color: "#cfc8ea" }}>{clipped}</div>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: story ? 38 : 26, fontWeight: 700 }}>
-          <div style={{ display: "flex" }}>🧠 Neuron</div>
+          <div style={{ display: "flex", alignItems: "center", gap: story ? 16 : 12 }}>
+            <LogoMark size={story ? 52 : 36} colors={MARK_DARK} />
+            Neuron
+          </div>
           <div style={{ display: "flex", color: "#a89fc9", fontWeight: 400 }}>Scroll less. Know more.</div>
         </div>
       </div>

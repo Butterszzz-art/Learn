@@ -1,4 +1,5 @@
 import { ImageResponse } from "next/og";
+import { LogoMark, MARK_DARK } from "@/components/brand/LogoMark";
 
 export const runtime = "edge";
 
@@ -16,12 +17,11 @@ export async function GET(req: Request, { params }: { params: { size: string } }
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "linear-gradient(135deg, #a78bfa 0%, #f472b6 100%)",
+          background: "#120f1e",
           borderRadius: maskable ? 0 : size * 0.22,
-          fontSize: size * (maskable ? 0.42 : 0.56),
         }}
       >
-        🧠
+        <LogoMark size={Math.round(size * (maskable ? 0.5 : 0.66))} colors={MARK_DARK} />
       </div>
     ),
     { width: size, height: size, headers: { "Cache-Control": "public, max-age=31536000, immutable" } }

@@ -104,6 +104,11 @@
   .btn-primary {
     @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-gradient-to-r from-neuron-accent to-neuron-accent2 px-5 py-2.5 text-sm font-bold text-neuron-onaccent shadow-md transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
   }
+  /* Not ready yet (e.g. empty form): flat and quiet rather than a dimmed
+     gradient, which read as broken. */
+  .btn-primary:disabled {
+    @apply bg-neuron-surface2 bg-none text-neuron-muted opacity-100 shadow-none hover:brightness-100;
+  }
   .btn-secondary {
     @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full border-2 border-neuron-border bg-neuron-surface2 px-5 py-2.5 text-sm font-bold text-neuron-text transition hover:border-neuron-accent/60 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
   }
@@ -196,5 +201,100 @@
     .animate-reveal {
       animation: none;
     }
+  }
+}
+
+/* Welcome-page hero: three sample cards cycle back → middle → front, then
+   the front one swipes off and slips in at the back again. Each card runs
+   the same 9s loop, offset by a third, so one leaves every 3 seconds. */
+/* How much the cards behind are dimmed: white cards in light mode only
+   need a touch, or they turn grey. */
+.hero-stack {
+  --hero-dim-back: 0.92;
+  --hero-dim-mid: 0.96;
+}
+:root[data-theme="dark"] .hero-stack {
+  --hero-dim-back: 0.7;
+  --hero-dim-mid: 0.85;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .hero-stack {
+    --hero-dim-back: 0.7;
+    --hero-dim-mid: 0.85;
+  }
+}
+@keyframes hero-cycle {
+  0%,
+  28% {
+    transform: translateY(-1.5rem) scale(0.9);
+    filter: brightness(var(--hero-dim-back));
+    opacity: 1;
+    z-index: 1;
+  }
+  33%,
+  61% {
+    transform: translateY(-0.75rem) scale(0.95);
+    filter: brightness(var(--hero-dim-mid));
+    opacity: 1;
+    z-index: 2;
+  }
+  66%,
+  88% {
+    transform: translateY(0) scale(1);
+    filter: brightness(1);
+    opacity: 1;
+    z-index: 3;
+  }
+  95% {
+    transform: translateX(-115%) rotate(-14deg);
+    opacity: 0;
+    z-index: 3;
+  }
+  97% {
+    transform: translateY(-1.5rem) scale(0.9);
+    filter: brightness(var(--hero-dim-back));
+    opacity: 0;
+    z-index: 0;
+  }
+  100% {
+    transform: translateY(-1.5rem) scale(0.9);
+    filter: brightness(var(--hero-dim-back));
+    opacity: 1;
+    z-index: 1;
+  }
+}
+.hero-card {
+  /* Scale from the top so the cards behind peek out above the front one;
+     depth is shown by dimming, not opacity, so no card is see-through. */
+  transform-origin: 50% 0%;
+  animation: hero-cycle 9s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+/* Start each card a third of the way further on: card 3 is in front first. */
+.hero-card:nth-child(1) {
+  animation-delay: -6s;
+}
+.hero-card:nth-child(2) {
+  animation-delay: -3s;
+}
+.hero-card:nth-child(3) {
+  animation-delay: 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-card {
+    animation: none;
+  }
+  .hero-card:nth-child(1) {
+    transform: translateY(0);
+    z-index: 3;
+  }
+  .hero-card:nth-child(2) {
+    transform: translateY(-0.75rem) scale(0.95) rotate(3deg);
+    filter: brightness(var(--hero-dim-mid));
+    z-index: 2;
+  }
+  .hero-card:nth-child(3) {
+    transform: translateY(-1.5rem) scale(0.9) rotate(-3deg);
+    filter: brightness(var(--hero-dim-back));
+    z-index: 1;
   }
 }

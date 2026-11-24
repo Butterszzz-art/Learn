@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { ensureDb } from "@/db/bootstrap";
 import { getPublicCard } from "@/lib/publicCard";
 import { interestStyle } from "@/lib/ui";
+import { Logo } from "@/components/brand/LogoMark";
 import { PublicChallenge } from "@/components/PublicChallenge";
 
 export const dynamic = "force-dynamic";
@@ -56,7 +57,7 @@ export default async function SharedCardPage({ params }: { params: { id: string 
         )}
       </article>
       <div className="mt-6 text-center">
-        <p className="font-display text-xl font-bold">🧠 Neuron</p>
+        <Logo size={30} className="justify-center" />
         <p className="mt-1 text-neuron-muted">A swipe feed where every card teaches you something real.</p>
         <Link href="/signup" className="btn-primary mt-4">{card.challenge ? "Get a new one every day — free" : "Start learning — free"}</Link>
       </div>
