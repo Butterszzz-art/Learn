@@ -1,0 +1,31 @@
+name: iOS build status
+
+# Asks App Store Connect where recent iOS builds stand (processing, failed,
+# waiting on export compliance, ready for TestFlight). Use it when a build was
+# uploaded but doesn't appear in TestFlight. Runs on Linux in under a minute.
+#
+# Run it from the Actions tab → "iOS build status" → Run workflow. It also
+# runs on pull requests that change it, so changes are checked against Apple.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/asc-builds.mjs
+      - .github/workflows/ios-build-status.yml
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Ask App Store Connect for build status
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: node scripts/asc-builds.mjs
