@@ -2,6 +2,9 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { getWeeklyRecap, recapShareText } from "@/lib/weekly";
 import { ShareTextButton } from "@/components/ShareTextButton";
+import { Icon } from "@/components/Icon";
+import { getLatestMonthlyForUser, periodLabel } from "@/lib/monthly";
+import type { MonthlyEntry } from "@/lib/monthly";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Your week" };
@@ -15,10 +18,34 @@ function Big({ value, label }: { value: string | number; label: string }) {
   );
 }
 
+/** This month's long reads, one per followed field that had enough news. */
+function MonthlySection({ entries }: { entries: MonthlyEntry[] }) {
+  if (entries.length === 0) return null;
+  return (
+    <section id="monthly" className="mt-6 scroll-mt-6" aria-labelledby="monthly-heading">
+      <h2 id="monthly-heading" className="eyebrow mb-1 flex items-center gap-1.5">
+        <Icon name="issue" className="h-4 w-4" />
+        Monthly Deep Dive · {periodLabel(entries[0].period)}
+      </h2>
+      <p className="mb-3 text-sm text-neuron-muted">A long read on the month in each field you follow: the big story, the trends, and questions to think over.</p>
+      <ul className="space-y-2">
+        {entries.map((m) => (
+          <li key={m.id}>
+            <Link href={`/deep-dive/${m.id}`} className="card block !p-4 hover:border-neuron-accent/60">
+              <p className="text-xs font-bold text-neuron-muted">{m.interestName}</p>
+              <p className="mt-0.5 font-display text-lg font-bold leading-snug">{m.topic}</p>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /** The last seven days, as a recap worth looking at (and sharing). */
 export default async function WeekPage() {
   const user = await requireUser();
-  const r = await getWeeklyRecap(user.id);
+  const [r, monthly] = await Promise.all([getWeeklyRecap(user.id), getLatestMonthlyForUser(user.id).catch(() => [])]);
   const accuracy = r.quizAnswered > 0 ? Math.round((r.quizCorrect / r.quizAnswered) * 100) : null;
 
   if (r.cards === 0) {
@@ -27,6 +54,7 @@ export default async function WeekPage() {
         <h1 className="page-title">Your week</h1>
         <p className="mt-4 text-neuron-muted">Nothing read in the last seven days yet. Today&apos;s set is a good place to start.</p>
         <Link href="/" className="btn-primary mt-4">Open the feed</Link>
+        <MonthlySection entries={monthly} />
       </div>
     );
   }
@@ -85,6 +113,8 @@ export default async function WeekPage() {
           )}
         </ul>
       )}
+
+      <MonthlySection entries={monthly} />
 
       <div className="mt-6 flex flex-wrap gap-2">
         <ShareTextButton title="My week on Neuron" text={recapShareText(r)} />

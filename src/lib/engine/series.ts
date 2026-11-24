@@ -3,7 +3,7 @@
 // researched and written once no matter how many people read it.
 import { db, client } from "@/db";
 import { deepDives } from "@/db/schema";
-import type { Level } from "@/db/schema";
+import type { DeepDiveOrigin, Level } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { generateDeepDive } from "../deepDive";
 import { generateGroundedDrill, generateStandaloneLogicDrill } from "../drills";
@@ -82,13 +82,16 @@ export async function publishDeepDive(
   interest: InterestRow,
   level: Level,
   written: WrittenDive,
-  origin: "syllabus" | "followup"
+  origin: DeepDiveOrigin,
+  extra: { period?: string; essayPrompt?: string | null } = {}
 ): Promise<SeriesResult> {
   const covered = await getSeriesTopics(interest.id, level);
   const essayPrompt =
-    ESSAY_PROMPT_LEVELS.includes(level) && Math.random() < ESSAY_PROMPT_CHANCE
-      ? await generateEssayPrompt(interest.name, [...covered.recent, written.topic]).catch(() => null)
-      : null;
+    extra.essayPrompt !== undefined
+      ? extra.essayPrompt
+      : ESSAY_PROMPT_LEVELS.includes(level) && Math.random() < ESSAY_PROMPT_CHANCE
+        ? await generateEssayPrompt(interest.name, [...covered.recent, written.topic]).catch(() => null)
+        : null;
 
   const seq = origin === "syllabus" ? covered.totalCount + 1 : null;
   const inserted = await db
@@ -102,6 +105,7 @@ export async function publishDeepDive(
       seq,
       origin,
       essayPrompt,
+      period: extra.period ?? null,
     })
     .returning({ id: deepDives.id });
   const deepDiveId = inserted[0].id;

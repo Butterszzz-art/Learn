@@ -304,6 +304,8 @@ export async function generateFullExportZip(userId: number): Promise<Buffer> {
       content: d.content,
       sources: safeParseArray(d.sources),
       level: d.level,
+      origin: "syllabus", // not used by the markdown export
+      period: null,
       interestName: d.interestName,
       interestSlug: "",
       createdAt: d.createdAt,

@@ -144,6 +144,8 @@ export const coveredTopics = sqliteTable("covered_topics", {
 // ---------------------------------------------------------------------------
 // deepDives — long-form, level-matched, web-search-grounded explainers.
 // ---------------------------------------------------------------------------
+export type DeepDiveOrigin = "syllabus" | "followup" | "monthly";
+
 export const deepDives = sqliteTable("deep_dives", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   interestId: integer("interest_id")
@@ -173,8 +175,12 @@ export const deepDives = sqliteTable("deep_dives", {
   // Phase 13: shared content pool. A deep dive belongs to the (interest,
   // level) series, not to a person; seq is its position in that series.
   seq: integer("seq"),
-  // "syllabus" = next-in-series, "followup" = someone asked for this topic.
-  origin: text("origin").$type<"syllabus" | "followup">().notNull().default("syllabus"),
+  // "syllabus" = next-in-series, "followup" = someone asked for this topic,
+  // "monthly" = the Monthly Deep Dive: one long read per interest per month
+  // on that month's trends, written from the news items the pool collected.
+  origin: text("origin").$type<DeepDiveOrigin>().notNull().default("syllabus"),
+  // Monthly Deep Dive only: the calendar month it covers, "YYYY-MM".
+  period: text("period"),
   // "published" is served; "flagged" failed the quality pass or was reported.
   status: text("status").$type<"published" | "flagged">().notNull().default("published"),
   qualityScore: real("quality_score"),

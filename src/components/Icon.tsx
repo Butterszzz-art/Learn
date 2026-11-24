@@ -20,7 +20,8 @@ export type IconName =
   | "external"
   | "back"
   | "eye"
-  | "eyeOff";
+  | "eyeOff"
+  | "issue";
 
 const PATHS: Record<IconName, string> = {
   feed: "M4 5h16v6H4zM4 14h16v5H4z",
@@ -43,11 +44,13 @@ const PATHS: Record<IconName, string> = {
   star: "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z",
   external: "M14 4h6v6M20 4l-9 9M18 13v7H4V6h7",
   back: "M15 5l-7 7 7 7",
+  // A magazine issue: page with a folded corner and lines of text.
+  issue: "M6 3h9l4 4v14H6zM14.5 3v4.5H19M9 11h7M9 14.5h7M9 18h4.5",
   eye: "M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12zM12 9.25a2.75 2.75 0 100 5.5 2.75 2.75 0 000-5.5z",
   eyeOff: "M4 4l16 16M10.6 6.1A9 9 0 0112 5.5c6 0 9.5 6.5 9.5 6.5a16 16 0 01-2.7 3.5M14.1 14.2A2.75 2.75 0 019.8 9.9M6.6 7.4A16 16 0 002.5 12s3.5 6.5 9.5 6.5a8.6 8.6 0 004.4-1.2",
 };
 
-const STROKED: IconName[] = ["listen", "deeper", "close", "check", "external", "back", "eye", "eyeOff"];
+const STROKED: IconName[] = ["listen", "deeper", "close", "check", "external", "back", "eye", "eyeOff", "issue"];
 
 export function Icon({ name, className = "h-5 w-5", filled = false }: { name: IconName; className?: string; filled?: boolean }) {
   const stroked = STROKED.includes(name);

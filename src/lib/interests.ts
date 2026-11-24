@@ -1,7 +1,7 @@
 import { db, client } from "@/db";
 import { interests, userInterests, deepDives } from "@/db/schema";
 import type { Level } from "@/db/schema";
-import { eq, and, asc, inArray } from "drizzle-orm";
+import { eq, and, asc, inArray, ne } from "drizzle-orm";
 
 export interface InterestRow {
   id: number;
@@ -172,7 +172,9 @@ export async function getSeriesTopics(interestId: number, level: Level, limit = 
   const rows = await db
     .select({ topic: deepDives.topic })
     .from(deepDives)
-    .where(and(eq(deepDives.interestId, interestId), eq(deepDives.level, level)))
+    // Monthly Deep Dives sit outside the series: they neither count toward
+    // its position nor steer what the next entry covers.
+    .where(and(eq(deepDives.interestId, interestId), eq(deepDives.level, level), ne(deepDives.origin, "monthly")))
     .orderBy(asc(deepDives.seq), asc(deepDives.id));
   return { recent: rows.slice(-limit).map((r) => r.topic), totalCount: rows.length };
 }
