@@ -4,7 +4,7 @@
 // filtered by owner.
 import { db, client } from "@/db";
 import { deepDives, interests, books, bookChapters, explainBacks, appliedInsights } from "@/db/schema";
-import type { Level, BookStatus, BookSourceType } from "@/db/schema";
+import type { Level, BookStatus, BookSourceType, DeepDiveOrigin } from "@/db/schema";
 import { eq, and, asc, desc } from "drizzle-orm";
 import { generateExplainBackFeedback } from "./explainBack";
 import { indexForSearch } from "./searchIndex";
@@ -28,6 +28,8 @@ export interface DeepDiveDetail {
   content: string;
   sources: { title: string; url: string }[];
   level: Level;
+  origin: DeepDiveOrigin;
+  period: string | null; // Monthly Deep Dive only: "YYYY-MM"
   interestName: string;
   interestSlug: string;
   createdAt: string;
@@ -115,6 +117,8 @@ export async function getDeepDiveDetail(id: number, userId: number): Promise<Dee
     content: row.content,
     sources: parseJsonArray(row.sources),
     level: row.level,
+    origin: row.origin,
+    period: row.period,
     interestName: interest?.name ?? "Unknown",
     interestSlug: interest?.slug ?? "unknown",
     createdAt: row.createdAt,

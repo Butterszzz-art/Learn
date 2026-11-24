@@ -13,6 +13,8 @@ import { DeepDiveQuiz, DeepDiveTools } from "@/components/DeepDiveExtras";
 import { TrustBadge } from "@/components/TrustBadge";
 import { CiteButton } from "@/components/CiteButton";
 import { classifyDeepDive } from "@/lib/trustSignals";
+import { Icon } from "@/components/Icon";
+import { periodLabel } from "@/lib/monthly";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +26,7 @@ export default async function DeepDivePage({ params }: { params: { id: string } 
   if (!dive || (dive.status === "flagged" && user.role !== "admin")) notFound();
   await markDeepDiveOpened(id, user.id);
   const follows = await getUserInterest(user.id, dive.interestId);
+  const monthly = dive.origin === "monthly" && !!dive.period;
 
   // Quiz cards are saved per answer; older entries only have the unsaved self-check list.
   const quiz =
@@ -42,7 +45,14 @@ export default async function DeepDivePage({ params }: { params: { id: string } 
       <header className="mt-4">
         <div className="flex flex-wrap items-center gap-2">
           <span className="pill !text-neuron-text">{dive.interestName}</span>
-          <span className="pill">{LEVEL_LABELS[dive.level]}</span>
+          {monthly ? (
+            <span className="pill !border-neuron-accent/50 !text-neuron-text">
+              <Icon name="issue" className="mr-1 inline h-4 w-4" />
+              Monthly Deep Dive · {periodLabel(dive.period!)}
+            </span>
+          ) : (
+            <span className="pill">{LEVEL_LABELS[dive.level]}</span>
+          )}
           <TrustBadge classification={classifyDeepDive(dive.sources.length)} />
           {dive.syllabusNote && (
             <span className="pill !border-neuron-accent/50 !text-neuron-text" title={dive.syllabusNote.reference ?? undefined}>
@@ -52,7 +62,11 @@ export default async function DeepDivePage({ params }: { params: { id: string } 
           <span className="text-xs text-neuron-muted">{readingMinutes(dive.content)} min read · {formatDate(dive.createdAt)}</span>
         </div>
         <h1 className="mt-3 font-display text-3xl font-bold leading-tight sm:text-4xl">{dive.topic}</h1>
-        <p className="mt-2 text-xs text-neuron-muted">Written by AI from the sources listed below, then checked against them automatically. Spot a mistake? Report it.</p>
+        <p className="mt-2 text-xs text-neuron-muted">
+          {monthly
+            ? `Written by AI from ${dive.sources.length} news items and papers collected in ${periodLabel(dive.period!)}, each cited inline and listed below, then checked against them automatically. Spot a mistake? Report it.`
+            : "Written by AI from the sources listed below, then checked against them automatically. Spot a mistake? Report it."}
+        </p>
         {dive.syllabusNote && <p className="mt-2 text-sm text-neuron-muted">{dive.syllabusNote.note}.</p>}
         <div className="mt-4"><DeepDiveTools deepDiveId={dive.id} speechText={dive.content.replace(/[#*_>\[\]()]/g, "")} /></div>
       </header>

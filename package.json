@@ -17,7 +17,8 @@
     "seed:demo": "tsx scripts/seed-demo.ts",
     "resummarize": "tsx scripts/resummarize.ts",
     "ios:sync": "cap sync ios",
-    "ios:assets": "node assets/render.cjs && capacitor-assets generate --ios --iconBackgroundColor \"#120f1e\" --splashBackgroundColor \"#120f1e\" --splashBackgroundColorDark \"#120f1e\""
+    "ios:assets": "node assets/render.cjs && capacitor-assets generate --ios --iconBackgroundColor \"#120f1e\" --splashBackgroundColor \"#120f1e\" --splashBackgroundColorDark \"#120f1e\"",
+    "monthly": "tsx scripts/monthly.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

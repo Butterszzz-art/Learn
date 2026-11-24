@@ -21,7 +21,8 @@ export type JobType =
   | "book_structure"
   | "book_chapter"
   | "batch_collect"
-  | "upgrade_summaries";
+  | "upgrade_summaries"
+  | "monthly_report";
 
 export interface JobPayloads {
   series_next: { interestId: number; level: Level };
@@ -33,6 +34,7 @@ export interface JobPayloads {
   book_chapter: { bookId: number };
   batch_collect: Record<string, never>;
   upgrade_summaries: Record<string, never>;
+  monthly_report: { interestId: number; period: string };
 }
 
 const MAX_ATTEMPTS = 3;
@@ -133,6 +135,10 @@ async function runJob(job: JobRow): Promise<unknown> {
       return refreshNews(payload.interestId);
     case "logic_drill":
       return generateLogicDrill(payload.interestId);
+    case "monthly_report": {
+      const { generateMonthlyDeepDive } = await import("../monthly");
+      return generateMonthlyDeepDive(payload.interestId, payload.period);
+    }
     case "book_structure": {
       const { processBookStructure } = await import("../libraryPipeline");
       return processBookStructure(payload.bookId);

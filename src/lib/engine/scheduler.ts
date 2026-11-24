@@ -5,10 +5,11 @@
 // (interest, level) pair that has active readers — never per reader.
 import { client } from "@/db";
 import type { Level } from "@/db/schema";
-import { enqueue } from "./jobs";
+import { enqueue, jobKey } from "./jobs";
 import { hasPendingSeriesWrite, openBatchCount } from "./batchSeries";
 import { hasSummaryLlm } from "../summaryLlm";
 import { hasClaudeKey } from "../ai";
+import { previousPeriod, findMonthlyDive, countMonthItems, MIN_MONTHLY_ITEMS } from "../monthly";
 
 const ACTIVE_DAYS = 14;
 const AHEAD_TARGET = 3; // unread series entries to keep ahead of the furthest reader
@@ -17,6 +18,9 @@ const NEWS_HOURS_CURATED = 12; // free RSS/API fetch, summarized on the fast mod
 const NEWS_HOURS_ROUNDUP = 24; // web-searched, costs more
 const EXPAND_PER_TICK = 10;
 const DRILL_INTEREST_SLUGS = ["critical-thinking", "logic"];
+// The Monthly Deep Dive on last month is written during the first days of
+// the new month; after that, a month that was skipped stays skipped.
+const MONTHLY_WINDOW_DAYS = 7;
 
 function sqlTime(d: Date): string {
   return d.toISOString().slice(0, 19).replace("T", " ");
@@ -27,6 +31,19 @@ export interface PlanResult {
   news: number;
   expand: number;
   drills: number;
+  monthly: number;
+}
+
+/** Whether an interest's Monthly Deep Dive for `period` still needs writing. */
+async function needsMonthly(interestId: number, period: string): Promise<boolean> {
+  if (await findMonthlyDive(interestId, period)) return false;
+  if ((await countMonthItems(interestId, period)) < MIN_MONTHLY_ITEMS) return false;
+  // A job that already used up its retries isn't queued again every tick.
+  const failed = await client.execute({
+    sql: "SELECT 1 FROM jobs WHERE dedupe_key = ? AND status = 'failed' LIMIT 1",
+    args: [jobKey("monthly_report", { interestId, period })],
+  });
+  return failed.rows.length === 0;
 }
 
 /**
@@ -36,7 +53,9 @@ export interface PlanResult {
  */
 export async function planWork(userId?: number): Promise<PlanResult> {
   const activeSince = sqlTime(new Date(Date.now() - ACTIVE_DAYS * 86400000));
-  const result: PlanResult = { series: 0, news: 0, expand: 0, drills: 0 };
+  const result: PlanResult = { series: 0, news: 0, expand: 0, drills: 0, monthly: 0 };
+  const now = new Date();
+  const monthlyPeriod = now.getUTCDate() <= MONTHLY_WINDOW_DAYS ? previousPeriod(now) : null;
 
   // How far the furthest active reader has got in each (interest, level)
   // series, versus how many entries exist.
@@ -86,6 +105,10 @@ export async function planWork(userId?: number): Promise<PlanResult> {
     if (stale) {
       await enqueue("news", { interestId: Number(r.id) });
       result.news++;
+    }
+    if (monthlyPeriod && (await needsMonthly(Number(r.id), monthlyPeriod))) {
+      await enqueue("monthly_report", { interestId: Number(r.id), period: monthlyPeriod });
+      result.monthly++;
     }
     if (DRILL_INTEREST_SLUGS.includes(r.slug)) {
       const recent = await client.execute({

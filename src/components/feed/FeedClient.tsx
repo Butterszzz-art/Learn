@@ -13,6 +13,8 @@ import { spokenSegments } from "@/lib/spoken";
 import { speakSegments, speechSupported } from "@/lib/speech";
 import type { MuteNoticeItem } from "../MuteNotices";
 import type { DailyState } from "@/lib/daily";
+import { MonthlyBanner } from "@/components/MonthlyBanner";
+import type { MonthlyBannerEntry } from "@/components/MonthlyBanner";
 
 const PAGE_SIZE = 10;
 const PREFETCH_WHEN_LEFT = 4; // ask for the next page this many cards before the end
@@ -44,6 +46,7 @@ export function FeedClient({
   initialHasMore,
   interests,
   muteNotices = [],
+  monthly = [],
   daily = null,
   summaryLength,
 }: {
@@ -51,6 +54,7 @@ export function FeedClient({
   initialHasMore: boolean;
   interests: FeedInterest[];
   muteNotices?: MuteNoticeItem[];
+  monthly?: MonthlyBannerEntry[];
   daily?: DailyState | null;
   summaryLength?: SummaryLength;
 }) {
@@ -368,6 +372,7 @@ export function FeedClient({
     <SummaryLengthProvider initial={summaryLength}>
     <div className="relative flex h-full flex-col">
       <MuteNotices initial={muteNotices} compact />
+      {monthly.length > 0 && <MonthlyBanner entries={monthly} />}
       <div className="flex shrink-0 items-center gap-2 px-4 pb-1 pt-3 sm:px-6">
       {canListen && (
         <button
