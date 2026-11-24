@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "./Icon";
+import { LogoMark } from "./brand/LogoMark";
 import type { IconName } from "./Icon";
 
 const TABS: { href: string; label: string; icon: IconName; match: (p: string) => boolean }[] = [
@@ -45,7 +46,7 @@ export function AppShell({ children, signedIn, isAdmin }: { children: React.Reac
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         <Link href="/" className="hidden items-center gap-2 px-5 py-6 font-display text-xl font-bold md:flex">
-          <span aria-hidden className="text-2xl">🧠</span>
+          <LogoMark size={30} />
           <span className="hidden bg-gradient-to-r from-neuron-accent to-neuron-accent2 bg-clip-text text-transparent lg:inline">Neuron</span>
         </Link>
         <ul className="flex h-16 items-stretch justify-around md:h-auto md:flex-col md:gap-1 md:px-3">
