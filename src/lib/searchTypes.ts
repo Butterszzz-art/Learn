@@ -28,14 +28,4 @@ export const SEARCH_CONTENT_TYPE_LABELS: Record<SearchContentType, string> = {
   concept: "Concept",
 };
 
-export const SEARCH_CONTENT_TYPE_ICONS: Record<SearchContentType, string> = {
-  news: "📰",
-  deep_dive: "📖",
-  applied_insight: "💡",
-  drill: "🧩",
-  explain_back: "✍️",
-  mental_model: "🔎",
-  rabbit_hole: "🕳️",
-  chapter: "📚",
-  concept: "🧩",
-};
+// Icons for each type are drawn in components/brand/ContentTypeGlyph.tsx.

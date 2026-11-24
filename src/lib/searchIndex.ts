@@ -16,7 +16,7 @@ import type { SearchContentType } from "./searchTypes";
 // here breaks the browser bundle. Re-exported below so server-side code can
 // still import everything from one place.
 export type { SearchContentType } from "./searchTypes";
-export { SEARCH_CONTENT_TYPE_LABELS, SEARCH_CONTENT_TYPE_ICONS } from "./searchTypes";
+export { SEARCH_CONTENT_TYPE_LABELS } from "./searchTypes";
 
 export interface SearchIndexEntry {
   contentType: SearchContentType;

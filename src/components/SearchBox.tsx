@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { SearchContentType } from "@/lib/searchTypes";
-import { SEARCH_CONTENT_TYPE_ICONS, SEARCH_CONTENT_TYPE_LABELS } from "@/lib/searchTypes";
+import { SEARCH_CONTENT_TYPE_LABELS } from "@/lib/searchTypes";
 import { Icon } from "./Icon";
+import { ContentTypeGlyph } from "./brand/ContentTypeGlyph";
 
 interface Result { contentType: SearchContentType; sourceId: number; title: string; snippet: string; interestLabel: string; url: string }
 
@@ -63,7 +64,10 @@ export function SearchBox() {
           {results.map((r) => (
             <li key={`${r.contentType}-${r.sourceId}`}>
               <Link href={r.url} className="card block !p-4 transition hover:border-neuron-accent">
-                <span className="eyebrow">{SEARCH_CONTENT_TYPE_ICONS[r.contentType]} {SEARCH_CONTENT_TYPE_LABELS[r.contentType]} · {r.interestLabel}</span>
+                <span className="eyebrow flex items-center gap-1.5">
+                  <ContentTypeGlyph type={r.contentType} className="h-4 w-4 shrink-0 text-neuron-accent" />
+                  {SEARCH_CONTENT_TYPE_LABELS[r.contentType]} · {r.interestLabel}
+                </span>
                 <span className="mt-1 block font-bold leading-snug">{r.title}</span>
                 {/* The snippet comes from our own index with <mark> around matches; text is escaped below. */}
                 <span className="mt-1 block text-sm text-neuron-muted" dangerouslySetInnerHTML={{ __html: escapeExceptMark(r.snippet) }} />
