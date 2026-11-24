@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { QuizBlock } from "./feed/QuizBlock";
 import { AskSheet, ReportSheet } from "./feed/Sheets";
 import { Icon } from "./Icon";
@@ -36,7 +36,11 @@ export function DeepDiveQuiz({ questions }: { questions: Quiz[] }) {
 export function DeepDiveTools({ deepDiveId, speechText }: { deepDiveId: number; speechText: string }) {
   const [sheet, setSheet] = useState<"ask" | "report" | null>(null);
   const [speaking, setSpeaking] = useState(false);
-  const canSpeak = typeof window !== "undefined" && "speechSynthesis" in window;
+  // Checked after mount so the server render and the first client render match.
+  const [canSpeak, setCanSpeak] = useState(false);
+  useEffect(() => {
+    setCanSpeak("speechSynthesis" in window);
+  }, []);
 
   function toggleSpeech() {
     if (speaking) {
