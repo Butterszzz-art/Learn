@@ -1,6 +1,7 @@
 // Builds one page of a person's feed (Phase 14) and records what they do
 // with it. Everything served here already exists in the shared pool — a
 // feed request never waits on an AI call.
+import { clipAt } from "./summaryLength";
 import { client } from "@/db";
 import type { CardType, Level } from "@/db/schema";
 import { LEVELS } from "@/db/schema";
@@ -232,7 +233,13 @@ async function hydrate(rows: { card: CardRow; explore: boolean }[], userId: numb
     for (const r of res.rows as any[]) m.set(Number(r.id), r.v);
     return m;
   };
-  const [interestNames, conceptNames, diveTopics, savedRes] = await Promise.all([
+  // Research cards still on the cut-off fallback summary (ending in "…",
+  // until the upgrade job rewrites them) show the item's whole stored
+  // abstract instead, so "Full summary" has something to read.
+  const fallbackItemIds = rows
+    .filter((r) => r.card.type === "paper" && r.card.itemId !== null && r.card.body.trim().endsWith("…"))
+    .map((r) => r.card.itemId as number);
+  const [interestNames, conceptNames, diveTopics, savedRes, rawSnippets] = await Promise.all([
     nameMap("interests", "name", interestIds),
     nameMap("concepts", "name", conceptIds),
     nameMap("deep_dives", "topic", diveIds),
@@ -240,7 +247,12 @@ async function hydrate(rows: { card: CardRow; explore: boolean }[], userId: numb
       sql: `SELECT card_id FROM user_cards WHERE user_id = ? AND saved = 1 AND card_id IN (${marks(cardIds.length)})`,
       args: [userId, ...cardIds],
     }),
+    nameMap("items", "raw_snippet", fallbackItemIds),
   ]);
+  const fullBody = (c: CardRow): string => {
+    const raw = c.itemId !== null ? rawSnippets.get(c.itemId) : undefined;
+    return raw && raw.trim().length > c.body.trim().length ? clipAt(raw, 4000) : c.body;
+  };
   const saved = new Set((savedRes.rows as any[]).map((r) => Number(r.card_id)));
   return rows.map(({ card: c, explore }) => ({
     key: `c${c.id}`,
@@ -250,7 +262,7 @@ async function hydrate(rows: { card: CardRow; explore: boolean }[], userId: numb
     interestName: c.interestId !== null ? interestNames.get(c.interestId) ?? null : null,
     level: c.level,
     title: c.title,
-    body: c.body,
+    body: fullBody(c),
     payload: { ...parsePayload(c.payload), ...(c.itemId !== null ? { itemId: c.itemId } : {}) },
     conceptId: c.conceptId,
     conceptName: c.conceptId !== null ? conceptNames.get(c.conceptId) ?? null : null,
@@ -318,7 +330,8 @@ async function buildChapterCard(userId: number): Promise<FeedCard | null> {
     interestName: r.book_title,
     level: null,
     title: `Chapter ${r.chapter_number}: ${r.title}`,
-    body: summary.length > 320 ? summary.slice(0, 320).replace(/\s+\S*$/, "") + "…" : summary,
+    // The whole summary; the card shows it at the reader's chosen length.
+    body: clipAt(summary, 4000),
     payload: { chapterId: Number(r.id), bookId: Number(r.book_id) },
     conceptId: null,
     conceptName: null,

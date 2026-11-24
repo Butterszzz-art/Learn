@@ -122,6 +122,7 @@ const SHARED_POOL_PURPOSES = new Set([
   "logic_drill",
   "batch_collect",
   "upgrade_summaries",
+  "bite_detail",
 ]);
 
 const PAID_CACHE_MS = 60_000;

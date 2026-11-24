@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { DEFAULT_DAILY_GOAL } from "@/lib/dailyGoal";
 import type { UserPrefs } from "@/db/schema";
+import { DEFAULT_SUMMARY_LENGTH } from "@/lib/summaryLength";
 import { postJson } from "@/lib/ui";
 
 function urlBase64ToUint8Array(base64: string): Uint8Array {
@@ -82,6 +83,20 @@ export function PrefsForm({ initial, pushAvailable }: { initial: UserPrefs; push
           <option value="1.15">Larger</option>
           <option value="1.3">Largest</option>
         </select>
+      </div>
+      <div>
+        <label htmlFor="pref-length" className="label">Summary length</label>
+        <select
+          id="pref-length"
+          className="field"
+          value={prefs.summaryLength ?? DEFAULT_SUMMARY_LENGTH}
+          onChange={(e) => save({ summaryLength: e.target.value as UserPrefs["summaryLength"] })}
+        >
+          <option value="brief">Brief (2 sentences)</option>
+          <option value="standard">Standard (a paragraph)</option>
+          <option value="indepth">In-depth (a few paragraphs)</option>
+        </select>
+        <p className="mt-1 text-sm text-neuron-muted">How much each card shows when it opens. You can switch any single card to another length from the buttons under its text.</p>
       </div>
       <div>
         <label htmlFor="pref-goal" className="label">Daily set</label>
